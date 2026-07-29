@@ -78,4 +78,18 @@ struct UsageDecoderTests {
             try UsageDecoder.snapshot(from: Data("<html>Just a moment</html>".utf8))
         }
     }
+
+    @Test("a boolean utilization is not a bucket")
+    func rejectsBooleanUtilization() {
+        #expect(throws: UsageError.malformedResponse) {
+            try UsageDecoder.snapshot(from: Data(#"{"a": {"utilization": true}}"#.utf8))
+        }
+    }
+
+    @Test("a boolean reset time decodes as nil, not as the epoch")
+    func rejectsBooleanResetTime() throws {
+        let data = Data(#"{"a": {"utilization": 1, "resets_at": true}}"#.utf8)
+        let snapshot = try UsageDecoder.snapshot(from: data)
+        #expect(snapshot["a"]?.resetsAt == nil)
+    }
 }

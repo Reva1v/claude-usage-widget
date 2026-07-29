@@ -14,7 +14,8 @@ public enum UsageDecoder {
         var buckets: [String: UsageBucket] = [:]
         for (key, value) in root {
             guard let object = value as? [String: Any],
-                  let utilization = object["utilization"] as? Double else { continue }
+                  let utilization = object["utilization"] as? Double,
+                  !isJSONBoolean(object["utilization"]) else { continue }
             buckets[key] = UsageBucket(
                 utilization: utilization,
                 resetsAt: resetDate(from: object["resets_at"])
@@ -31,10 +32,20 @@ public enum UsageDecoder {
         if let string = value as? String {
             return fractionalFormatter.date(from: string) ?? plainFormatter.date(from: string)
         }
-        if let seconds = value as? Double, seconds > 0 {
+        if let seconds = value as? Double,
+           seconds > 0,
+           !isJSONBoolean(value) {
             return Date(timeIntervalSince1970: seconds)
         }
         return nil
+    }
+
+    /// Distinguishes JSON boolean values from numeric values. JSONSerialization
+    /// creates different CF types for booleans (__NSCFBoolean) and numbers
+    /// (__NSCFNumber), so we can check using CFGetTypeID().
+    private static func isJSONBoolean(_ value: Any?) -> Bool {
+        guard let value = value as? NSNumber else { return false }
+        return CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
     }
 
     private static let plainFormatter = ISO8601DateFormatter()
