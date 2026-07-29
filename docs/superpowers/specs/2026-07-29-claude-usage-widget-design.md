@@ -124,8 +124,9 @@ Three dials in a row inside a rounded dark panel.
   window. The API gives only `resets_at`, not the window length, so the length
   is a constant per bucket kind: `five_hour` → 5 hours, every `seven_day_*` →
   7 days. `elapsed = window - (resetsAt - now)`, clamped to [0, 1].
-- **Center** — the label (SESSION / WEEK / FABLE), the percentage, and the time
-  remaining below it (`2h 14m`, `3d 6h`).
+- **Center** — the label, the percentage, and the time remaining below it
+  (`2h 14m`, `3d 6h`). The first two labels are fixed (SESSION, WEEK); the third
+  is derived from the selected bucket key (`seven_day_fable` → FABLE).
 
 When `resets_at` is missing or already in the past, the hand is hidden rather
 than drawn at a guessed angle.
