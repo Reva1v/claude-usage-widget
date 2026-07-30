@@ -43,8 +43,6 @@ public struct StatusDialView: View {
                     .foregroundStyle(dimmed ? Theme.dim : Theme.text)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
-                Text(" ")
-                    .font(Theme.caption(scale: scale))
             }
             .padding(.horizontal, 6 * scale)
         }
