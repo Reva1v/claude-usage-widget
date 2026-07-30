@@ -49,5 +49,6 @@ public struct StatusDialView: View {
             .padding(.horizontal, 6 * scale)
         }
         .frame(width: size, height: size)
+        .contentShape(Rectangle())
     }
 }

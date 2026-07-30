@@ -18,6 +18,12 @@ public final class StatusStore {
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
 
+    /// The load currently in flight, if any. The timer, a manual refresh and
+    /// the wake handler can all fire at once; without this they race and
+    /// whichever finishes last wins, which can put a stale status on screen
+    /// after a fresher one already landed.
+    private var inFlight: Task<Void, Never>?
+
     public init(fetch: @escaping @Sendable () async throws -> ServiceStatus = { try await StatusAPI().fetch() }) {
         self.fetch = fetch
     }
@@ -52,6 +58,17 @@ public final class StatusStore {
     }
 
     func load() async {
+        if let inFlight {
+            await inFlight.value
+            return
+        }
+        let task = Task { await performLoad() }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    private func performLoad() async {
         guard let fetched = try? await fetch() else { return }
         status = fetched
     }

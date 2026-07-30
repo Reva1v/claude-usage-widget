@@ -33,4 +33,21 @@ struct StatusStoreTests {
 
         #expect(store.status == .operational)
     }
+
+    @Test("a load while one is already in flight does not start a second fetch")
+    func coalescesOverlappingLoads() async {
+        final class Box: @unchecked Sendable { var calls = 0 }
+        let box = Box()
+        let store = StatusStore {
+            box.calls += 1
+            try? await Task.sleep(for: .milliseconds(50))
+            return .operational
+        }
+
+        async let first: Void = store.load()
+        async let second: Void = store.load()
+        _ = await (first, second)
+
+        #expect(box.calls == 1)
+    }
 }
