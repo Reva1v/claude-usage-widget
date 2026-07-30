@@ -181,4 +181,37 @@ struct UsageDecoderTests {
         let snapshot = try UsageDecoder.snapshot(from: data)
         #expect(snapshot["seven_day_fable"]?.utilization == 8)
     }
+
+    @Test("a malformed limits entry does not discard its well-formed siblings")
+    func toleratesMalformedLimitEntries() throws {
+        let data = Data("""
+        {
+          "limits": [
+            "not an object",
+            42,
+            null,
+            { "kind": "weekly_scoped", "percent": 8,
+              "scope": { "model": { "display_name": "Fable" } } }
+          ]
+        }
+        """.utf8)
+        let snapshot = try UsageDecoder.snapshot(from: data)
+        #expect(snapshot["seven_day_fable"]?.utilization == 8)
+    }
+
+    @Test("a display name with no letters or digits is skipped, not turned into a bare key")
+    func skipsUnsluggableDisplayNames() throws {
+        let data = Data("""
+        {
+          "five_hour": { "utilization": 1 },
+          "limits": [
+            { "kind": "weekly_scoped", "percent": 8,
+              "scope": { "model": { "display_name": "!!!" } } }
+          ]
+        }
+        """.utf8)
+        let snapshot = try UsageDecoder.snapshot(from: data)
+        #expect(snapshot["seven_day_"] == nil)
+        #expect(snapshot.buckets.count == 1)
+    }
 }

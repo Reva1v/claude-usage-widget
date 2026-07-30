@@ -60,10 +60,11 @@ public enum UsageDecoder {
     /// bucket selection, the dial, the menu picker — keeps working unchanged,
     /// and a per-model limit added later appears on its own.
     private static func foldScopedLimits(from root: [String: Any], into buckets: inout [String: UsageBucket]) {
-        guard let limits = root["limits"] as? [[String: Any]] else { return }
+        guard let limits = root["limits"] as? [Any] else { return }
 
-        for limit in limits {
-            guard limit["kind"] as? String == "weekly_scoped",
+        for entry in limits {
+            guard let limit = entry as? [String: Any],
+                  limit["kind"] as? String == "weekly_scoped",
                   let percent = limit["percent"] as? Double,
                   !isJSONBoolean(limit["percent"]),
                   let scope = limit["scope"] as? [String: Any],
@@ -71,7 +72,9 @@ public enum UsageDecoder {
                   let displayName = model["display_name"] as? String
             else { continue }
 
-            let key = "seven_day_" + slug(displayName)
+            let name = slug(displayName)
+            guard !name.isEmpty else { continue }
+            let key = "seven_day_" + name
             // A real top-level bucket is authoritative; this only fills gaps.
             guard buckets[key] == nil else { continue }
             buckets[key] = UsageBucket(
