@@ -104,8 +104,8 @@ struct StatusLineTests {
 
     @Test("each failure has its own wording")
     func reportsFailures() {
-        #expect(StatusLine.text(for: .failed(.noCredentials), now: Self.now) == "no Claude Code credentials found")
-        #expect(StatusLine.text(for: .failed(.unauthorized), now: Self.now) == "token rejected — sign in to Claude Code")
+        #expect(StatusLine.text(for: .failed(.noCredentials), now: Self.now) == "sign in to Claude Code")
+        #expect(StatusLine.text(for: .failed(.unauthorized), now: Self.now) == "session expired — sign in again")
         #expect(StatusLine.text(for: .failed(.malformedResponse), now: Self.now) == "unexpected response from the API")
         #expect(StatusLine.text(for: .failed(.network("HTTP 500")), now: Self.now) == "HTTP 500")
     }

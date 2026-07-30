@@ -167,6 +167,29 @@ public struct WidgetRootView: View {
                 .font(Theme.caption(scale: scale))
                 .foregroundStyle(Theme.dim)
                 .padding(.bottom, 2 * scale)
+                .help(statusHelp ?? "")
+        }
+    }
+
+    /// The status line has room for an instruction, not an explanation. This
+    /// carries the rest for anyone who hovers — including the case that cannot
+    /// be fixed at all, where the honest answer is that there is nothing to
+    /// show rather than something to repair.
+    private var statusHelp: String? {
+        switch store.state {
+        case .failed(.noCredentials):
+            """
+            The widget reads the token Claude Code stores when you sign in with \
+            a Claude subscription. Run `claude` in a terminal and sign in.
+
+            Signing in with an API key, Bedrock or Vertex instead? Those are \
+            billed per token and have no session or weekly limits, so there is \
+            nothing for this widget to show.
+            """
+        case .failed(.unauthorized):
+            "Claude Code's stored token was rejected. Signing in again refreshes it."
+        default:
+            nil
         }
     }
 

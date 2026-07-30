@@ -85,6 +85,27 @@ The fourth dial reads `https://status.claude.com`, preferring the "Claude
 Code" component's status; if that component is ever renamed or retired, it
 falls back to the page-wide status instead.
 
+## Known limitations
+
+**A Claude subscription is required.** The usage endpoint this widget reads is
+subscription-only. If Claude Code is authenticated with an API key, Bedrock or
+Vertex, usage is billed per token and no session or weekly limit exists — the
+widget will say so rather than show empty dials, and there is nothing to
+configure.
+
+**The per-model dial depends on your plan.** A separate weekly limit for a
+specific model is a Max and Team Premium arrangement. On Pro and Team Standard
+that model is billed from usage credits instead, so the third dial shows
+whichever per-model limit your account does have, or `n/a` if it has none.
+
+**Apple silicon only.** Releases are built for arm64. Intel Macs can build from
+source but there is no signed build for them.
+
+**macOS asks for keychain access on first launch.** The widget reads the token
+Claude Code stored there; approving once is enough. A locally built bundle is
+ad-hoc signed, so each rebuild counts as a new app and asks again — that affects
+development, not installed releases.
+
 ## Requirements
 
 - macOS 14+, Apple silicon

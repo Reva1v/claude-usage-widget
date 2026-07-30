@@ -52,9 +52,9 @@ public enum StatusLine {
             let ago = UsageMath.remainingText(resetsAt: now, now: fetchedAt)
             return ago.map { "updated \($0) ago" }
         case .failed(.noCredentials):
-            return "no Claude Code credentials found"
+            return "sign in to Claude Code"
         case .failed(.unauthorized):
-            return "token rejected — sign in to Claude Code"
+            return "session expired — sign in again"
         case .failed(.malformedResponse):
             return "unexpected response from the API"
         case let .failed(.network(message)):
