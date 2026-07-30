@@ -33,16 +33,21 @@ public struct DialView: View {
     private let fraction: Double?
     private let remaining: String?
     private let dimmed: Bool
+    private let size: CGFloat
 
-    public static let size: CGFloat = 68
-    private static let arcInset: CGFloat = 4
-    private static let arcWidth: CGFloat = 5
+    /// The dial size the inner metrics were drawn against.
+    public static let designSize: CGFloat = 68
 
-    public init(title: String, fraction: Double?, remaining: String?, dimmed: Bool) {
+    private var scale: Double { size / Self.designSize }
+    private var arcInset: CGFloat { 4 * scale }
+    private var arcWidth: CGFloat { 5 * scale }
+
+    public init(title: String, fraction: Double?, remaining: String?, dimmed: Bool, size: CGFloat) {
         self.title = title
         self.fraction = fraction
         self.remaining = remaining
         self.dimmed = dimmed
+        self.size = size
     }
 
     private var arcColor: Color {
@@ -53,27 +58,27 @@ public struct DialView: View {
     public var body: some View {
         ZStack {
             Circle()
-                .strokeBorder(Theme.track, lineWidth: Self.arcWidth)
-                .padding(Self.arcInset - Self.arcWidth / 2)
+                .strokeBorder(Theme.track, lineWidth: arcWidth)
+                .padding(arcInset - arcWidth / 2)
 
             if let fraction {
-                DialArc(fraction: fraction, inset: Self.arcInset)
-                    .stroke(arcColor, style: StrokeStyle(lineWidth: Self.arcWidth, lineCap: .round))
+                DialArc(fraction: fraction, inset: arcInset)
+                    .stroke(arcColor, style: StrokeStyle(lineWidth: arcWidth, lineCap: .round))
                     .animation(.easeOut(duration: 0.4), value: fraction)
             }
 
             VStack(spacing: 1) {
                 Text(title)
-                    .font(Theme.label)
+                    .font(Theme.label(scale: scale))
                     .foregroundStyle(Theme.dim)
                 Text(fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "n/a")
-                    .font(Theme.value)
+                    .font(Theme.value(scale: scale))
                     .foregroundStyle(dimmed ? Theme.dim : Theme.text)
                 Text(remaining ?? "—")
-                    .font(Theme.caption)
+                    .font(Theme.caption(scale: scale))
                     .foregroundStyle(Theme.dim)
             }
         }
-        .frame(width: Self.size, height: Self.size)
+        .frame(width: size, height: size)
     }
 }

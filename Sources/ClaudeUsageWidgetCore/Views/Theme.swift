@@ -20,8 +20,17 @@ public enum Theme {
         }
     }
 
+    /// Fonts are defined at the 170 pt design size and scale with the panel.
     /// Monospaced digits everywhere, so numbers do not jitter as they tick.
-    public static let label = Font.system(size: 8, weight: .semibold).monospacedDigit()
-    public static let value = Font.system(size: 14, weight: .semibold).monospacedDigit()
-    public static let caption = Font.system(size: 8, weight: .medium).monospacedDigit()
+    public static func label(scale: Double) -> Font {
+        .system(size: 8 * scale, weight: .semibold).monospacedDigit()
+    }
+
+    public static func value(scale: Double) -> Font {
+        .system(size: 14 * scale, weight: .semibold).monospacedDigit()
+    }
+
+    public static func caption(scale: Double) -> Font {
+        .system(size: 8 * scale, weight: .medium).monospacedDigit()
+    }
 }

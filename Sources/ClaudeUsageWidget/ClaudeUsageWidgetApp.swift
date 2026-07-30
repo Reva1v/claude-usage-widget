@@ -146,18 +146,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let hostingView = WidgetHostingView(rootView: WidgetRootView(store: store))
         window.contentView = hostingView
-        // Fit the window to its content: extra transparent area would capture
-        // clicks outside the visible panel.
-        let fitting = hostingView.fittingSize
-        if fitting.width > 0, fitting.height > 0 {
-            window.setContentSize(fitting)
-        }
 
         // Centre first, then attach the autosave name so a stored frame wins.
         window.center()
         window.setFrameAutosaveName("ClaudeUsageWidgetWindow")
 
         self.window = window
+        // The stored side is authoritative, not SwiftUI's fitting size — a
+        // fresh launch with nothing stored lands at the 170 pt default.
+        syncWindowSize()
         if WidgetSettings.isVisible(in: .standard) {
             window.orderFrontRegardless()
         }
@@ -167,8 +164,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reconcileVisibility() }
+            MainActor.assumeIsolated {
+                self?.reconcileVisibility()
+                self?.syncWindowSize()
+            }
         }
+    }
+
+    /// Keeps the window frame matching the stored side length. The widget is a
+    /// square, so one number drives both axes.
+    private func syncWindowSize() {
+        guard let window else { return }
+        let side = WidgetSettings.size(in: .standard)
+        guard abs(window.frame.width - side) > 0.5 || abs(window.frame.height - side) > 0.5 else { return }
+        window.setContentSize(NSSize(width: side, height: side))
     }
 
     /// Shows or hides the window to match the stored flag. Idempotent, so
