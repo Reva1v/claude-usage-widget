@@ -11,12 +11,24 @@ public enum Theme {
     public static let accent = Color(red: 0.651, green: 0.820, blue: 0.537)
     public static let warning = Color(red: 0.898, green: 0.784, blue: 0.565)
     public static let danger = Color(red: 0.906, green: 0.510, blue: 0.518)
+    /// Scheduled maintenance: informational, not alarming.
+    public static let info = Color(red: 0.541, green: 0.706, blue: 0.902)
 
     public static func color(for level: ThresholdLevel) -> Color {
         switch level {
         case .ok: accent
         case .warning: warning
         case .danger: danger
+        }
+    }
+
+    public static func color(for status: ServiceStatus) -> Color {
+        switch status {
+        case .operational: accent
+        case .degraded, .partialOutage: warning
+        case .majorOutage: danger
+        case .maintenance: info
+        case .unknown: dim
         }
     }
 

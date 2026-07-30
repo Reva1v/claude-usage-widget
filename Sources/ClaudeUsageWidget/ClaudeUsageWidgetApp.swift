@@ -122,12 +122,14 @@ final class DesktopWindow: NSWindow {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = UsageStore()
+    let statusStore = StatusStore()
     private var window: DesktopWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // no Dock icon
 
         store.start()
+        statusStore.start()
 
         let window = DesktopWindow(
             contentRect: NSRect(x: 0, y: 0, width: 340, height: 150),
@@ -144,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isOpaque = false
         window.hasShadow = false
 
-        let hostingView = WidgetHostingView(rootView: WidgetRootView(store: store))
+        let hostingView = WidgetHostingView(rootView: WidgetRootView(store: store, statusStore: statusStore))
         window.contentView = hostingView
 
         // Centre first, then attach the autosave name so a stored frame wins.
@@ -205,5 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
+        statusStore.stop()
     }
 }

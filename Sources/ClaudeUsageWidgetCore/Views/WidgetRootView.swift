@@ -5,6 +5,7 @@ import SwiftUI
 /// saying.
 public struct WidgetRootView: View {
     private let store: UsageStore
+    private let statusStore: StatusStore
 
     @AppStorage(WidgetSettings.modelBucketKey) private var modelBucket = ""
     @AppStorage(WidgetSettings.widgetSizeKey) private var widgetSize = WidgetSettings.defaultSize
@@ -19,8 +20,9 @@ public struct WidgetRootView: View {
 
     private static let tick = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
-    public init(store: UsageStore) {
+    public init(store: UsageStore, statusStore: StatusStore) {
         self.store = store
+        self.statusStore = statusStore
     }
 
     private var snapshot: UsageSnapshot? {
@@ -56,7 +58,18 @@ public struct WidgetRootView: View {
             }
             HStack(spacing: gap) {
                 dial(models[2])
-                PlaceholderDial(size: dialSize, scale: scale)
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://status.claude.com")!)
+                } label: {
+                    StatusDialView(
+                        status: statusStore.status,
+                        size: dialSize,
+                        scale: scale,
+                        dimmed: false
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Claude service status — click to open status.claude.com")
             }
         }
         .frame(width: side - pad * 2, height: side - pad * 2)
@@ -242,19 +255,6 @@ public struct WidgetRootView: View {
             // two cursors and pop them out of order, stranding one.
             .padding(grip.isHorizontal ? .vertical : .horizontal, thickness)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: grip.alignment)
-    }
-}
-
-/// The empty fourth cell: a bare ring holding the spot until it has a job.
-private struct PlaceholderDial: View {
-    let size: CGFloat
-    let scale: Double
-
-    var body: some View {
-        Circle()
-            .strokeBorder(Theme.track.opacity(0.5), lineWidth: 5 * scale)
-            .padding((4 - 5 / 2) * scale)
-            .frame(width: size, height: size)
     }
 }
 
