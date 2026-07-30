@@ -123,7 +123,10 @@ public struct WidgetRootView: View {
                 : "Click to lock the widget position and size")
         }
         .padding(.horizontal, 10 * scale)
-        .padding(.vertical, 5 * scale)
+        // Top inset clears the resize grip's 10 pt band, which sits above this
+        // overlay and would otherwise swallow the top of every button.
+        .padding(.top, 10 * scale)
+        .padding(.bottom, 5 * scale)
         .frame(maxWidth: .infinity)
         .background(Theme.panel.opacity(0.92))
         .clipShape(

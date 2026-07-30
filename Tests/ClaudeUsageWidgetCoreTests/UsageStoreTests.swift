@@ -88,4 +88,21 @@ struct UsageStoreTests {
         await store.load()
         #expect(box.seen == "sk-ant-oat01-example")
     }
+
+    @Test("a refresh while one is already in flight does not start a second fetch")
+    func coalescesOverlappingRefreshes() async {
+        final class Box: @unchecked Sendable { var calls = 0 }
+        let box = Box()
+        let store = store { _ in
+            box.calls += 1
+            try? await Task.sleep(for: .milliseconds(50))
+            return await Self.snapshot(1)
+        }
+
+        async let first: Void = store.load()
+        async let second: Void = store.load()
+        _ = await (first, second)
+
+        #expect(box.calls == 1)
+    }
 }

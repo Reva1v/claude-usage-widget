@@ -30,6 +30,12 @@ public final class UsageStore {
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
 
+    /// The load currently in flight, if any. The timer, a manual refresh and
+    /// the wake handler can all fire at once; without this they race and
+    /// whichever finishes last wins, which can put an older snapshot on screen
+    /// than the one already shown.
+    private var inFlight: Task<Void, Never>?
+
     public init(
         fetch: @escaping @Sendable (String) async throws -> UsageSnapshot = { try await UsageAPI().fetch(token: $0) },
         tokenProvider: @escaping @Sendable () -> String? = { ClaudeCredentials.accessToken() },
@@ -72,6 +78,17 @@ public final class UsageStore {
     }
 
     func load() async {
+        if let inFlight {
+            await inFlight.value
+            return
+        }
+        let task = Task { await performLoad() }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    private func performLoad() async {
         guard let token = tokenProvider() else {
             state = .failed(.noCredentials)
             return

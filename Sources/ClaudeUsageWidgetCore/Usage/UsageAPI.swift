@@ -9,7 +9,22 @@ public struct UsageAPI: Sendable {
 
     private let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    /// A session that waits for the network instead of failing instantly.
+    ///
+    /// The widget refreshes on wake from sleep, which lands seconds before
+    /// Wi-Fi re-associates. With the shared session that request fails at once
+    /// and the dials sit dimmed behind an offline message until the next
+    /// five-minute tick; waiting a little lets the same request succeed once
+    /// the link is up.
+    public static let connectivityAwareSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 90
+        return URLSession(configuration: configuration)
+    }()
+
+    public init(session: URLSession = UsageAPI.connectivityAwareSession) {
         self.session = session
     }
 
