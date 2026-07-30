@@ -14,13 +14,13 @@ struct DialModelTests {
 
     @Test("builds a dial from a bucket")
     func buildsFromBucket() {
-        // reset lands at 20:00 UTC; DialModel.make uses .current, so only
-        // presence is asserted here — exact clock positions are pinned in
-        // the UsageMath suite where the calendar is injectable.
+        // The offset is spelled as a Double literal rather than `2 * 3600`:
+        // an integer arithmetic expression defaults to Int before it can be
+        // converted, which older Swift versions reject outright.
         let model = DialModel.make(
             key: "five_hour",
             title: "SESSION",
-            snapshot: Self.snapshot(["five_hour": (42, 2 * 3600)]),
+            snapshot: Self.snapshot(["five_hour": (42, 7200)]),
             now: Self.now
         )
         #expect(model.title == "SESSION")
