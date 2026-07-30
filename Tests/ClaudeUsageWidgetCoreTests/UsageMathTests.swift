@@ -44,4 +44,14 @@ struct UsageMathTests {
         #expect(UsageMath.fraction(140) == 1)
         #expect(UsageMath.fraction(-5) == 0)
     }
+
+    // MARK: percentText
+
+    @Test("percent text rounds at the boundary rather than falling to binary error")
+    func percentTextRounding() {
+        #expect(UsageMath.percentText(0.575) == "58%")
+        #expect(UsageMath.percentText(0.574) == "57%")
+        #expect(UsageMath.percentText(0) == "0%")
+        #expect(UsageMath.percentText(1) == "100%")
+    }
 }

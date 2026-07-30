@@ -25,4 +25,15 @@ public enum UsageMath {
     public static func fraction(_ utilization: Double) -> Double {
         min(max(utilization / 100, 0), 1)
     }
+
+    /// A 0...1 fraction as a whole-percent string, e.g. "57%".
+    ///
+    /// Nudged by a tiny epsilon before rounding: a fraction that came from
+    /// dividing an exact server percentage by 100 can land just under the .5
+    /// boundary in binary — 0.575 * 100 is 57.49999999999999 — and would round
+    /// down against every expectation. The nudge is far smaller than any real
+    /// difference in the data.
+    public static func percentText(_ fraction: Double) -> String {
+        "\(Int((fraction * 100 + 1e-9).rounded()))%"
+    }
 }

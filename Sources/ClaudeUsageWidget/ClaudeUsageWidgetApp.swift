@@ -71,7 +71,10 @@ private struct MenuBarLabel: View {
             now: Date()
         ))
 
-        Image(nsImage: metrics.isEmpty ? fallback : Self.image(for: metrics))
+        // The fallback stands in until the first snapshot arrives — before
+        // that, or once a failure has left nothing to show, the ring icon
+        // reads better than three dashed columns.
+        Image(nsImage: snapshot == nil ? fallback : Self.image(for: metrics))
     }
 
     /// Each metric is a column: a small label on top, the figure below.

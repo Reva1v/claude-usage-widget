@@ -71,7 +71,7 @@ public struct DialView: View {
                 Text(title)
                     .font(Theme.label(scale: scale))
                     .foregroundStyle(Theme.dim)
-                Text(fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "n/a")
+                Text(fraction.map(UsageMath.percentText) ?? "n/a")
                     .font(Theme.value(scale: scale))
                     .foregroundStyle(dimmed ? Theme.dim : Theme.text)
                 Text(remaining ?? "—")
