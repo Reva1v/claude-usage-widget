@@ -1,12 +1,15 @@
 # Claude Usage Widget
 
 [![CI](https://github.com/TadelUnso/claude-usage-widget/actions/workflows/ci.yml/badge.svg)](https://github.com/TadelUnso/claude-usage-widget/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/TadelUnso/claude-usage-widget)](https://github.com/TadelUnso/claude-usage-widget/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/tadel_unso)
 
 A macOS desktop widget showing Claude Code subscription limits and Claude's
 own service status, as four dials in a square panel that sits at desktop
 level — above the wallpaper, below every application window.
+
+<img src="assets/widget.png" width="420" alt="Claude Usage Widget on the desktop">
 
 ## The panel
 
@@ -84,9 +87,45 @@ falls back to the page-wide status instead.
 
 ## Requirements
 
-- macOS 14+
+- macOS 14+, Apple silicon
 - Claude Code, signed in
-- Swift 6 toolchain — Command Line Tools are enough (`xcode-select --install`)
+- Swift 6 toolchain, to build from source — Command Line Tools are enough
+  (`xcode-select --install`)
+
+## Install
+
+### Homebrew
+
+```bash
+brew install --cask TadelUnso/tap/claude-usage-widget
+```
+
+The cask installs the signed, notarised DMG from Releases. It declares
+`auto_updates true`, so Homebrew steps aside and lets the widget update itself
+through Sparkle — there is no separate `brew upgrade` step.
+
+### Direct download
+
+Download `ClaudeUsageWidget.dmg` from the
+[Releases page](https://github.com/TadelUnso/claude-usage-widget/releases), open
+it, and drag the widget into Applications. The app is signed and notarised, and
+its notarisation ticket is stapled to the bundle, so Gatekeeper accepts it even
+on a machine with no network.
+
+## Uninstall
+
+```bash
+brew uninstall --cask claude-usage-widget
+```
+
+Add `--zap` to remove the saved position, size and preferences as well.
+
+Uninstalled while it was still running? The orphaned process keeps the widget on
+screen — quit it from the menu bar, or:
+
+```bash
+pkill -f "Claude Usage Widget"
+```
 
 ## Build
 
