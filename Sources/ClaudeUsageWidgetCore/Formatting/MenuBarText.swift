@@ -13,14 +13,23 @@ public struct MenuBarMetric: Equatable, Sendable {
 
 /// Builds the menu bar's columns from the same dials the panel shows.
 ///
-/// Labels are a single initial — the menu bar is crowded and three spelled-out
-/// words would crowd it further. Taking them from `DialModel.title` means the
-/// third column follows whichever model the dial is showing.
+/// Labels are short words — the menu bar has room for them. A column is as wide
+/// as the wider of its two rows, and the percentage below is drawn at 14 pt
+/// against the label's 10 pt, so `100%` already sets the width for any label
+/// of four characters or fewer.
 public enum MenuBarText {
+    /// A menu bar label short enough to cost nothing: a column is as wide as
+    /// the wider of its two rows, and the percentage below is drawn at 14 pt
+    /// against the label's 10 pt, so `100%` already sets the width for any
+    /// label of four characters or fewer. Longer titles are cut to three.
+    static func label(for title: String) -> String {
+        title.count <= 4 ? title : String(title.prefix(3))
+    }
+
     public static func metrics(for models: [DialModel]) -> [MenuBarMetric] {
         models.compactMap { model in
-            guard let initial = model.title.first else { return nil }
-            return MenuBarMetric(label: String(initial), value: model.fraction.map(UsageMath.percentText) ?? "—")
+            guard !model.title.isEmpty else { return nil }
+            return MenuBarMetric(label: label(for: model.title), value: model.fraction.map(UsageMath.percentText) ?? "—")
         }
     }
 }
