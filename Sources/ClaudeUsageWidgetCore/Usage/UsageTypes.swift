@@ -38,3 +38,20 @@ public enum UsageError: Error, Equatable, Sendable {
     /// Transport failure or an unexpected status code.
     case network(String)
 }
+
+extension UsageError: LocalizedError {
+    /// These reach the user directly — the update-check alert shows one when a
+    /// check fails — so they read as sentences rather than as cases.
+    public var errorDescription: String? {
+        switch self {
+        case .noCredentials:
+            "No Claude Code credentials were found in the keychain."
+        case .unauthorized:
+            "The token was rejected. Sign in to Claude Code again."
+        case .malformedResponse:
+            "The server returned something unexpected."
+        case let .network(message):
+            message
+        }
+    }
+}

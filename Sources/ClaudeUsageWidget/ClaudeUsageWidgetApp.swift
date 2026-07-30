@@ -173,7 +173,7 @@ private struct UpdateCheckButton: View {
         } catch {
             alert.alertStyle = .warning
             alert.messageText = "Could not check for updates"
-            alert.informativeText = "\(error)"
+            alert.informativeText = error.localizedDescription
         }
 
         alert.addButton(withTitle: "OK")
