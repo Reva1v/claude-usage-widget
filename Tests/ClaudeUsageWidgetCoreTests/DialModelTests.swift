@@ -25,7 +25,6 @@ struct DialModelTests {
         )
         #expect(model.title == "SESSION")
         #expect(model.fraction == 0.42)
-        #expect(model.hand != nil)
         #expect(model.remaining == "2h 0m")
     }
 
@@ -33,7 +32,6 @@ struct DialModelTests {
     func missingBucket() {
         let model = DialModel.make(key: "five_hour", title: "SESSION", snapshot: Self.snapshot([:]), now: Self.now)
         #expect(model.fraction == nil)
-        #expect(model.hand == nil)
         #expect(model.remaining == nil)
     }
 
@@ -57,8 +55,6 @@ struct DialModelTests {
         #expect(models.count == 3)
         #expect(models.map(\.title) == ["SESSION", "WEEK", "FABLE"])
         #expect(models[2].fraction == 0.3)
-        #expect(models[1].hand == nil)
-        #expect(models[2].hand == nil)
     }
 
     @Test("the third dial reads MODEL and is empty when no model bucket exists")

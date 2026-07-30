@@ -18,20 +18,4 @@ struct DialGeometryTests {
     func fullTurn() {
         #expect(DialGeometry.angle(forFraction: 1).degrees == 270)
     }
-
-    @Test("the hand at zero sits above the centre")
-    func handAtTop() {
-        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
-        let point = DialGeometry.handPoint(forFraction: 0, in: rect, inset: 20)
-        #expect(abs(point.x - 50) < 0.001)
-        #expect(abs(point.y - 20) < 0.001)
-    }
-
-    @Test("the hand at a quarter turn sits right of the centre")
-    func handAtRight() {
-        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
-        let point = DialGeometry.handPoint(forFraction: 0.25, in: rect, inset: 20)
-        #expect(abs(point.x - 80) < 0.001)
-        #expect(abs(point.y - 50) < 0.001)
-    }
 }

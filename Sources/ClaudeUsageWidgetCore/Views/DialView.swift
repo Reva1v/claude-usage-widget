@@ -7,16 +7,6 @@ public enum DialGeometry {
     public static func angle(forFraction fraction: Double) -> Angle {
         .degrees(-90 + 360 * fraction)
     }
-
-    /// The tip of the hand for a given fraction of a full revolution.
-    public static func handPoint(forFraction fraction: Double, in rect: CGRect, inset: CGFloat) -> CGPoint {
-        let radius = min(rect.width, rect.height) / 2 - inset
-        let radians = angle(forFraction: fraction).radians
-        return CGPoint(
-            x: rect.midX + radius * cos(radians),
-            y: rect.midY + radius * sin(radians)
-        )
-    }
 }
 
 /// The filled arc: the share of the limit already spent.
@@ -37,37 +27,20 @@ private struct DialArc: Shape {
     }
 }
 
-/// The hand: the wall-clock position of the reset time, watch-style.
-private struct DialHand: Shape {
-    let fraction: Double
-    let inset: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.midY))
-        path.addLine(to: DialGeometry.handPoint(forFraction: fraction, in: rect, inset: inset))
-        return path
-    }
-}
-
-/// One limit: an arc for how much is spent, a hand pointing at the reset
-/// time, and the numbers in the middle.
+/// One limit: an arc for how much is spent and the numbers in the middle.
 public struct DialView: View {
     private let title: String
     private let fraction: Double?
-    private let hand: Double?
     private let remaining: String?
     private let dimmed: Bool
 
-    private static let size: CGFloat = 92
-    private static let arcInset: CGFloat = 5
-    private static let arcWidth: CGFloat = 6
-    private static let handInset: CGFloat = 16
+    public static let size: CGFloat = 68
+    private static let arcInset: CGFloat = 4
+    private static let arcWidth: CGFloat = 5
 
-    public init(title: String, fraction: Double?, hand: Double?, remaining: String?, dimmed: Bool) {
+    public init(title: String, fraction: Double?, remaining: String?, dimmed: Bool) {
         self.title = title
         self.fraction = fraction
-        self.hand = hand
         self.remaining = remaining
         self.dimmed = dimmed
     }
@@ -87,11 +60,6 @@ public struct DialView: View {
                 DialArc(fraction: fraction, inset: Self.arcInset)
                     .stroke(arcColor, style: StrokeStyle(lineWidth: Self.arcWidth, lineCap: .round))
                     .animation(.easeOut(duration: 0.4), value: fraction)
-            }
-
-            if let hand, !dimmed {
-                DialHand(fraction: hand, inset: Self.handInset)
-                    .stroke(Theme.hand.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
             }
 
             VStack(spacing: 1) {

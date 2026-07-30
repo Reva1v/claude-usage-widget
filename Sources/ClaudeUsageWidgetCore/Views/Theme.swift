@@ -5,7 +5,6 @@ import SwiftUI
 public enum Theme {
     public static let panel = Color(red: 0.118, green: 0.133, blue: 0.188)
     public static let track = Color(red: 0.250, green: 0.270, blue: 0.340)
-    public static let hand = Color(red: 0.780, green: 0.800, blue: 0.870)
     public static let text = Color(red: 0.780, green: 0.800, blue: 0.870)
     public static let dim = Color(red: 0.450, green: 0.470, blue: 0.550)
 
@@ -22,7 +21,7 @@ public enum Theme {
     }
 
     /// Monospaced digits everywhere, so numbers do not jitter as they tick.
-    public static let label = Font.system(size: 9, weight: .semibold).monospacedDigit()
-    public static let value = Font.system(size: 17, weight: .semibold).monospacedDigit()
-    public static let caption = Font.system(size: 9, weight: .medium).monospacedDigit()
+    public static let label = Font.system(size: 8, weight: .semibold).monospacedDigit()
+    public static let value = Font.system(size: 14, weight: .semibold).monospacedDigit()
+    public static let caption = Font.system(size: 8, weight: .medium).monospacedDigit()
 }
