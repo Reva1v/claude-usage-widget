@@ -93,6 +93,26 @@ jobs:
             "$APP/Contents/Frameworks/Sparkle.framework"
           codesign --force --options runtime --sign "$SIGN" "$APP"
 
+      # A ticket can only be stapled to something Apple has already notarised,
+      # so the app is submitted on its own before the image that carries it is
+      # built. Without this the ticket lives only on the DMG, and an app dragged
+      # out of it has to reach Apple over the network on first launch.
+      - name: Notarize and staple the app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent "dist/Claude Usage Widget.app" dist/app.zip
+          xcrun notarytool submit dist/app.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "dist/Claude Usage Widget.app"
+          xcrun stapler validate "dist/Claude Usage Widget.app"
+          rm dist/app.zip
+
       - name: Create DMG
         run: |
           mkdir -p dist/dmg_contents
