@@ -62,8 +62,11 @@ public struct WidgetRootView: View {
         .frame(width: side - pad * 2, height: side - pad * 2)
         .padding(pad)
         .background(
-            RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
-                .fill(Theme.panel.opacity(0.86))
+            ZStack {
+                PanelBackground()
+                Theme.panel.opacity(0.35)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 22 * scale, style: .continuous))
         )
         .overlay(alignment: .top) { header }
         .overlay(alignment: .bottom) { statusLine(status) }
@@ -83,11 +86,10 @@ public struct WidgetRootView: View {
         )
     }
 
-    /// Hide, support and lock, in a strip across the top. Hidden until the
-    /// pointer is over the widget so the dials read cleanly at rest; the lock
-    /// stays visible while engaged so its state is never a surprise.
+    /// Hide, support and lock, in a strip across the top of the panel. Hidden
+    /// until the pointer is over the widget so the dials read cleanly at rest.
     private var header: some View {
-        HStack(spacing: 6 * scale) {
+        HStack(spacing: 0) {
             Button {
                 widgetVisible = false
             } label: {
@@ -100,7 +102,11 @@ public struct WidgetRootView: View {
             .buttonStyle(.plain)
             .help("Hide widget — bring it back from the menu bar icon")
 
+            Spacer(minLength: 0)
+
             KofiButton(scale: scale)
+
+            Spacer(minLength: 0)
 
             Button {
                 positionLocked.toggle()
@@ -116,14 +122,24 @@ public struct WidgetRootView: View {
                 ? "Position and size are locked — click to unlock"
                 : "Click to lock the widget position and size")
         }
-        .padding(.horizontal, 8 * scale)
-        .padding(.vertical, 4 * scale)
-        .background(
-            RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
-                .fill(Theme.panel.opacity(0.95))
+        .padding(.horizontal, 10 * scale)
+        .padding(.vertical, 5 * scale)
+        .frame(maxWidth: .infinity)
+        .background(Theme.panel.opacity(0.92))
+        .clipShape(
+            .rect(
+                topLeadingRadius: 22 * scale,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 22 * scale,
+                style: .continuous
+            )
         )
-        .padding(.top, 6 * scale)
-        .opacity(hovering || positionLocked ? 1 : 0)
+        .opacity(hovering ? 1 : 0)
+        // Opacity alone leaves the buttons clickable while invisible: a stray
+        // click would hide the widget or toggle the lock with no visible cause,
+        // and a mouse-down there would never reach the window's drag handler.
+        .allowsHitTesting(hovering)
         .animation(.easeInOut(duration: 0.15), value: hovering)
     }
 
@@ -218,6 +234,10 @@ public struct WidgetRootView: View {
                     }
                     .onEnded { _ in dragStartSize = nil }
             )
+            // Inset along the long axis so neighbouring strips never share the
+            // corner squares. Two overlapping tracking areas there would push
+            // two cursors and pop them out of order, stranding one.
+            .padding(grip.isHorizontal ? .vertical : .horizontal, thickness)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: grip.alignment)
     }
 }
@@ -275,4 +295,20 @@ private struct KofiButton: View {
         .onHover { hovering = $0 }
         .help("Support on Ko-fi ☕")
     }
+}
+
+/// The frosted backdrop native widgets sit on. A plain translucent fill reads
+/// as a sticker on the wallpaper; this blurs what is actually behind the
+/// window, which is the wallpaper itself since the widget lives at desktop
+/// level.
+private struct PanelBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
