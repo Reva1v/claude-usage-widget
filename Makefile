@@ -17,5 +17,14 @@ run:
 test:
 	swift test $(TESTFLAGS) $(if $(FILTER),--filter $(FILTER))
 
+app:
+	swift build -c release
+	rm -rf "$(DIST)"
+	mkdir -p "$(DIST)/Contents/MacOS"
+	cp .build/release/ClaudeUsageWidget "$(DIST)/Contents/MacOS/ClaudeUsageWidget"
+	cp Resources/Info.plist "$(DIST)/Contents/Info.plist"
+	codesign --force --sign - "$(DIST)"
+	@echo "Done: $(DIST)"
+
 clean:
 	rm -rf .build dist
