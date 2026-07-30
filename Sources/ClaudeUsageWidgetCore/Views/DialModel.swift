@@ -5,21 +5,19 @@ import Foundation
 public struct DialModel: Equatable, Sendable {
     public let title: String
     public let fraction: Double?
-    public let elapsed: Double?
+    public let hand: Double?
     public let remaining: String?
 
     public static func make(key: String, title: String, snapshot: UsageSnapshot?, now: Date) -> DialModel {
         guard let bucket = snapshot?[key] else {
-            return DialModel(title: title, fraction: nil, elapsed: nil, remaining: nil)
+            return DialModel(title: title, fraction: nil, hand: nil, remaining: nil)
         }
         return DialModel(
             title: title,
             fraction: UsageMath.fraction(bucket.utilization),
-            elapsed: UsageMath.elapsedFraction(
-                resetsAt: bucket.resetsAt,
-                window: UsageMath.windowLength(forKey: key),
-                now: now
-            ),
+            hand: key == "five_hour"
+                ? UsageMath.clockFraction(resetsAt: bucket.resetsAt, now: now)
+                : nil,
             remaining: UsageMath.remainingText(resetsAt: bucket.resetsAt, now: now)
         )
     }

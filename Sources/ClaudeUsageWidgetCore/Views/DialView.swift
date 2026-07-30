@@ -37,7 +37,7 @@ private struct DialArc: Shape {
     }
 }
 
-/// The hand: how far the current window has run.
+/// The hand: the wall-clock position of the reset time, watch-style.
 private struct DialHand: Shape {
     let fraction: Double
     let inset: CGFloat
@@ -50,12 +50,12 @@ private struct DialHand: Shape {
     }
 }
 
-/// One limit: an arc for how much is spent, a hand for how far the window has
-/// run, and the numbers in the middle.
+/// One limit: an arc for how much is spent, a hand pointing at the reset
+/// time, and the numbers in the middle.
 public struct DialView: View {
     private let title: String
     private let fraction: Double?
-    private let elapsed: Double?
+    private let hand: Double?
     private let remaining: String?
     private let dimmed: Bool
 
@@ -64,10 +64,10 @@ public struct DialView: View {
     private static let arcWidth: CGFloat = 6
     private static let handInset: CGFloat = 16
 
-    public init(title: String, fraction: Double?, elapsed: Double?, remaining: String?, dimmed: Bool) {
+    public init(title: String, fraction: Double?, hand: Double?, remaining: String?, dimmed: Bool) {
         self.title = title
         self.fraction = fraction
-        self.elapsed = elapsed
+        self.hand = hand
         self.remaining = remaining
         self.dimmed = dimmed
     }
@@ -89,8 +89,8 @@ public struct DialView: View {
                     .animation(.easeOut(duration: 0.4), value: fraction)
             }
 
-            if let elapsed, !dimmed {
-                DialHand(fraction: elapsed, inset: Self.handInset)
+            if let hand, !dimmed {
+                DialHand(fraction: hand, inset: Self.handInset)
                     .stroke(Theme.hand.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
             }
 

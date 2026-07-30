@@ -3,28 +3,20 @@ import Foundation
 /// Pure arithmetic behind the dials. No I/O, no clock reads — `now` is always
 /// passed in so every case is reproducible in a test.
 public enum UsageMath {
-    /// How long the window behind a bucket key runs.
+    /// Where the hand points: the wall-clock position of the reset time on a
+    /// 12-hour dial, as 0...1 of a full revolution from twelve o'clock.
+    /// A reset at 20:00 local time puts the hand where a watch's hour hand
+    /// would sit at 8 o'clock.
     ///
-    /// The API returns only `resets_at`, never the length of the window, so the
-    /// length is derived from the key: `five_hour` is a rolling five hours and
-    /// every `seven_day*` bucket is a rolling seven days.
-    public static func windowLength(forKey key: String) -> TimeInterval? {
-        if key == "five_hour" { return 5 * 3600 }
-        if key.hasPrefix("seven_day") { return 7 * 24 * 3600 }
-        return nil
-    }
-
-    /// How far the current window has already run, as 0...1 — the angle of the
-    /// dial's hand.
-    ///
-    /// Returns nil when the answer is unknowable: no reset time, no window
-    /// length, or a reset time that has already passed. A stale snapshot must
-    /// hide the hand rather than draw it at a guessed angle.
-    public static func elapsedFraction(resetsAt: Date?, window: TimeInterval?, now: Date) -> Double? {
-        guard let resetsAt, let window, window > 0 else { return nil }
-        let remaining = resetsAt.timeIntervalSince(now)
-        guard remaining > 0 else { return nil }
-        return min(max((window - remaining) / window, 0), 1)
+    /// Nil when there is no reset time or it has already passed — a stale
+    /// snapshot hides the hand rather than pointing at a wrong time.
+    public static func clockFraction(resetsAt: Date?, now: Date, calendar: Calendar = .current) -> Double? {
+        guard let resetsAt, resetsAt > now else { return nil }
+        let parts = calendar.dateComponents([.hour, .minute, .second], from: resetsAt)
+        let seconds = Double((parts.hour ?? 0) % 12) * 3600
+            + Double(parts.minute ?? 0) * 60
+            + Double(parts.second ?? 0)
+        return seconds / (12 * 3600)
     }
 
     /// Time left in the window: "45s", "10m", "1h 0m", "1d 1h".

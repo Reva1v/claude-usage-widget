@@ -40,7 +40,7 @@ public struct WidgetRootView: View {
                     DialView(
                         title: model.title,
                         fraction: model.fraction,
-                        elapsed: model.elapsed,
+                        hand: model.hand,
                         remaining: model.remaining,
                         dimmed: dimmed
                     )

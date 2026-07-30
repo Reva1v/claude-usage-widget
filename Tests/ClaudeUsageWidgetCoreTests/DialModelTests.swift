@@ -14,23 +14,26 @@ struct DialModelTests {
 
     @Test("builds a dial from a bucket")
     func buildsFromBucket() {
+        // reset lands at 20:00 UTC; DialModel.make uses .current, so only
+        // presence is asserted here — exact clock positions are pinned in
+        // the UsageMath suite where the calendar is injectable.
         let model = DialModel.make(
             key: "five_hour",
             title: "SESSION",
-            snapshot: Self.snapshot(["five_hour": (42, 2.5 * 3600)]),
+            snapshot: Self.snapshot(["five_hour": (42, 2 * 3600)]),
             now: Self.now
         )
         #expect(model.title == "SESSION")
         #expect(model.fraction == 0.42)
-        #expect(model.elapsed == 0.5)
-        #expect(model.remaining == "2h 30m")
+        #expect(model.hand != nil)
+        #expect(model.remaining == "2h 0m")
     }
 
     @Test("a missing bucket yields an empty dial rather than nothing")
     func missingBucket() {
         let model = DialModel.make(key: "five_hour", title: "SESSION", snapshot: Self.snapshot([:]), now: Self.now)
         #expect(model.fraction == nil)
-        #expect(model.elapsed == nil)
+        #expect(model.hand == nil)
         #expect(model.remaining == nil)
     }
 
@@ -54,6 +57,8 @@ struct DialModelTests {
         #expect(models.count == 3)
         #expect(models.map(\.title) == ["SESSION", "WEEK", "FABLE"])
         #expect(models[2].fraction == 0.3)
+        #expect(models[1].hand == nil)
+        #expect(models[2].hand == nil)
     }
 
     @Test("the third dial reads MODEL and is empty when no model bucket exists")

@@ -5,59 +5,43 @@ import Testing
 @Suite("UsageMath")
 struct UsageMathTests {
     static let now = Date(timeIntervalSince1970: 1_785_348_000)
-    static let fiveHours: TimeInterval = 5 * 3600
-    static let sevenDays: TimeInterval = 7 * 24 * 3600
 
-    // MARK: windowLength
+    // MARK: clockFraction
 
-    @Test("the session bucket is a five hour window")
-    func sessionWindow() {
-        #expect(UsageMath.windowLength(forKey: "five_hour") == Self.fiveHours)
+    /// Calendar pinned to UTC so the assertions do not depend on the machine's zone.
+    static let utc: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+
+    @Test("a reset at 20:00 sits at the 8 o'clock position")
+    func eightPM() {
+        // 2026-07-29 20:00:00 UTC
+        let resetsAt = Date(timeIntervalSince1970: 1_785_355_200)
+        let fraction = UsageMath.clockFraction(resetsAt: resetsAt, now: Self.now, calendar: Self.utc)
+        #expect(fraction == 8.0 / 12.0)
     }
 
-    @Test("every seven_day bucket is a seven day window")
-    func weeklyWindow() {
-        #expect(UsageMath.windowLength(forKey: "seven_day") == Self.sevenDays)
-        #expect(UsageMath.windowLength(forKey: "seven_day_fable") == Self.sevenDays)
-        #expect(UsageMath.windowLength(forKey: "seven_day_opus") == Self.sevenDays)
+    @Test("a reset at midnight or noon sits at twelve")
+    func twelvePositions() {
+        // 2026-07-30 00:00:00 UTC
+        let midnight = Date(timeIntervalSince1970: 1_785_369_600)
+        #expect(UsageMath.clockFraction(resetsAt: midnight, now: Self.now, calendar: Self.utc) == 0)
     }
 
-    @Test("an unrecognised key has no known window")
-    func unknownWindow() {
-        #expect(UsageMath.windowLength(forKey: "extra_usage") == nil)
+    @Test("half hours land between the numerals")
+    func halfHour() {
+        // 2026-07-29 18:30:00 UTC
+        let resetsAt = Date(timeIntervalSince1970: 1_785_349_800)
+        let fraction = UsageMath.clockFraction(resetsAt: resetsAt, now: Self.now, calendar: Self.utc)
+        #expect(fraction == 6.5 / 12.0)
     }
 
-    // MARK: elapsedFraction
-
-    @Test("halfway through the window reads as 0.5")
-    func midWindow() {
-        let resetsAt = Self.now.addingTimeInterval(Self.fiveHours / 2)
-        let fraction = UsageMath.elapsedFraction(resetsAt: resetsAt, window: Self.fiveHours, now: Self.now)
-        #expect(fraction == 0.5)
-    }
-
-    @Test("a window that just opened reads as 0")
-    func freshWindow() {
-        let resetsAt = Self.now.addingTimeInterval(Self.fiveHours)
-        #expect(UsageMath.elapsedFraction(resetsAt: resetsAt, window: Self.fiveHours, now: Self.now) == 0)
-    }
-
-    @Test("a reset time longer away than the window clamps to 0")
-    func overlongWindow() {
-        let resetsAt = Self.now.addingTimeInterval(Self.fiveHours * 2)
-        #expect(UsageMath.elapsedFraction(resetsAt: resetsAt, window: Self.fiveHours, now: Self.now) == 0)
-    }
-
-    @Test("a reset time in the past yields nil rather than a guessed angle")
-    func expiredWindow() {
-        let resetsAt = Self.now.addingTimeInterval(-60)
-        #expect(UsageMath.elapsedFraction(resetsAt: resetsAt, window: Self.fiveHours, now: Self.now) == nil)
-    }
-
-    @Test("a missing reset time or window yields nil")
-    func missingInputs() {
-        #expect(UsageMath.elapsedFraction(resetsAt: nil, window: Self.fiveHours, now: Self.now) == nil)
-        #expect(UsageMath.elapsedFraction(resetsAt: Self.now.addingTimeInterval(60), window: nil, now: Self.now) == nil)
+    @Test("a reset in the past or absent yields no hand")
+    func hiddenHand() {
+        #expect(UsageMath.clockFraction(resetsAt: Self.now.addingTimeInterval(-60), now: Self.now, calendar: Self.utc) == nil)
+        #expect(UsageMath.clockFraction(resetsAt: nil, now: Self.now, calendar: Self.utc) == nil)
     }
 
     // MARK: remainingText
