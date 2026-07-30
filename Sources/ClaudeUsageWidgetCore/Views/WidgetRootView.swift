@@ -10,6 +10,7 @@ public struct WidgetRootView: View {
     @AppStorage(WidgetSettings.widgetSizeKey) private var widgetSize = WidgetSettings.defaultSize
     @AppStorage(WidgetSettings.positionLockedKey) private var positionLocked = false
     @AppStorage(WidgetSettings.widgetVisibleKey) private var widgetVisible = true
+    @State private var hovering = false
     @State private var dragStartSize: Double?
 
     /// Drives the "updated N ago" line between fetches — the snapshot only
@@ -33,12 +34,11 @@ public struct WidgetRootView: View {
     }
 
     /// Everything scales from the 170 pt design size, so the composition is
-    /// identical at every panel size. The gap is wide enough to open a cross
-    /// through the middle; the controls live in its horizontal arm.
+    /// identical at every panel size.
     private var side: CGFloat { WidgetSettings.clampSize(widgetSize) }
     private var scale: Double { side / WidgetSettings.defaultSize }
-    private var pad: CGFloat { 8 * scale }
-    private var gap: CGFloat { 32 * scale }
+    private var pad: CGFloat { 12 * scale }
+    private var gap: CGFloat { 10 * scale }
     private var dialSize: CGFloat { (side - pad * 2 - gap) / 2 }
 
     public var body: some View {
@@ -65,10 +65,11 @@ public struct WidgetRootView: View {
             RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
                 .fill(Theme.panel.opacity(0.86))
         )
-        .overlay { controls }
+        .overlay(alignment: .top) { header }
         .overlay(alignment: .bottom) { statusLine(status) }
         .overlay { resizeGrips }
         .frame(width: side, height: side)
+        .onHover { hovering = $0 }
         .onReceive(Self.tick) { now = $0 }
     }
 
@@ -82,9 +83,10 @@ public struct WidgetRootView: View {
         )
     }
 
-    /// Hide, support, lock — sitting in the horizontal arm of the cross, where
-    /// they obstruct nothing.
-    private var controls: some View {
+    /// Hide, support and lock, in a strip across the top. Hidden until the
+    /// pointer is over the widget so the dials read cleanly at rest; the lock
+    /// stays visible while engaged so its state is never a surprise.
+    private var header: some View {
         HStack(spacing: 6 * scale) {
             Button {
                 widgetVisible = false
@@ -114,6 +116,15 @@ public struct WidgetRootView: View {
                 ? "Position and size are locked — click to unlock"
                 : "Click to lock the widget position and size")
         }
+        .padding(.horizontal, 8 * scale)
+        .padding(.vertical, 4 * scale)
+        .background(
+            RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
+                .fill(Theme.panel.opacity(0.95))
+        )
+        .padding(.top, 6 * scale)
+        .opacity(hovering || positionLocked ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: hovering)
     }
 
     /// Only speaks up when something is wrong or stale.
@@ -127,11 +138,10 @@ public struct WidgetRootView: View {
         }
     }
 
-    /// Which part of the frame a grip sits on, and how a drag there maps to a
+    /// Which edge of the frame a grip sits on, and how a drag there maps to a
     /// change in the single side length.
     private enum Grip: CaseIterable {
         case top, bottom, leading, trailing
-        case topLeading, topTrailing, bottomLeading, bottomTrailing
 
         var alignment: Alignment {
             switch self {
@@ -139,10 +149,6 @@ public struct WidgetRootView: View {
             case .bottom: .bottom
             case .leading: .leading
             case .trailing: .trailing
-            case .topLeading: .topLeading
-            case .topTrailing: .topTrailing
-            case .bottomLeading: .bottomLeading
-            case .bottomTrailing: .bottomTrailing
             }
         }
 
@@ -154,64 +160,49 @@ public struct WidgetRootView: View {
             case .bottom: translation.height
             case .leading: -translation.width
             case .trailing: translation.width
-            case .topLeading: max(-translation.width, -translation.height)
-            case .topTrailing: max(translation.width, -translation.height)
-            case .bottomLeading: max(-translation.width, translation.height)
-            case .bottomTrailing: max(translation.width, translation.height)
             }
         }
 
+        /// The same cursors mole-widget uses for its resize strip.
         var cursor: NSCursor {
             switch self {
             case .top, .bottom: .resizeUpDown
             case .leading, .trailing: .resizeLeftRight
-            default: .crosshair
             }
         }
 
-        var isCorner: Bool {
+        var isHorizontal: Bool {
             switch self {
-            case .top, .bottom, .leading, .trailing: false
-            default: true
+            case .leading, .trailing: true
+            case .top, .bottom: false
             }
         }
     }
 
-    /// Invisible grips around the whole frame. Disabled while locked. Corners
-    /// are declared after edges so they win the hit test where they overlap.
     private var resizeGrips: some View {
         ZStack {
-            ForEach(Grip.allCases.filter { !$0.isCorner }, id: \.self) { grip in
-                gripView(grip)
-            }
-            ForEach(Grip.allCases.filter { $0.isCorner }, id: \.self) { grip in
+            ForEach(Array(Grip.allCases), id: \.self) { grip in
                 gripView(grip)
             }
         }
     }
 
+    /// An invisible strip along one edge. Ten points at the design size —
+    /// wide enough to grab without hunting, narrow enough to leave the rest of
+    /// the panel free for dragging the window.
+    ///
+    /// The modifier order is load-bearing: `contentShape` has to come while the
+    /// view is still strip-sized. Applied after the expanding frame it would
+    /// claim the entire panel as its hit area, and every drag anywhere — even
+    /// in the middle — would resize instead of moving the window.
     private func gripView(_ grip: Grip) -> some View {
-        let thickness = 6 * scale
-
-        let width: CGFloat?
-        let height: CGFloat?
-        if grip.isCorner {
-            width = thickness
-            height = thickness
-        } else {
-            switch grip.alignment {
-            case .leading, .trailing:
-                width = thickness
-                height = nil
-            default:
-                width = nil
-                height = thickness
-            }
-        }
+        let thickness = 10 * scale
 
         return Color.clear
-            .frame(width: width, height: height)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: grip.alignment)
+            .frame(
+                width: grip.isHorizontal ? thickness : nil,
+                height: grip.isHorizontal ? nil : thickness
+            )
             .contentShape(Rectangle())
             .onHover { inside in
                 guard !positionLocked else { return }
@@ -227,6 +218,7 @@ public struct WidgetRootView: View {
                     }
                     .onEnded { _ in dragStartSize = nil }
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: grip.alignment)
     }
 }
 
