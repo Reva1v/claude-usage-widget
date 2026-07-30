@@ -22,6 +22,8 @@ public enum UsageDecoder {
             )
         }
 
+        foldScopedLimits(from: root, into: &buckets)
+
         guard !buckets.isEmpty else { throw UsageError.malformedResponse }
         return UsageSnapshot(buckets: buckets)
     }
@@ -46,6 +48,44 @@ public enum UsageDecoder {
     private static func isJSONBoolean(_ value: Any?) -> Bool {
         guard let value = value as? NSNumber else { return false }
         return CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
+    }
+
+    /// Folds per-model weekly limits from the `limits` array into synthetic
+    /// `seven_day_<model>` buckets.
+    ///
+    /// Since the Fable launch the server leaves the legacy top-level
+    /// `seven_day_<model>` fields null and reports scoped models only here, so
+    /// without this the per-model dial has nothing to show. Synthesising the
+    /// same key shape the flat fields used means every consumer downstream —
+    /// bucket selection, the dial, the menu picker — keeps working unchanged,
+    /// and a per-model limit added later appears on its own.
+    private static func foldScopedLimits(from root: [String: Any], into buckets: inout [String: UsageBucket]) {
+        guard let limits = root["limits"] as? [[String: Any]] else { return }
+
+        for limit in limits {
+            guard limit["kind"] as? String == "weekly_scoped",
+                  let percent = limit["percent"] as? Double,
+                  !isJSONBoolean(limit["percent"]),
+                  let scope = limit["scope"] as? [String: Any],
+                  let model = scope["model"] as? [String: Any],
+                  let displayName = model["display_name"] as? String
+            else { continue }
+
+            let key = "seven_day_" + slug(displayName)
+            // A real top-level bucket is authoritative; this only fills gaps.
+            guard buckets[key] == nil else { continue }
+            buckets[key] = UsageBucket(
+                utilization: percent,
+                resetsAt: resetDate(from: limit["resets_at"])
+            )
+        }
+    }
+
+    /// "Claude Opus 4.5" -> "claude_opus_4_5"
+    private static func slug(_ displayName: String) -> String {
+        let lowered = displayName.lowercased()
+        let parts = lowered.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        return parts.joined(separator: "_")
     }
 
     private static let plainFormatter = ISO8601DateFormatter()
