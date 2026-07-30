@@ -173,11 +173,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Keeps the window frame matching the stored side length. The widget is a
     /// square, so one number drives both axes.
+    ///
+    /// AppKit anchors a resize to the window's bottom-left, which would make the
+    /// widget appear to crawl up the screen as it grows. Re-pinning the top-left
+    /// keeps it where the user put it, whichever edge they dragged.
     private func syncWindowSize() {
         guard let window else { return }
         let side = WidgetSettings.size(in: .standard)
-        guard abs(window.frame.width - side) > 0.5 || abs(window.frame.height - side) > 0.5 else { return }
+        let frame = window.frame
+        guard abs(frame.width - side) > 0.5 || abs(frame.height - side) > 0.5 else { return }
+
+        let top = frame.maxY
         window.setContentSize(NSSize(width: side, height: side))
+        var moved = window.frame
+        moved.origin.y = top - moved.height
+        window.setFrameOrigin(moved.origin)
     }
 
     /// Shows or hides the window to match the stored flag. Idempotent, so

@@ -10,7 +10,6 @@ public struct WidgetRootView: View {
     @AppStorage(WidgetSettings.widgetSizeKey) private var widgetSize = WidgetSettings.defaultSize
     @AppStorage(WidgetSettings.positionLockedKey) private var positionLocked = false
     @AppStorage(WidgetSettings.widgetVisibleKey) private var widgetVisible = true
-    @State private var hovering = false
     @State private var dragStartSize: Double?
 
     /// Drives the "updated N ago" line between fetches — the snapshot only
@@ -34,12 +33,13 @@ public struct WidgetRootView: View {
     }
 
     /// Everything scales from the 170 pt design size, so the composition is
-    /// identical at every panel size.
+    /// identical at every panel size. The gap is wide enough to open a cross
+    /// through the middle; the controls live in its horizontal arm.
     private var side: CGFloat { WidgetSettings.clampSize(widgetSize) }
     private var scale: Double { side / WidgetSettings.defaultSize }
-    private var dialSize: CGFloat { 68 * scale }
-    private var gap: CGFloat { 10 * scale }
-    private var pad: CGFloat { 12 * scale }
+    private var pad: CGFloat { 8 * scale }
+    private var gap: CGFloat { 32 * scale }
+    private var dialSize: CGFloat { (side - pad * 2 - gap) / 2 }
 
     public var body: some View {
         let status = StatusLine.text(for: store.state, now: now)
@@ -65,11 +65,10 @@ public struct WidgetRootView: View {
             RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
                 .fill(Theme.panel.opacity(0.86))
         )
-        .overlay(alignment: .topTrailing) { controls }
-        .overlay(alignment: .bottom) { footer(status: status) }
-        .overlay(alignment: .bottomTrailing) { resizeHandle }
+        .overlay { controls }
+        .overlay(alignment: .bottom) { statusLine(status) }
+        .overlay { resizeGrips }
         .frame(width: side, height: side)
-        .onHover { hovering = $0 }
         .onReceive(Self.tick) { now = $0 }
     }
 
@@ -83,70 +82,140 @@ public struct WidgetRootView: View {
         )
     }
 
-    /// Lock and hide, revealed on hover so the dials stay unobstructed at rest.
+    /// Hide, support, lock — sitting in the horizontal arm of the cross, where
+    /// they obstruct nothing.
     private var controls: some View {
-        HStack(spacing: 2 * scale) {
-            Button {
-                positionLocked.toggle()
-            } label: {
-                Image(systemName: positionLocked ? "lock.fill" : "lock.open")
-                    .font(.system(size: 9 * scale, weight: .medium))
-                    .foregroundStyle(positionLocked ? Theme.warning : Theme.dim)
-                    .frame(width: 18 * scale, height: 18 * scale)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(positionLocked
-                ? "Position and size are locked — click to unlock"
-                : "Click to lock the widget position and size")
-
+        HStack(spacing: 6 * scale) {
             Button {
                 widgetVisible = false
             } label: {
                 Image(systemName: "eye.slash")
                     .font(.system(size: 9 * scale, weight: .medium))
                     .foregroundStyle(Theme.dim)
-                    .frame(width: 18 * scale, height: 18 * scale)
+                    .frame(width: 16 * scale, height: 16 * scale)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Hide widget — bring it back from the menu bar icon")
+
+            KofiButton(scale: scale)
+
+            Button {
+                positionLocked.toggle()
+            } label: {
+                Image(systemName: positionLocked ? "lock.fill" : "lock.open")
+                    .font(.system(size: 9 * scale, weight: .medium))
+                    .foregroundStyle(positionLocked ? Theme.warning : Theme.dim)
+                    .frame(width: 16 * scale, height: 16 * scale)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(positionLocked
+                ? "Position and size are locked — click to unlock"
+                : "Click to lock the widget position and size")
         }
-        .padding(4 * scale)
-        // The lock stays visible while engaged, so its state is never a surprise.
-        .opacity(hovering || positionLocked ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: hovering)
     }
 
-    /// The status line when something needs saying, the Ko-fi badge otherwise
-    /// while hovering.
+    /// Only speaks up when something is wrong or stale.
     @ViewBuilder
-    private func footer(status: String?) -> some View {
+    private func statusLine(_ status: String?) -> some View {
         if let status {
             Text(status)
                 .font(Theme.caption(scale: scale))
                 .foregroundStyle(Theme.dim)
-                .padding(.bottom, 4 * scale)
-        } else {
-            KofiButton(scale: scale)
-                .padding(.bottom, 4 * scale)
-                .opacity(hovering ? 1 : 0)
-                .animation(.easeInOut(duration: 0.15), value: hovering)
+                .padding(.bottom, 2 * scale)
         }
     }
 
-    /// Drag the bottom-right corner to resize. One delta drives the single side
-    /// length, so the panel can only ever be a square.
-    private var resizeHandle: some View {
-        Color.clear
-            .frame(width: 16 * scale, height: 16 * scale)
+    /// Which part of the frame a grip sits on, and how a drag there maps to a
+    /// change in the single side length.
+    private enum Grip: CaseIterable {
+        case top, bottom, leading, trailing
+        case topLeading, topTrailing, bottomLeading, bottomTrailing
+
+        var alignment: Alignment {
+            switch self {
+            case .top: .top
+            case .bottom: .bottom
+            case .leading: .leading
+            case .trailing: .trailing
+            case .topLeading: .topLeading
+            case .topTrailing: .topTrailing
+            case .bottomLeading: .bottomLeading
+            case .bottomTrailing: .bottomTrailing
+            }
+        }
+
+        /// Outward is positive: dragging an edge away from the centre grows the
+        /// panel, whichever edge it is.
+        func delta(_ translation: CGSize) -> Double {
+            switch self {
+            case .top: -translation.height
+            case .bottom: translation.height
+            case .leading: -translation.width
+            case .trailing: translation.width
+            case .topLeading: max(-translation.width, -translation.height)
+            case .topTrailing: max(translation.width, -translation.height)
+            case .bottomLeading: max(-translation.width, translation.height)
+            case .bottomTrailing: max(translation.width, translation.height)
+            }
+        }
+
+        var cursor: NSCursor {
+            switch self {
+            case .top, .bottom: .resizeUpDown
+            case .leading, .trailing: .resizeLeftRight
+            default: .crosshair
+            }
+        }
+
+        var isCorner: Bool {
+            switch self {
+            case .top, .bottom, .leading, .trailing: false
+            default: true
+            }
+        }
+    }
+
+    /// Invisible grips around the whole frame. Disabled while locked. Corners
+    /// are declared after edges so they win the hit test where they overlap.
+    private var resizeGrips: some View {
+        ZStack {
+            ForEach(Grip.allCases.filter { !$0.isCorner }, id: \.self) { grip in
+                gripView(grip)
+            }
+            ForEach(Grip.allCases.filter { $0.isCorner }, id: \.self) { grip in
+                gripView(grip)
+            }
+        }
+    }
+
+    private func gripView(_ grip: Grip) -> some View {
+        let thickness = 6 * scale
+
+        let width: CGFloat?
+        let height: CGFloat?
+        if grip.isCorner {
+            width = thickness
+            height = thickness
+        } else {
+            switch grip.alignment {
+            case .leading, .trailing:
+                width = thickness
+                height = nil
+            default:
+                width = nil
+                height = thickness
+            }
+        }
+
+        return Color.clear
+            .frame(width: width, height: height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: grip.alignment)
             .contentShape(Rectangle())
             .onHover { inside in
                 guard !positionLocked else { return }
-                // NSCursor.frameResize(position:directions:) needs macOS 15;
-                // the deployment target is 14, so crosshair stands in for it.
-                if inside { NSCursor.crosshair.push() }
-                else { NSCursor.pop() }
+                if inside { grip.cursor.push() } else { NSCursor.pop() }
             }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
@@ -154,10 +223,7 @@ public struct WidgetRootView: View {
                         guard !positionLocked else { return }
                         let start = dragStartSize ?? widgetSize
                         dragStartSize = start
-                        // The larger of the two deltas wins, so a diagonal drag
-                        // feels natural even though only one number changes.
-                        let delta = max(value.translation.width, value.translation.height)
-                        widgetSize = WidgetSettings.clampSize(start + delta)
+                        widgetSize = WidgetSettings.clampSize(start + grip.delta(value.translation))
                     }
                     .onEnded { _ in dragStartSize = nil }
             )
