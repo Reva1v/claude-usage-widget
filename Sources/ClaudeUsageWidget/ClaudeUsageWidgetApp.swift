@@ -42,8 +42,87 @@ struct ClaudeUsageWidgetApp: App {
             Button("Quit Claude Usage Widget") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q")
         } label: {
-            Image(nsImage: Self.menuBarIcon)
+            MenuBarLabel(store: appDelegate.store, fallback: Self.menuBarIcon)
         }
+    }
+}
+
+/// Draws the live usage figures into the menu bar.
+///
+/// `MenuBarExtra` squeezes a custom SwiftUI label onto one line and clips its
+/// width, so the two-line layout is rasterised into an `NSImage` instead — the
+/// menu bar renders images at full size reliably. Reading the `@Observable`
+/// store's properties in `body` subscribes this view to its updates.
+private struct MenuBarLabel: View {
+    let store: UsageStore
+    let fallback: NSImage
+
+    @AppStorage(WidgetSettings.modelBucketKey) private var modelBucket = ""
+
+    var body: some View {
+        let snapshot: UsageSnapshot? = {
+            if case let .ok(snapshot, _) = store.state { return snapshot }
+            return store.lastSnapshot
+        }()
+
+        let metrics = MenuBarText.metrics(for: DialModel.all(
+            snapshot: snapshot,
+            preferredModelKey: modelBucket.isEmpty ? nil : modelBucket,
+            now: Date()
+        ))
+
+        Image(nsImage: metrics.isEmpty ? fallback : Self.image(for: metrics))
+    }
+
+    /// Each metric is a column: a small label on top, the figure below.
+    ///
+    /// Rows are packed to cap height rather than to the font's full line
+    /// height, so that when the image is scaled down to the menu bar's
+    /// thickness the glyphs render as large as they can.
+    private static func image(for metrics: [MenuBarMetric]) -> NSImage {
+        let labelFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        let valueFont = NSFont.monospacedSystemFont(ofSize: 14, weight: .semibold)
+
+        // Drawn opaque black; the image is a template, so macOS ignores the hue
+        // and tints the glyphs to match the menu bar itself — dark on light
+        // bars, light on dark — exactly like the clock and Wi-Fi icons.
+        func attributes(_ font: NSFont) -> [NSAttributedString.Key: Any] {
+            [.font: font, .foregroundColor: NSColor.black]
+        }
+
+        let cells = metrics.map { metric -> (top: NSAttributedString, bottom: NSAttributedString, width: CGFloat) in
+            let top = NSAttributedString(string: metric.label, attributes: attributes(labelFont))
+            let bottom = NSAttributedString(string: metric.value, attributes: attributes(valueFont))
+            return (top, bottom, ceil(max(top.size().width, bottom.size().width)))
+        }
+
+        let columnGap: CGFloat = 10
+        let rowGap: CGFloat = 3
+        let verticalPadding: CGFloat = 2 // so cap tops and bottoms are not clipped
+
+        let width = cells.reduce(0) { $0 + $1.width } + columnGap * CGFloat(max(0, cells.count - 1))
+        let height = ceil(valueFont.capHeight + rowGap + labelFont.capHeight + verticalPadding * 2)
+        let bottomBaseline = verticalPadding
+        let topBaseline = valueFont.capHeight + rowGap + verticalPadding
+
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            var x: CGFloat = 0
+            for cell in cells {
+                cell.bottom.draw(at: NSPoint(x: x, y: bottomBaseline + valueFont.descender))
+                cell.top.draw(at: NSPoint(x: x, y: topBaseline + labelFont.descender))
+                x += cell.width + columnGap
+            }
+            return true
+        }
+        image.isTemplate = true
+
+        // Scale to the bar's thickness so both rows stay visible instead of the
+        // top one being clipped.
+        let thickness = NSStatusBar.system.thickness
+        if height > thickness {
+            image.size = NSSize(width: width * thickness / height, height: thickness)
+        }
+        return image
     }
 }
 
