@@ -72,9 +72,9 @@ background at launch and offers to install newer releases in place.
 
 A `make app` bundle built locally is ad-hoc signed (`codesign --sign -`), so
 macOS treats each rebuild as a new, unverified binary — the keychain
-permission granted for one build does not carry over to the next, and Sparkle
-does not check for updates from it. That is a development artifact; released
-users only ever run the signed, notarised DMG from GitHub Releases.
+permission granted for one build does not carry over to the next. That is a
+development artifact; released users only ever run the signed, notarised DMG
+from GitHub Releases.
 
 ## Service status
 
@@ -105,6 +105,12 @@ make test   # run the test suite (98 tests)
 > **Important:** run tests only via `make test`. On a machine without full Xcode
 > a bare `swift test` silently runs zero tests and exits 0 — the Makefile passes
 > the toolchain flags Swift Testing needs from Command Line Tools.
+
+> **Before tagging a release:** bump both `CFBundleShortVersionString` (to the
+> tag's version) and `CFBundleVersion` (to any higher integer) in
+> `Resources/Info.plist`. Sparkle compares `CFBundleVersion`, not the marketing
+> string, to decide whether an update exists — the release workflow refuses to
+> publish if either is not bumped.
 
 ## Architecture
 

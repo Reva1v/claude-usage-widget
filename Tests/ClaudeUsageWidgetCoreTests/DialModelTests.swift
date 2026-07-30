@@ -14,9 +14,11 @@ struct DialModelTests {
 
     @Test("builds a dial from a bucket")
     func buildsFromBucket() {
-        // The offset is spelled as a Double literal rather than `2 * 3600`:
-        // an integer arithmetic expression defaults to Int before it can be
-        // converted, which older Swift versions reject outright.
+        // The offset is a Double literal: `2 * 3600` would be inferred as
+        // Int and rejected by older Swift versions.
+        // The reset lands two hours out; asserting the exact "2h 0m" text
+        // is safe because `now` is injected here rather than read from the
+        // system clock, so the result is deterministic.
         let model = DialModel.make(
             key: "five_hour",
             title: "SESSION",

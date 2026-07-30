@@ -14,6 +14,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Runs before anything expensive. Both mistakes below are cheap to fix and
+      # ruinous to miss, and a later check would only catch them after a
+      # notarisation submission had already been spent.
+      - name: Verify version bookkeeping
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          BUNDLE_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Resources/Info.plist)
+          PLIST_SHORT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
+
+          # Sparkle compares CFBundleVersion, not the marketing version. An
+          # unbumped bundle version publishes a release that no installed copy
+          # will ever see as an update — a silent failure that looks like a
+          # successful release.
+          PREV=$(grep -o '<sparkle:version>[0-9]*</sparkle:version>' appcast.xml | grep -o '[0-9]*' || echo 0)
+          if [ "$BUNDLE_VER" -le "${PREV:-0}" ]; then
+            echo "CFBundleVersion is $BUNDLE_VER but the last release published $PREV."
+            echo "Bump CFBundleVersion in Resources/Info.plist before tagging."
+            exit 1
+          fi
+
+          # Sparkle's update dialog reads the tag while the app's own menu reads
+          # the plist; letting them diverge means a user installs "0.2.0" and
+          # still sees 0.1.0 in the menu afterwards.
+          if [ "$PLIST_SHORT" != "$VERSION" ]; then
+            echo "Tag says $VERSION but CFBundleShortVersionString is $PLIST_SHORT."
+            echo "Update Resources/Info.plist to match the tag before tagging."
+            exit 1
+          fi
+
       - name: Import Developer ID certificate
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
