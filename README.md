@@ -43,7 +43,7 @@ The menu itself:
 
 - **Claude Usage Widget vX.Y.Z — GitHub** — opens the repository
 - **Report an Issue**
-- **Check for Updates…** — asks GitHub for the latest published release
+- **Check for Updates…** — asks Sparkle to check the appcast right now
 - **Refresh now** — fetch immediately instead of waiting out the 5-minute cycle
 - **Model limit** — pick which per-model weekly limit the third dial shows
   (appears once the server returns more than one)
@@ -62,6 +62,19 @@ the keychain item, and again after every rebuild from source: an ad-hoc code
 signature changes with each build, and macOS treats a differently-signed
 binary as a new requester. If the token has expired, the widget says so and
 the next Claude Code session refreshes it.
+
+## Update
+
+Once installed from a signed DMG, the app keeps itself up to date through
+[Sparkle](https://sparkle-project.org): it checks the appcast in the
+background at launch and offers to install newer releases in place.
+"Check for Updates…" in the menu bar drives the same mechanism manually.
+
+A `make app` bundle built locally is ad-hoc signed (`codesign --sign -`), so
+macOS treats each rebuild as a new, unverified binary — the keychain
+permission granted for one build does not carry over to the next, and Sparkle
+does not check for updates from it. That is a development artifact; released
+users only ever run the signed, notarised DMG from GitHub Releases.
 
 ## Service status
 
@@ -86,7 +99,7 @@ open "dist/Claude Usage Widget.app"
 
 ```bash
 make run    # run a dev build
-make test   # run the test suite (105 tests)
+make test   # run the test suite (98 tests)
 ```
 
 > **Important:** run tests only via `make test`. On a machine without full Xcode
@@ -102,7 +115,7 @@ Sources/ClaudeUsageWidgetCore/
   Status/        — Claude's own service status: fetch and decode
   Store/         — @Observable stores, 5-minute refresh
   Formatting/    — menu bar text
-  Update/        — GitHub release check
+  Update/        — GitHub repository and issue links (update detection is Sparkle's)
   Views/         — SwiftUI dials, status ring and panel
 Sources/ClaudeUsageWidget/  — app shell: desktop window, MenuBarExtra
 ```

@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleExecutable</key>
 	<string>ClaudeUsageWidget</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.sbezbabnykh.claude-usage-widget</string>
 	<key>CFBundleName</key>
@@ -20,5 +22,11 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/TadelUnso/claude-usage-widget/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>9MskiV7ZponRn+v2sfPJyTq23Z3o6A3xuSz7mSWfSL0=</string>
 </dict>
 </plist>

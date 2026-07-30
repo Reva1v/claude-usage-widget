@@ -23,6 +23,12 @@ app:
 	mkdir -p "$(DIST)/Contents/MacOS"
 	cp .build/release/ClaudeUsageWidget "$(DIST)/Contents/MacOS/ClaudeUsageWidget"
 	cp Resources/Info.plist "$(DIST)/Contents/Info.plist"
+	mkdir -p "$(DIST)/Contents/Resources"
+	cp Resources/AppIcon.icns "$(DIST)/Contents/Resources/AppIcon.icns"
+	mkdir -p "$(DIST)/Contents/Frameworks"
+	cp -R .build/release/Sparkle.framework "$(DIST)/Contents/Frameworks/Sparkle.framework"
+	install_name_tool -add_rpath "@executable_path/../Frameworks" "$(DIST)/Contents/MacOS/ClaudeUsageWidget"
+	codesign --force --sign - "$(DIST)/Contents/Frameworks/Sparkle.framework"
 	codesign --force --sign - "$(DIST)"
 	@echo "Done: $(DIST)"
 

@@ -1,6 +1,7 @@
 import AppKit
 import ClaudeUsageWidgetCore
 import ServiceManagement
+import Sparkle
 import SwiftUI
 
 @main
@@ -36,7 +37,10 @@ struct ClaudeUsageWidgetApp: App {
             Button("Report an Issue") {
                 NSWorkspace.shared.open(UpdateChecker.issuesPageURL)
             }
-            UpdateCheckButton()
+            Button("Check for Updates…") {
+                appDelegate.updaterController.updater.checkForUpdates()
+            }
+            .disabled(!appDelegate.updaterController.updater.canCheckForUpdates)
             Divider()
             Button("Refresh now") { appDelegate.store.refresh() }
             Divider()
@@ -135,53 +139,6 @@ private struct MenuBarLabel: View {
     }
 }
 
-/// "Check for Updates…" — asks GitHub whether a newer release is published and
-/// reports the answer in an alert, since a menu item cannot show a result.
-private struct UpdateCheckButton: View {
-    @State private var checking = false
-
-    var body: some View {
-        Button(checking ? "Checking…" : "Check for Updates…") {
-            checking = true
-            Task { @MainActor in
-                defer { checking = false }
-                await check()
-            }
-        }
-        .disabled(checking)
-    }
-
-    private func check() async {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-
-        do {
-            let latest = try await UpdateChecker.latestRelease()
-            if let latest, UpdateChecker.isNewer(latest, than: CoreInfo.version) {
-                alert.messageText = "Version \(latest) is available"
-                alert.informativeText = "You are running \(CoreInfo.version)."
-                alert.addButton(withTitle: "Open Releases")
-                alert.addButton(withTitle: "Later")
-                NSApp.activate(ignoringOtherApps: true)
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(UpdateChecker.releasesPageURL)
-                }
-                return
-            }
-            alert.messageText = "You are up to date"
-            alert.informativeText = "Version \(CoreInfo.version) is the newest available."
-        } catch {
-            alert.alertStyle = .warning
-            alert.messageText = "Could not check for updates"
-            alert.informativeText = error.localizedDescription
-        }
-
-        alert.addButton(withTitle: "OK")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
-    }
-}
-
 /// Lists the per-model buckets the server actually returned. Hidden entirely
 /// when there is nothing to choose between.
 private struct ModelBucketPicker: View {
@@ -259,6 +216,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = UsageStore()
     let statusStore = StatusStore()
     private var window: DesktopWindow?
+
+    /// Sparkle updater. `startingUpdater: true` kicks off the background check
+    /// on launch (gated by SUEnableAutomaticChecks in Info.plist); the menu's
+    /// "Check for Updates…" item drives it manually.
+    let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // no Dock icon

@@ -8,6 +8,12 @@ let package = Package(
         .library(name: "ClaudeUsageWidgetCore", targets: ["ClaudeUsageWidgetCore"]),
         .executable(name: "ClaudeUsageWidget", targets: ["ClaudeUsageWidget"]),
     ],
+    dependencies: [
+        // The one third-party dependency, and a deliberate exception to this
+        // project's zero-dependency rule: signed in-place updates for a macOS
+        // app distributed outside the App Store have no reasonable substitute.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.0.0"),
+    ],
     targets: [
         .target(
             name: "ClaudeUsageWidgetCore",
@@ -16,7 +22,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "ClaudeUsageWidget",
-            dependencies: ["ClaudeUsageWidgetCore"],
+            dependencies: [
+                "ClaudeUsageWidgetCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/ClaudeUsageWidget",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
