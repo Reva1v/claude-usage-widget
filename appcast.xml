@@ -6,16 +6,16 @@
         <description>Claude Code usage limits as a desktop widget for macOS</description>
         <language>en</language>
         <item>
-            <title>Claude Usage Widget 0.1.0</title>
-            <pubDate>Thu, 30 Jul 2026 17:11:03 +0000</pubDate>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <title>Claude Usage Widget 0.1.1</title>
+            <pubDate>Thu, 30 Jul 2026 17:20:50 +0000</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure
-                url="https://github.com/TadelUnso/claude-usage-widget/releases/download/v0.1.0/ClaudeUsageWidget.dmg"
-                length="1637952"
+                url="https://github.com/TadelUnso/claude-usage-widget/releases/download/v0.1.1/ClaudeUsageWidget.dmg"
+                length="1640385"
                 type="application/octet-stream"
-                sparkle:edSignature="kK464I3XyDDYgfRDP02wSCTSu7+sm3q37Nz5FUNEImFRwrJvAI5WC4AKKcaILRmWZ9rptc2FIWqXM7i9bRs6AA=="
+                sparkle:edSignature="T8gi+c6++p1scosmog/iggisZ7gjjYKt23jV7JllccAm2wMcZmqYq/p+D5iNl4yi/eVpkh6doQn3dbwI3UR1Bg=="
             />
         </item>
     </channel>
