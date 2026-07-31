@@ -45,6 +45,7 @@ public struct WidgetRootView: View {
 
     public var body: some View {
         let status = StatusLine.text(for: store.state, now: now)
+        let notice = BlockingNotice.make(for: store.state)
         let models = DialModel.all(
             snapshot: snapshot,
             preferredModelKey: modelBucket.isEmpty ? nil : modelBucket,
@@ -73,6 +74,10 @@ public struct WidgetRootView: View {
             }
         }
         .frame(width: side - pad * 2, height: side - pad * 2)
+        // The long-form explanation rides the dials rather than the notice on
+        // top of them: the notice takes no hits, so that the panel keeps its
+        // hover and its drag.
+        .help(statusHelp ?? "")
         .padding(pad)
         .background(
             ZStack {
@@ -81,6 +86,7 @@ public struct WidgetRootView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 22 * scale, style: .continuous))
         )
+        .overlay { blockingNotice(notice) }
         .overlay(alignment: .top) { header }
         .overlay(alignment: .bottom) { statusLine(status) }
         .overlay { resizeGrips }
@@ -167,7 +173,37 @@ public struct WidgetRootView: View {
                 .font(Theme.caption(scale: scale))
                 .foregroundStyle(Theme.dim)
                 .padding(.bottom, 2 * scale)
-                .help(statusHelp ?? "")
+        }
+    }
+
+    /// Covers the dials once their figures stop meaning anything, leaving the
+    /// instruction and nothing else to read.
+    ///
+    /// Takes no hits: the panel is dragged and resized through the views below
+    /// and around it, and the header fades in on hover, so a scrim that
+    /// swallowed the mouse would strand the widget where it stands.
+    @ViewBuilder
+    private func blockingNotice(_ notice: BlockingNotice?) -> some View {
+        if let notice {
+            VStack(spacing: 5 * scale) {
+                Text(notice.title)
+                    .font(Theme.value(scale: scale))
+                    .foregroundStyle(Theme.text)
+                Text(notice.detail)
+                    .font(Theme.caption(scale: scale))
+                    .foregroundStyle(Theme.dim)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, pad)
+            // Clears the header strip, which fades in above this on hover.
+            .padding(.top, 31 * scale)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // As opaque as the header: at anything thinner the dials read
+            // through, and a figure half-visible behind a "this is wrong"
+            // notice is worse than no figure at all.
+            .background(Theme.panel.opacity(0.92))
+            .clipShape(RoundedRectangle(cornerRadius: 22 * scale, style: .continuous))
+            .allowsHitTesting(false)
         }
     }
 
@@ -187,7 +223,13 @@ public struct WidgetRootView: View {
             nothing for this widget to show.
             """
         case .failed(.unauthorized):
-            "Claude Code's stored token was rejected. Signing in again refreshes it."
+            """
+            Claude Code's stored token has expired, and only Claude Code can \
+            refresh it — the widget reads that token and never writes to it. \
+            Run `claude` in a terminal and the widget picks up the fresh token \
+            within five minutes. Until then the dials would be showing figures \
+            from before it expired, so they are covered rather than trusted.
+            """
         default:
             nil
         }

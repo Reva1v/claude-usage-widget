@@ -51,10 +51,11 @@ public enum StatusLine {
             guard age >= staleAfter else { return nil }
             let ago = UsageMath.remainingText(resetsAt: now, now: fetchedAt)
             return ago.map { "updated \($0) ago" }
-        case .failed(.noCredentials):
-            return "sign in to Claude Code"
-        case .failed(.unauthorized):
-            return "session expired — sign in again"
+        // The two states that make the dials meaningless are spoken for by
+        // `BlockingNotice`, which covers the panel; repeating them down here
+        // would say the same thing twice.
+        case .failed(.noCredentials), .failed(.unauthorized):
+            return nil
         case .failed(.malformedResponse):
             return "unexpected response from the API"
         case let .failed(.network(message)):

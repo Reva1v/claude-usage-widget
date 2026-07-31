@@ -104,10 +104,14 @@ struct StatusLineTests {
 
     @Test("each failure has its own wording")
     func reportsFailures() {
-        #expect(StatusLine.text(for: .failed(.noCredentials), now: Self.now) == "sign in to Claude Code")
-        #expect(StatusLine.text(for: .failed(.unauthorized), now: Self.now) == "session expired — sign in again")
         #expect(StatusLine.text(for: .failed(.malformedResponse), now: Self.now) == "unexpected response from the API")
         #expect(StatusLine.text(for: .failed(.network("HTTP 500")), now: Self.now) == "HTTP 500")
+    }
+
+    @Test("the credential failures stay silent — BlockingNotice covers the panel for those")
+    func defersToTheBlockingNotice() {
+        #expect(StatusLine.text(for: .failed(.noCredentials), now: Self.now) == nil)
+        #expect(StatusLine.text(for: .failed(.unauthorized), now: Self.now) == nil)
     }
 
     @Test("the first load says so")
