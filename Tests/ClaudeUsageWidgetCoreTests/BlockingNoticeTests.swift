@@ -7,16 +7,16 @@ struct BlockingNoticeTests {
     static let now = Date(timeIntervalSince1970: 1_785_348_000)
     static let snapshot = UsageSnapshot(buckets: ["five_hour": UsageBucket(utilization: 1, resetsAt: nil)])
 
-    @Test("an expired token points at Claude Code, which is the only thing that can refresh it")
+    @Test("an expired web session asks for a fresh Claude.ai sign-in")
     func coversUnauthorized() {
         let notice = BlockingNotice.make(for: .failed(.unauthorized))
-        #expect(notice == BlockingNotice(title: "Session expired", detail: "Open Claude Code to refresh"))
+        #expect(notice == BlockingNotice(title: "Session expired", detail: "Sign in to Claude.ai again"))
     }
 
     @Test("no credentials at all asks for a sign-in")
     func coversNoCredentials() {
         let notice = BlockingNotice.make(for: .failed(.noCredentials))
-        #expect(notice == BlockingNotice(title: "Not signed in", detail: "Sign in to Claude Code"))
+        #expect(notice == BlockingNotice(title: "Not signed in", detail: "Use the menu to sign in to Claude.ai"))
     }
 
     @Test("states whose dials still mean something stay uncovered")

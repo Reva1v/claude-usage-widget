@@ -20,9 +20,14 @@ public struct UsageBucket: Equatable, Sendable {
 /// a vanished one should require a code change.
 public struct UsageSnapshot: Equatable, Sendable {
     public let buckets: [String: UsageBucket]
+    /// When the source actually observed these figures. Network responses are
+    /// current and leave this nil; Claude Code's statusline bridge supplies the
+    /// capture time so stale cached figures are labelled honestly.
+    public let sourceUpdatedAt: Date?
 
-    public init(buckets: [String: UsageBucket]) {
+    public init(buckets: [String: UsageBucket], sourceUpdatedAt: Date? = nil) {
         self.buckets = buckets
+        self.sourceUpdatedAt = sourceUpdatedAt
     }
 
     public subscript(key: String) -> UsageBucket? { buckets[key] }
@@ -48,9 +53,9 @@ extension UsageError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .noCredentials:
-            "No Claude Code credentials were found in the keychain."
+            "No Claude.ai web session was found."
         case .unauthorized:
-            "The token was rejected. Sign in to Claude Code again."
+            "The Claude.ai session expired. Sign in again from the widget menu."
         case .malformedResponse:
             "The server returned something unexpected."
         case .rateLimited:

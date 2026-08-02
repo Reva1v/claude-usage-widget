@@ -17,9 +17,9 @@ public struct BlockingNotice: Equatable, Sendable {
     public static func make(for state: UsageStore.State) -> BlockingNotice? {
         switch state {
         case .failed(.noCredentials):
-            return BlockingNotice(title: "Not signed in", detail: "Sign in to Claude Code")
+            return BlockingNotice(title: "Not signed in", detail: "Use the menu to sign in to Claude.ai")
         case .failed(.unauthorized):
-            return BlockingNotice(title: "Session expired", detail: "Open Claude Code to refresh")
+            return BlockingNotice(title: "Session expired", detail: "Sign in to Claude.ai again")
         default:
             return nil
         }

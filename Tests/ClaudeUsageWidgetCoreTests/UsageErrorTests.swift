@@ -7,9 +7,9 @@ struct UsageErrorTests {
     @Test("every case reads as a sentence, not as Swift syntax")
     func readableMessages() {
         #expect(UsageError.noCredentials.localizedDescription
-            == "No Claude Code credentials were found in the keychain.")
+            == "No Claude.ai web session was found.")
         #expect(UsageError.unauthorized.localizedDescription
-            == "The token was rejected. Sign in to Claude Code again.")
+            == "The Claude.ai session expired. Sign in again from the widget menu.")
         #expect(UsageError.malformedResponse.localizedDescription
             == "The server returned something unexpected.")
     }

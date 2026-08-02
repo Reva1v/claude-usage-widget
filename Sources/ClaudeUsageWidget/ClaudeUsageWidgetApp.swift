@@ -43,6 +43,7 @@ struct ClaudeUsageWidgetApp: App {
             .disabled(!appDelegate.updaterController.updater.canCheckForUpdates)
             Divider()
             Button("Refresh now") { appDelegate.store.refresh() }
+            Button("Sign in to Claude.ai…") { appDelegate.signInToClaudeAi() }
             Divider()
             ModelBucketPicker(store: appDelegate.store, selection: $modelBucket)
             Toggle("Lock position", isOn: $positionLocked)
@@ -213,9 +214,17 @@ final class DesktopWindow: NSWindow {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let store = UsageStore()
+    private let webSession = ClaudeWebSession()
+    lazy var store = UsageStore(
+        cachedSnapshot: { nil },
+        fetch: { [webSession] _ in try await webSession.fetchUsage() },
+        // UsageStore's injected fetch API predates the web-session transport.
+        // The real credential check happens inside ClaudeWebSession.
+        tokenProvider: { "claude.ai-web-session" }
+    )
     let statusStore = StatusStore()
     private var window: DesktopWindow?
+    private var loginWindowController: ClaudeLoginWindowController?
 
     /// Sparkle updater. `startingUpdater: true` kicks off the background check
     /// on launch (gated by SUEnableAutomaticChecks in Info.plist); the menu's
@@ -260,6 +269,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncWindowSize()
         if WidgetSettings.isVisible(in: .standard) {
             window.orderFrontRegardless()
+        }
+
+        // A fresh install has no WebKit cookie jar yet. Put the one required
+        // action in front of the user immediately instead of making them hunt
+        // through a menu while the widget says only “Not signed in”.
+        Task { [weak self] in
+            guard let self, !(await webSession.hasSessionCookie()) else { return }
+            signInToClaudeAi()
         }
 
         NotificationCenter.default.addObserver(
@@ -309,5 +326,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
         statusStore.stop()
+    }
+
+    func signInToClaudeAi() {
+        if let loginWindowController {
+            loginWindowController.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let controller = ClaudeLoginWindowController(dataStore: .default()) { [weak self] in
+            guard let self else { return }
+            webSession.clearCachedOrganization()
+            loginWindowController = nil
+            store.refresh()
+        }
+        loginWindowController = controller
+        controller.showWindow(nil)
+        controller.window?.center()
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

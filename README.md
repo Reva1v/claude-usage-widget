@@ -57,14 +57,17 @@ The menu itself:
 
 ## How it reads your usage
 
-The widget calls `https://api.anthropic.com/api/oauth/usage` with the OAuth
-token Claude Code already stores in your login keychain. It reads that item
-and nothing else, and never writes to it — Claude Code owns and refreshes
-those credentials. macOS asks for permission the first time the widget reads
-the keychain item, and again after every rebuild from source: an ad-hoc code
-signature changes with each build, and macOS treats a differently-signed
-binary as a new requester. If the token has expired, the widget says so and
-the next Claude Code session refreshes it.
+The widget reads your usage through an authenticated claude.ai session. On
+first launch it opens a sign-in window; once you are signed in, the session
+cookie lives in the widget's own WebKit store, and the widget asks
+`claude.ai/api/organizations/<id>/usage` for the same figures the web app
+shows you. Sign in again from the menu whenever the session expires.
+
+It deliberately does not use `api.anthropic.com/api/oauth/usage`. That
+endpoint carries a Cloudflare rate limit strict enough that a widget polling
+every five minutes trips it, and the resulting block is renewed by each
+further request rather than expiring — the widget could then never recover on
+its own.
 
 ## Update
 
@@ -74,10 +77,9 @@ background at launch and offers to install newer releases in place.
 "Check for Updates…" in the menu bar drives the same mechanism manually.
 
 A `make app` bundle built locally is ad-hoc signed (`codesign --sign -`), so
-macOS treats each rebuild as a new, unverified binary — the keychain
-permission granted for one build does not carry over to the next. That is a
-development artifact; released users only ever run the signed, notarised DMG
-from GitHub Releases.
+macOS treats each rebuild as a new, unverified binary. That is a development
+artifact; released users only ever run the signed, notarised DMG from GitHub
+Releases.
 
 ## Service status
 
@@ -88,10 +90,12 @@ falls back to the page-wide status instead.
 ## Known limitations
 
 **A Claude subscription is required.** The usage endpoint this widget reads is
-subscription-only. If Claude Code is authenticated with an API key, Bedrock or
-Vertex, usage is billed per token and no session or weekly limit exists — the
-widget will say so rather than show empty dials, and there is nothing to
-configure.
+subscription-only. On an account billed per token there is no session or weekly
+limit to show — the widget will say so rather than show empty dials, and there
+is nothing to configure.
+
+**The usage API is undocumented.** It is the same call claude.ai makes for its
+own usage screen, so it can change without notice and take the dials with it.
 
 **The per-model dial depends on your plan.** A separate weekly limit for a
 specific model is a Max and Team Premium arrangement. On Pro and Team Standard
@@ -101,15 +105,15 @@ whichever per-model limit your account does have, or `n/a` if it has none.
 **Apple silicon only.** Releases are built for arm64. Intel Macs can build from
 source but there is no signed build for them.
 
-**macOS asks for keychain access on first launch.** The widget reads the token
-Claude Code stored there; approving once is enough. A locally built bundle is
-ad-hoc signed, so each rebuild counts as a new app and asks again — that affects
-development, not installed releases.
+**Signing in happens in the widget's own window.** The sign-in window is a
+WebKit view of claude.ai, and its cookie store belongs to the widget alone —
+signing in here does not touch Safari or any other browser, and signing out of
+one does not sign out the other.
 
 ## Requirements
 
 - macOS 14+, Apple silicon
-- Claude Code, signed in
+- A Claude.ai account on a subscription plan
 - Swift 6 toolchain, to build from source — Command Line Tools are enough
   (`xcode-select --install`)
 
@@ -176,15 +180,22 @@ make test   # run the test suite (98 tests)
 
 ```
 Sources/ClaudeUsageWidgetCore/
-  Auth/          — keychain read
+  Auth/          — keychain read (unused by the app since 0.1.6; see below)
   Usage/         — decoding, pure math, thresholds, bucket selection, the HTTP call
   Status/        — Claude's own service status: fetch and decode
-  Store/         — @Observable stores, 5-minute refresh
+  Store/         — @Observable stores, 5-minute refresh, rate-limit backoff
   Formatting/    — menu bar text
   Update/        — GitHub repository and issue links (update detection is Sparkle's)
   Views/         — SwiftUI dials, status ring and panel
-Sources/ClaudeUsageWidget/  — app shell: desktop window, MenuBarExtra
+Sources/ClaudeUsageWidget/  — app shell: desktop window, MenuBarExtra,
+                              claude.ai session and sign-in window
 ```
 
 All computation is pure functions over a decoded snapshot and is unit-tested;
-the keychain reader and the HTTP clients are thin wrappers with smoke tests.
+the session reader and the HTTP clients are thin wrappers with smoke tests.
+
+`Auth/` and `Usage/StatuslineUsageCache` are the two earlier ways of reaching
+the same figures — the Claude Code OAuth token and Claude Code's own statusline
+snapshot. Both are still tested and still injectable into `UsageStore`, but the
+shipped app wires neither: the OAuth endpoint's rate limit is what drove the
+move to the web session in the first place.

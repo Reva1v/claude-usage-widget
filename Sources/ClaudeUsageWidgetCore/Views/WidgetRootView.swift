@@ -215,20 +215,14 @@ public struct WidgetRootView: View {
         switch store.state {
         case .failed(.noCredentials):
             """
-            The widget reads the token Claude Code stores when you sign in with \
-            a Claude subscription. Run `claude` in a terminal and sign in.
-
-            Signing in with an API key, Bedrock or Vertex instead? Those are \
-            billed per token and have no session or weekly limits, so there is \
-            nothing for this widget to show.
+            Open the widget's menu-bar menu and choose “Sign in to Claude.ai…”. \
+            The widget uses that browser session to read the same subscription \
+            usage page as Claude.ai; it does not send the session anywhere else.
             """
         case .failed(.unauthorized):
             """
-            Claude Code's stored token has expired, and only Claude Code can \
-            refresh it — the widget reads that token and never writes to it. \
-            Run `claude` in a terminal and the widget picks up the fresh token \
-            within five minutes. Until then the dials would be showing figures \
-            from before it expired, so they are covered rather than trusted.
+            The saved Claude.ai browser session has expired. Open the menu-bar \
+            menu, choose “Sign in to Claude.ai…”, and complete login once more.
             """
         default:
             nil
