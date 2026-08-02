@@ -38,7 +38,10 @@ public struct UsageAPI: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else { throw UsageError.malformedResponse }
-        try Self.validate(statusCode: http.statusCode)
+        try Self.validate(
+            statusCode: http.statusCode,
+            retryAfterSeconds: http.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
+        )
         return try UsageDecoder.snapshot(from: data)
     }
 
@@ -54,10 +57,11 @@ public struct UsageAPI: Sendable {
     }
 
     /// Maps a status code onto the widget's error vocabulary.
-    static func validate(statusCode: Int) throws {
+    static func validate(statusCode: Int, retryAfterSeconds: Int? = nil) throws {
         switch statusCode {
         case 200..<300: return
         case 401, 403: throw UsageError.unauthorized
+        case 429: throw UsageError.rateLimited(retryAfterSeconds: retryAfterSeconds)
         default: throw UsageError.network("HTTP \(statusCode)")
         }
     }

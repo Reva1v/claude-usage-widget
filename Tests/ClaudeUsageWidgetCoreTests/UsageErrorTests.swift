@@ -14,6 +14,14 @@ struct UsageErrorTests {
             == "The server returned something unexpected.")
     }
 
+    @Test("a rate limit reads the same with and without a Retry-After")
+    func rateLimitedMessage() {
+        #expect(UsageError.rateLimited(retryAfterSeconds: 1378).localizedDescription
+            == "The API is rate limited. The widget retries on its own.")
+        #expect(UsageError.rateLimited(retryAfterSeconds: nil).localizedDescription
+            == "The API is rate limited. The widget retries on its own.")
+    }
+
     @Test("a network failure carries its own detail through")
     func networkDetail() {
         #expect(UsageError.network("The Internet connection appears to be offline.").localizedDescription
@@ -26,6 +34,7 @@ struct UsageErrorTests {
             UsageError.noCredentials,
             .unauthorized,
             .malformedResponse,
+            .rateLimited(retryAfterSeconds: 60),
             .network("offline"),
         ].map(\.localizedDescription)
 

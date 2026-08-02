@@ -118,4 +118,31 @@ struct StatusLineTests {
     func reportsLoading() {
         #expect(StatusLine.text(for: .loading, now: Self.now) == "loading…")
     }
+
+    @Test("a rate limit with a known deadline says when the widget retries")
+    func reportsRateLimitDeadline() {
+        let until = Self.now.addingTimeInterval(22 * 60)
+        #expect(StatusLine.text(
+            for: .failed(.rateLimited(retryAfterSeconds: 1320)),
+            now: Self.now,
+            retryUntil: until
+        ) == "rate limited · retry in 22m")
+    }
+
+    @Test("a rate limit without a deadline still names itself")
+    func reportsRateLimitWithoutDeadline() {
+        #expect(StatusLine.text(
+            for: .failed(.rateLimited(retryAfterSeconds: nil)),
+            now: Self.now
+        ) == "rate limited")
+    }
+
+    @Test("a rate limit whose deadline has passed drops the countdown")
+    func dropsExpiredRateLimitCountdown() {
+        #expect(StatusLine.text(
+            for: .failed(.rateLimited(retryAfterSeconds: 60)),
+            now: Self.now,
+            retryUntil: Self.now.addingTimeInterval(-1)
+        ) == "rate limited")
+    }
 }

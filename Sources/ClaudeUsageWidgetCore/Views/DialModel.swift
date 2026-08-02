@@ -42,7 +42,9 @@ public enum StatusLine {
     /// A snapshot older than three missed refreshes is worth calling out.
     static let staleAfter: TimeInterval = 15 * 60
 
-    public static func text(for state: UsageStore.State, now: Date) -> String? {
+    /// `retryUntil` is the store's rate-limit deadline, when one is running;
+    /// it turns the bare "rate limited" into a countdown.
+    public static func text(for state: UsageStore.State, now: Date, retryUntil: Date? = nil) -> String? {
         switch state {
         case .loading:
             return "loading…"
@@ -58,6 +60,11 @@ public enum StatusLine {
             return nil
         case .failed(.malformedResponse):
             return "unexpected response from the API"
+        case .failed(.rateLimited):
+            guard let wait = UsageMath.remainingText(resetsAt: retryUntil, now: now) else {
+                return "rate limited"
+            }
+            return "rate limited · retry in \(wait)"
         case let .failed(.network(message)):
             return message
         }

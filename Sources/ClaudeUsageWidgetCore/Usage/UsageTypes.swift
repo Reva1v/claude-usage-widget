@@ -35,6 +35,9 @@ public enum UsageError: Error, Equatable, Sendable {
     case unauthorized
     /// The body was not JSON, or carried no usage buckets at all.
     case malformedResponse
+    /// The endpoint answered 429; the payload is the server's Retry-After in
+    /// seconds, when it sent one.
+    case rateLimited(retryAfterSeconds: Int?)
     /// Transport failure or an unexpected status code.
     case network(String)
 }
@@ -50,6 +53,8 @@ extension UsageError: LocalizedError {
             "The token was rejected. Sign in to Claude Code again."
         case .malformedResponse:
             "The server returned something unexpected."
+        case .rateLimited:
+            "The API is rate limited. The widget retries on its own."
         case let .network(message):
             message
         }

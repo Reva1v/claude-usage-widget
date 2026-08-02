@@ -89,6 +89,65 @@ struct UsageStoreTests {
         #expect(box.seen == "sk-ant-oat01-example")
     }
 
+    @Test("a rate limit with a Retry-After pauses polling until the deadline")
+    func pausesOnRateLimit() async {
+        final class Box: @unchecked Sendable { var calls = 0 }
+        let box = Box()
+        let store = store { _ in
+            box.calls += 1
+            throw UsageError.rateLimited(retryAfterSeconds: 600)
+        }
+
+        await store.load()
+        #expect(store.state == .failed(.rateLimited(retryAfterSeconds: 600)))
+        #expect(store.retryPausedUntil == Self.now.addingTimeInterval(600))
+
+        await store.load()
+        #expect(box.calls == 1)
+    }
+
+    @Test("polling resumes once the rate-limit deadline has passed")
+    func resumesAfterRateLimitDeadline() async {
+        final class Clock: @unchecked Sendable { var now = Date.distantPast }
+        final class Box: @unchecked Sendable { var calls = 0 }
+        let clock = Clock()
+        clock.now = Self.now
+        let box = Box()
+        let store = UsageStore(
+            fetch: { _ in
+                box.calls += 1
+                if box.calls == 1 { throw UsageError.rateLimited(retryAfterSeconds: 600) }
+                return await Self.snapshot(7)
+            },
+            tokenProvider: { "token" },
+            now: { clock.now }
+        )
+
+        await store.load()
+        clock.now = Self.now.addingTimeInterval(601)
+        await store.load()
+
+        #expect(box.calls == 2)
+        #expect(store.state == .ok(Self.snapshot(7), fetchedAt: clock.now))
+        #expect(store.retryPausedUntil == nil)
+    }
+
+    @Test("a rate limit without a Retry-After keeps the normal polling cadence")
+    func rateLimitWithoutRetryAfterDoesNotPause() async {
+        final class Box: @unchecked Sendable { var calls = 0 }
+        let box = Box()
+        let store = store { _ in
+            box.calls += 1
+            throw UsageError.rateLimited(retryAfterSeconds: nil)
+        }
+
+        await store.load()
+        #expect(store.retryPausedUntil == nil)
+
+        await store.load()
+        #expect(box.calls == 2)
+    }
+
     @Test("a refresh while one is already in flight does not start a second fetch")
     func coalescesOverlappingRefreshes() async {
         final class Box: @unchecked Sendable { var calls = 0 }

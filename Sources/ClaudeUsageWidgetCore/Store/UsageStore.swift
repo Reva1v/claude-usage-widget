@@ -24,6 +24,11 @@ public final class UsageStore {
     /// dials instead of blanking them.
     public private(set) var lastSnapshot: UsageSnapshot?
 
+    /// While set, refreshes are skipped: the server answered 429 with a
+    /// Retry-After, and polling through the ban only prolongs it. The timer
+    /// keeps ticking — the first tick past the deadline fetches again.
+    public private(set) var retryPausedUntil: Date?
+
     private let fetch: @Sendable (String) async throws -> UsageSnapshot
     private let tokenProvider: @Sendable () -> String?
     private let now: @Sendable () -> Date
@@ -89,6 +94,8 @@ public final class UsageStore {
     }
 
     private func performLoad() async {
+        if let retryPausedUntil, now() < retryPausedUntil { return }
+        retryPausedUntil = nil
         guard let token = tokenProvider() else {
             state = .failed(.noCredentials)
             return
@@ -98,6 +105,9 @@ public final class UsageStore {
             lastSnapshot = snapshot
             state = .ok(snapshot, fetchedAt: now())
         } catch let error as UsageError {
+            if case let .rateLimited(retryAfterSeconds) = error, let retryAfterSeconds {
+                retryPausedUntil = now().addingTimeInterval(TimeInterval(retryAfterSeconds))
+            }
             state = .failed(error)
         } catch {
             state = .failed(.network(error.localizedDescription))

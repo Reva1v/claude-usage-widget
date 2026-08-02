@@ -44,7 +44,7 @@ public struct WidgetRootView: View {
     private var dialSize: CGFloat { (side - pad * 2 - gap) / 2 }
 
     public var body: some View {
-        let status = StatusLine.text(for: store.state, now: now)
+        let status = StatusLine.text(for: store.state, now: now, retryUntil: store.retryPausedUntil)
         let notice = BlockingNotice.make(for: store.state)
         let models = DialModel.all(
             snapshot: snapshot,
