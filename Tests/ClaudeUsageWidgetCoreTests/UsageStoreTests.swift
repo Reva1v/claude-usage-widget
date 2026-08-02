@@ -89,7 +89,7 @@ struct UsageStoreTests {
         #expect(box.seen == "sk-ant-oat01-example")
     }
 
-    @Test("a rate limit with a Retry-After pauses polling until the deadline")
+    @Test("a rate limit with a Retry-After pauses polling until the deadline plus a safety margin")
     func pausesOnRateLimit() async {
         final class Box: @unchecked Sendable { var calls = 0 }
         let box = Box()
@@ -100,7 +100,7 @@ struct UsageStoreTests {
 
         await store.load()
         #expect(store.state == .failed(.rateLimited(retryAfterSeconds: 600)))
-        #expect(store.retryPausedUntil == Self.now.addingTimeInterval(600))
+        #expect(store.retryPausedUntil == Self.now.addingTimeInterval(600 + UsageStore.retryMargin))
 
         await store.load()
         #expect(box.calls == 1)
@@ -124,7 +124,7 @@ struct UsageStoreTests {
         )
 
         await store.load()
-        clock.now = Self.now.addingTimeInterval(601)
+        clock.now = Self.now.addingTimeInterval(600 + UsageStore.retryMargin + 1)
         await store.load()
 
         #expect(box.calls == 2)
@@ -132,20 +132,64 @@ struct UsageStoreTests {
         #expect(store.retryPausedUntil == nil)
     }
 
-    @Test("a rate limit without a Retry-After keeps the normal polling cadence")
-    func rateLimitWithoutRetryAfterDoesNotPause() async {
-        final class Box: @unchecked Sendable { var calls = 0 }
+    @Test("a rate limit without a Retry-After still backs off")
+    func rateLimitWithoutRetryAfterBacksOff() async {
+        let store = store { _ in throw UsageError.rateLimited(retryAfterSeconds: nil) }
+        await store.load()
+        #expect(store.retryPausedUntil == Self.now.addingTimeInterval(300 + UsageStore.retryMargin))
+    }
+
+    @Test("consecutive rate limits escalate the pause, so a hair-trigger ban is not re-tripped forever")
+    func consecutiveRateLimitsEscalate() async {
+        final class Clock: @unchecked Sendable { var now = Date.distantPast }
+        let clock = Clock()
+        clock.now = Self.now
+        let store = UsageStore(
+            fetch: { _ in throw UsageError.rateLimited(retryAfterSeconds: 60) },
+            tokenProvider: { "token" },
+            now: { clock.now }
+        )
+
+        await store.load()
+        // First 429: the ladder's floor (300, one timer tick) beats the
+        // server's 60 — a shorter pause could not be acted on anyway.
+        #expect(store.retryPausedUntil == clock.now.addingTimeInterval(300 + UsageStore.retryMargin))
+
+        clock.now = clock.now.addingTimeInterval(1000)
+        await store.load()
+        // Second in a row: the ladder doubles past the server's 60.
+        #expect(store.retryPausedUntil == clock.now.addingTimeInterval(600 + UsageStore.retryMargin))
+
+        clock.now = clock.now.addingTimeInterval(1000)
+        await store.load()
+        #expect(store.retryPausedUntil == clock.now.addingTimeInterval(1200 + UsageStore.retryMargin))
+    }
+
+    @Test("a success resets the rate-limit escalation")
+    func successResetsEscalation() async {
+        final class Clock: @unchecked Sendable { var now = Date.distantPast }
+        final class Box: @unchecked Sendable { var fail = true }
+        let clock = Clock()
+        clock.now = Self.now
         let box = Box()
-        let store = store { _ in
-            box.calls += 1
-            throw UsageError.rateLimited(retryAfterSeconds: nil)
-        }
+        let store = UsageStore(
+            fetch: { _ in
+                if box.fail { throw UsageError.rateLimited(retryAfterSeconds: nil) }
+                return await Self.snapshot(1)
+            },
+            tokenProvider: { "token" },
+            now: { clock.now }
+        )
 
-        await store.load()
-        #expect(store.retryPausedUntil == nil)
-
-        await store.load()
-        #expect(box.calls == 2)
+        await store.load()                                   // 429 #1
+        clock.now = clock.now.addingTimeInterval(1000)
+        box.fail = false
+        await store.load()                                   // success
+        box.fail = true
+        clock.now = clock.now.addingTimeInterval(1000)
+        await store.load()                                   // 429 again
+        // Back to the first step of the ladder, not the third.
+        #expect(store.retryPausedUntil == clock.now.addingTimeInterval(300 + UsageStore.retryMargin))
     }
 
     @Test("a refresh while one is already in flight does not start a second fetch")

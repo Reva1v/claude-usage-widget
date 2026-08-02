@@ -24,10 +24,22 @@ public final class UsageStore {
     /// dials instead of blanking them.
     public private(set) var lastSnapshot: UsageSnapshot?
 
-    /// While set, refreshes are skipped: the server answered 429 with a
-    /// Retry-After, and polling through the ban only prolongs it. The timer
-    /// keeps ticking — the first tick past the deadline fetches again.
+    /// While set, refreshes are skipped: the server answered 429, and polling
+    /// through the ban only prolongs it. The timer keeps ticking — the first
+    /// tick past the deadline fetches again.
     public private(set) var retryPausedUntil: Date?
+
+    /// Padding added past the server's Retry-After. Observed live: the header
+    /// understates the ban window by minutes, and the ban's violation counter
+    /// survives its own expiry — a retry that lands seconds early re-trips a
+    /// fresh hour-long ban, forever. Waiting a little longer than asked breaks
+    /// that loop.
+    public static let retryMargin: TimeInterval = 120
+
+    /// Backoff ladder for consecutive 429s, used when it exceeds the server's
+    /// own Retry-After (or when there is none): 300, 600, 1200... capped at an
+    /// hour. Reset by any successful fetch.
+    private var consecutiveRateLimits = 0
 
     private let fetch: @Sendable (String) async throws -> UsageSnapshot
     private let tokenProvider: @Sendable () -> String?
@@ -103,10 +115,14 @@ public final class UsageStore {
         do {
             let snapshot = try await fetch(token)
             lastSnapshot = snapshot
+            consecutiveRateLimits = 0
             state = .ok(snapshot, fetchedAt: now())
         } catch let error as UsageError {
-            if case let .rateLimited(retryAfterSeconds) = error, let retryAfterSeconds {
-                retryPausedUntil = now().addingTimeInterval(TimeInterval(retryAfterSeconds))
+            if case let .rateLimited(retryAfterSeconds) = error {
+                consecutiveRateLimits += 1
+                let backoff = min(3600.0, 300.0 * pow(2, Double(consecutiveRateLimits - 1)))
+                let wait = max(TimeInterval(retryAfterSeconds ?? 0), backoff)
+                retryPausedUntil = now().addingTimeInterval(wait + Self.retryMargin)
             }
             state = .failed(error)
         } catch {
