@@ -24,6 +24,11 @@ public sealed record WidgetSettingsData
     public double? WidgetY { get; init; }
     public string TrayMetricKey { get; init; } = "five_hour";
     public bool TaskbarBandEnabled { get; init; }
+
+    /// Where the taskbar band docks: "tray" (left of the notification area,
+    /// default) or "left" (left edge of the taskbar, e.g. where the Widgets
+    /// button sits if the user disabled it).
+    public string BandPosition { get; init; } = "tray";
     public string? OrganizationId { get; init; }
     public DateTimeOffset? RetryPausedUntil { get; init; }
     public int ConsecutiveRateLimits { get; init; }

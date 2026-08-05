@@ -70,6 +70,7 @@ public partial class App : System.Windows.Application
         _trayIcon.ModelBucketSelected += OnModelBucketSelected;
         _trayIcon.ShowOnDesktopToggled += OnShowOnDesktopToggled;
         _trayIcon.TaskbarBandToggled += OnTaskbarBandToggled;
+        _trayIcon.BandPositionSelected += OnBandPositionSelected;
         _trayIcon.LockPositionToggled += OnLockPositionToggled;
         _trayIcon.MenuOpening += RefreshTrayMenuState;
 
@@ -284,13 +285,23 @@ public partial class App : System.Windows.Application
             : _usageStore.LastSnapshot;
         var availableBuckets = snapshot is null ? Array.Empty<string>() : ModelBuckets.Available(snapshot);
 
+        // То же разрешение бакета, что DialModel.All использует для заголовка
+        // третьего циферблата — "MODEL (X)" в меню трея должно называть ровно
+        // ту модель, которую сейчас реально показывает панель/лента, а не
+        // просто "выбранную пользователем" (та может быть Auto/null).
+        var resolvedModelLabel = snapshot is not null && ModelBuckets.Resolve(data.ModelBucket, snapshot) is { } resolvedKey
+            ? ModelBuckets.Label(resolvedKey)
+            : null;
+
         _trayIcon!.SyncMenuState(new TrayMenuState(
             data.TrayMetricKey,
             availableBuckets,
             data.ModelBucket,
             data.WidgetVisible,
             _widgetWindow!.PositionLocked,
-            data.TaskbarBandEnabled));
+            data.TaskbarBandEnabled,
+            data.BandPosition,
+            resolvedModelLabel));
     }
 
     private void OnTrayMetricSelected(string key)
@@ -344,10 +355,18 @@ public partial class App : System.Windows.Application
         RefreshTrayMenuState();
     }
 
+    private void OnBandPositionSelected(string position)
+    {
+        var data = _settings!.Load();
+        _settings.Save(data with { BandPosition = position });
+        _bandWindow?.SetPosition(position);
+        RefreshTrayMenuState();
+    }
+
     /// <summary>Включает/выключает ленту. Окно создаётся лениво при первом
     /// включении и переживает последующие выключения (Detach лишь прячет и
-    /// отвязывает от таскбара) — пересоздавать TaskbarBandWindow на каждый
-    /// чекбокс незачем, TryAttach/Detach уже идемпотентны.</summary>
+    /// снимает владельца) — пересоздавать TaskbarBandWindow на каждый
+    /// чекбокс незачем, Dock/Detach уже идемпотентны.</summary>
     private void SetTaskbarBandVisible(bool visible)
     {
         if (visible)
@@ -357,11 +376,12 @@ public partial class App : System.Windows.Application
                 _bandWindow = new TaskbarBandWindow();
                 _bandWindow.Lost += OnTaskbarBandLost;
             }
-            // Рендерим ДО TryAttach: тот сразу вызывает Reposition(),
-            // которому нужна актуальная ширина контента, а не ширина от
-            // предыдущего показа (или вовсе нулевая при самом первом).
+            _bandWindow.SetPosition(_settings!.Load().BandPosition);
+            // Рендерим ДО Dock: тот сразу вызывает Reposition(), которому
+            // нужна актуальная ширина контента, а не ширина от предыдущего
+            // показа (или вовсе нулевая при самом первом).
             RenderTaskbarBand();
-            _bandWindow.TryAttach();
+            _bandWindow.Dock();
         }
         else
         {
@@ -369,13 +389,16 @@ public partial class App : System.Windows.Application
         }
     }
 
-    /// <summary>TaskbarBandWindow.Lost: explorer.exe перезапустился и унёс
-    /// наш дочерний HWND вместе со старым Shell_TrayWnd. WPF не даёт
-    /// повторно показать Window, чей нативный хэндл пропал не через её же
-    /// Close() — бросаем старый экземпляр (его HWND уже недействителен,
-    /// закрывать нечего) и, если лента всё ещё должна быть включена,
-    /// заводим новый и пытаемся встроиться заново, как при обычном первом
-    /// включении.</summary>
+    /// <summary>TaskbarBandWindow.Lost: нативный HWND ленты пропал не через
+    /// наш собственный Detach()/Close() — owned window не рушится каскадно
+    /// вместе с таскбаром (в отличие от прежнего WS_CHILD-варианта), так что
+    /// это стало защитным бэкстопом на непредвиденный случай, а не основным
+    /// путём восстановления после перезапуска explorer.exe (тот теперь чинит
+    /// себя сам на ближайшем тике — см. TaskbarBandWindow.RepositionCore).
+    /// WPF не даёт повторно показать Window, чей нативный хэндл пропал таким
+    /// образом — бросаем старый экземпляр (его HWND уже недействителен,
+    /// закрывать нечего) и, если лента всё ещё должна быть включена, заводим
+    /// новый, как при обычном первом включении.</summary>
     private void OnTaskbarBandLost()
     {
         _bandWindow = null;

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -17,13 +18,39 @@ using Size = System.Windows.Size;
 namespace ClaudeUsageWidget.App.Windows;
 
 /// <summary>
-/// Полоска в панели задач в технике TrafficMonitor: маленькое окно,
-/// встраиваемое как дочернее в <c>Shell_TrayWnd</c> слева от области
-/// переполнения трея, рисующее колонки «метка над значением» как в
-/// меню-баре macOS. Если встраивание не удалось (Windows иногда режет
-/// кросс-процессный <see cref="Win32.SetParent"/> политиками безопасности),
-/// деградирует до top-level оверлея поверх того же места таскбара —
-/// task-17-brief.md, шаг 2.
+/// Полоска в панели задач: маленькое окно слева от области переполнения
+/// трея (или у левого края таскбара — см. <see cref="SetPosition"/>),
+/// рисующее колонки «метка над значением» как в меню-баре macOS.
+///
+/// Техника — top-level окно-владелец (owned window) таскбара, НЕ дочернее
+/// (WS_CHILD) окно и не голый Topmost. Первая версия этой задачи пробовала
+/// оба других варианта:
+/// - SetParent-встраивание как WS_CHILD в Shell_TrayWnd (техника
+///   TrafficMonitor) технически удаётся (ненулевой возврат, точное
+///   позиционирование), но живая проверка на Windows 11 показала, что
+///   Mica-композитинг таскбара делает содержимое такого дочернего окна
+///   нечитаемым — пиксельные замеры (round 2, task-17-report.md) показали,
+///   что ни смена порядка WS_CHILD/SetParent, ни WS_EX_LAYERED, ни
+///   Z-порядок этого не чинят.
+/// - Голый Topmost-оверлей без владельца рендерится чётко (тот же
+///   WS_EX_LAYERED там работал), но периодически проваливался обратно за
+///   Mica-слой шелла без видимой причины (round 4) и не имел механизма
+///   держаться выше таскбара при активности шелла (контекстные меню,
+///   переключение фокуса).
+/// Owned window (SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, Shell_TrayWnd))
+/// решает оба: окно остаётся обычным top-level (никакого child-композитинга
+/// — можно использовать честную WPF-прозрачность, AllowsTransparency=true,
+/// без чёрных прямоугольников и без проваливания), а Windows сама
+/// поддерживает инвариант "owned-окно всегда выше своего владельца".
+/// HWND_TOPMOST поверх этого нужен только чтобы встать выше ВООБЩЕ всех
+/// обычных окон (не только выше конкретно таскбара) — и выставляется РОВНО
+/// ОДИН РАЗ, при (пере)стыковке, а не на каждый тик перепозиционирования:
+/// периодическая переустановка HWND_TOPMOST утаскивает наверх весь кластер
+/// "владелец+owned" (то есть сам таскбар) поверх любого открытого в этот
+/// момент контекстного меню шелла и обрезает его — задокументированное
+/// поведение, независимо переоткрытое NetSpeedTray (их issue #200:
+/// 23 попытки из 23 с периодическим SetWindowPos(HWND_TOPMOST, ...) обрезали
+/// меню, 0 из 23 без него).
 /// </summary>
 public sealed class TaskbarBandWindow : Window
 {
@@ -36,34 +63,54 @@ public sealed class TaskbarBandWindow : Window
 
     private const double OuterPaddingDip = 8;
 
+    /// Отступ от левого края таскбара для BandPosition="left". Задача была
+    /// сформулирована как "левый край таскбара, где сидит кнопка Widgets" —
+    /// это буквально верно для выравнивания таскбара "Слева" (Windows 11
+    /// Personalization → Taskbar behaviors → Taskbar alignment): там
+    /// Start/Search/Task View/Widgets и правда начинаются от x=0, и это
+    /// значение встаёт сразу после них. При выравнивании ПО УМОЛЧАНИЮ
+    /// ("По центру") та же кнопка Widgets на деле сидит у центра экрана
+    /// (проверено живьём — Start у тестовой машины оказался на x≈849 из
+    /// 1920), так что этот отступ туда не попадает — но он и не должен:
+    /// цель "левый угол" в брифе понимается буквально, и x=160 гарантированно
+    /// свободен от Start/Search/Task View при любом выравнивании (те не
+    /// доходят настолько далеко влево ни в одной раскладке). Фиксированный
+    /// отступ, а не поиск дочерних окон Start/Search/Widgets: те скрыты за
+    /// XAML Islands без стабильных публичных классов, которые можно было бы
+    /// безопасно искать через FindWindowEx на каждый тик.
+    private const double LeftPositionOffsetDip = 160;
+
     /// Высота таскбара Windows 10/11 по умолчанию при масштабе 100% —
     /// используется только как временное значение до первого вызова
-    /// <see cref="Reposition"/> (тот в TryAttach/ConfigureOverlay вызывается
-    /// раньше, чем окно становится видимым, так что реальный размер обычно
-    /// подставляется ещё до показа).
+    /// <see cref="Reposition"/> (тот вызывается раньше, чем окно становится
+    /// видимым, так что реальный размер обычно подставляется ещё до показа).
     private const double DefaultHeightDip = 40;
 
     private readonly TaskbarBandContent _content;
     private readonly DispatcherTimer _repositionTimer;
 
-    private bool _attached;
+    /// "tray" (по умолчанию) или "left" — см. <see cref="SetPosition"/>.
+    private string _position = "tray";
 
-    /// HWND таскбара, к которому мы сейчас прицеплены (WS_CHILD) — только
-    /// для самопроверки в Reposition(): explorer.exe, перезапустившись,
-    /// пересоздаёт Shell_TrayWnd под новым хэндлом. nint.Zero, когда не
-    /// attached.
-    private nint _attachedTrayHwnd;
+    /// Лента спрятана из-за полноэкранного приложения поверх её монитора —
+    /// см. IsForegroundFullscreen()/RepositionCore(). Отдельно от обычной
+    /// Visibility: не хотим, чтобы обычная логика показа/скрытия путала это
+    /// состояние с "лента выключена пользователем" — здесь просто временная
+    /// приостановка показа.
+    private bool _hiddenForFullscreen;
 
     /// <summary>
     /// Нативный HWND этого окна уничтожен не через наш собственный Detach()/
-    /// Close() — типичная причина: explorer.exe перезапустился, и
-    /// DestroyWindow на старом Shell_TrayWnd потянул за собой все его
-    /// WS_CHILD, включая нас (Windows уничтожает дочерние окна вместе с
-    /// родителем, независимо от того, какому процессу они принадлежат). WPF
-    /// не поддерживает повторный Show()/EnsureHandle() у Window, чей HWND
-    /// пропал таким образом — единственный рабочий путь восстановления это
-    /// новый экземпляр TaskbarBandWindow, поэтому здесь только сигнал,
-    /// пересоздание — на стороне владельца (App.xaml.cs).
+    /// Close(). Owned window (в отличие от прежнего WS_CHILD-варианта) не
+    /// уничтожается автоматически вместе с владельцем — Windows каскадно
+    /// рушит только настоящих ДЕТЕЙ (WS_CHILD), а не owned-окна, так что этот
+    /// сценарий стал заметно менее вероятным, чем в первых раундах задачи, но
+    /// не невозможным (WPF способна закрыть Window и по другим причинам) —
+    /// оставлено как защитный бэкстоп. WPF не поддерживает повторный
+    /// Show()/EnsureHandle() у Window, чей HWND пропал таким образом —
+    /// единственный рабочий путь восстановления это новый экземпляр
+    /// TaskbarBandWindow, поэтому здесь только сигнал, пересоздание — на
+    /// стороне владельца (App.xaml.cs).
     /// </summary>
     public event Action? Lost;
 
@@ -74,34 +121,20 @@ public sealed class TaskbarBandWindow : Window
         ShowInTaskbar = false;
         ShowActivated = false;
 
-        // AllowsTransparency нельзя сменить после создания HWND окна, а
-        // TryAttach() решает "прижиться к таскбару или остаться оверлеем"
-        // уже ПОСЛЕ конструктора — переключить стратегию прозрачности по
-        // факту неудачи было бы поздно. К тому же кросс-процессный SetParent
-        // с layered-window (AllowsTransparency=true) — известная дыра:
-        // UpdateLayeredWindow под чужим родителем нередко рисует чёрный
-        // прямоугольник вместо реального альфа-блендинга (см.
-        // task-17-brief.md). Поэтому окно всегда непрозрачное, с закрашенным
-        // фоном "под таскбар" — работает одинаково в обоих режимах и не
-        // зависит от исхода TryAttach.
-        AllowsTransparency = false;
-
-        // Windows 10/11 по умолчанию красят таскбар в почти чёрный (тёмная
-        // тема — подавляющее большинство пользователей). DwmGetColorizationColor
-        // отдаёт акцентный цвет заголовков окон, а не реальный цвет
-        // поверхности таскбара: акцент на таскбаре включён далеко не у всех,
-        // а у части включивших он совсем светлый — тянуть его сюда значило
-        // бы чаще промахиваться мимо настоящего фона, чем просто взять
-        // нейтральный тёмный, подходящий под тему по умолчанию для
-        // подавляющего большинства.
-        var background = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x10));
-        background.Freeze();
-        Background = background;
+        // Честная WPF-прозрачность: окно больше не переезжает в чужой
+        // процесс (ни SetParent, ни WS_CHILD), так что кросс-процессный
+        // layered-window баг ("рисует чёрный прямоугольник"), из-за которого
+        // первая версия задачи держала окно непрозрачным, здесь не
+        // применяется — это обычное top-level окно, просто с владельцем.
+        // AllowsTransparency обязан быть выставлен до создания HWND (то есть
+        // здесь, в конструкторе, а не позже).
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
 
         _content = new TaskbarBandContent();
         var root = new Border
         {
-            Background = background,
+            Background = Brushes.Transparent,
             Padding = new Thickness(OuterPaddingDip, 0, OuterPaddingDip, 0),
             Child = _content,
         };
@@ -114,108 +147,68 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>
-    /// Пытается встроиться в таскбар: <c>FindWindow("Shell_TrayWnd")</c> →
-    /// <see cref="Win32.SetParent"/>. При успехе окно становится дочерним
-    /// (WS_CHILD) и перепозиционируется каждые 5 с и на WM_DPICHANGED; при
-    /// неудаче остаётся top-level оверлеем поверх того же места таскбара —
-    /// вызывающему стороне (App.xaml.cs) дополнительных действий не
-    /// требуется в обоих случаях, здесь уже показано.
+    /// Показывает ленту и (пере)стыкует её с таскбаром — владелец
+    /// (GWLP_HWNDPARENT) выставляется внутри Reposition()/RepositionCore(),
+    /// который сам обнаруживает "владелец не тот/не выставлен" как частный
+    /// случай устаревшего состояния (см. её комментарий) — здесь достаточно
+    /// создать HWND и вызвать её один раз. Единственная точка входа для
+    /// App.xaml.cs.
     /// </summary>
-    public bool TryAttach()
+    public void Dock()
     {
-        _repositionTimer.Stop();
-
-        var interop = new WindowInteropHelper(this);
-        interop.EnsureHandle();
-        var hwnd = interop.Handle;
-
-        var tray = Win32.FindWindow(TrayClassName, null);
-        if (tray == nint.Zero)
-        {
-            ConfigureOverlay();
-            return false;
-        }
-
-        // Стиль меняем ДО SetParent, не после: смена родителя первой (старый
-        // порядок) иногда оставляет DWM redirection-surface окна в "ещё
-        // top-level" состоянии даже после того как SetParent формально
-        // сделал его дочерним — задокументированный артефакт порядка
-        // вызовов при встраивании через SetParent (проверено по замечанию
-        // ревью; см. отчёт по итогам измерения).
-        SetChildStyle(hwnd, isChild: true);
-
-        if (Win32.SetParent(hwnd, tray) == nint.Zero)
-        {
-            // SetParent не удался — откатываем стиль: WS_CHILD с текущим
-            // родителем "рабочий стол" (0) невалидная комбинация.
-            SetChildStyle(hwnd, isChild: false);
-            ConfigureOverlay();
-            return false;
-        }
-
-        _attached = true;
-        _attachedTrayHwnd = tray;
-        Topmost = false;
+        new WindowInteropHelper(this).EnsureHandle();
+        _hiddenForFullscreen = false;
 
         Reposition();
         Show();
         _repositionTimer.Start();
-        return true;
     }
 
     /// <summary>
-    /// Отвязывает окно от таскбара (SetParent обратно на рабочий стол) и
-    /// прячет его. Идемпотентно: безопасно вызывать даже если сейчас оверлей
-    /// (не был встроен) или окно ещё ни разу не показывалось.
+    /// Меняет "tray"/"left" и сразу перепозиционируется, не дожидаясь
+    /// следующего тика — заметная задержка при живом переключении из меню
+    /// трея выглядела бы как баг. Не трогает владельца/HWND_TOPMOST: это
+    /// только смена X, обычный (не "устаревший") путь в RepositionCore().
+    /// </summary>
+    public void SetPosition(string position)
+    {
+        if (_position == position) return;
+        _position = position;
+        if (_repositionTimer.IsEnabled) Reposition();
+    }
+
+    /// <summary>
+    /// Снимает владельца и прячет окно. Идемпотентно: безопасно вызывать
+    /// даже если окно ещё ни разу не показывалось.
     /// </summary>
     public void Detach()
     {
         _repositionTimer.Stop();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        var hwndAlive = hwnd != nint.Zero && Win32.IsWindow(hwnd);
-
-        if (hwndAlive)
+        if (hwnd == nint.Zero || !Win32.IsWindow(hwnd))
         {
-            Win32.SetParent(hwnd, nint.Zero);
-            if (_attached) SetChildStyle(hwnd, isChild: false);
-        }
-
-        _attached = false;
-        _attachedTrayHwnd = nint.Zero;
-
-        if (!hwndAlive)
-        {
-            // Зомби: тот же сценарий, что и в RepositionCore() — explorer.exe
-            // перезапустился, наш WS_CHILD уничтожен вместе со старым
-            // Shell_TrayWnd, и WPF уже считает это Window закрытым. Раньше
-            // это было недостижимо отсюда (процесс падал на следующем тике
-            // Reposition() раньше, чем пользователь успел бы снять галочку),
-            // но самовосстановление сделало гонку видимой: между смертью
-            // HWND и ближайшим тиком таймера есть до 5 секунд, и Detach()
-            // (пользователь снял галочку) может случиться первым. Мы только
-            // что остановили _repositionTimer выше — значит Reposition()
-            // больше НЕ поднимет Lost сам, и просто промолчать здесь означало
-            // бы оставить владельца (App.xaml.cs) с мёртвым экземпляром,
-            // который упадёт на следующем TryAttach(). Поэтому сигналим сами
-            // и не трогаем Topmost/Hide() — оба бросили бы то же
-            // InvalidOperationException на закрытом Window.
+            // Зомби — тот же случай, что и в RepositionCore(): дальше
+            // трогать Visibility/Hide() на закрытом WPF Window значило бы
+            // поймать InvalidOperationException. Таймер уже остановлен
+            // строкой выше, значит Reposition() больше не поднимет Lost сам
+            // — сигналим отсюда, иначе владелец (App.xaml.cs) останется с
+            // мёртвым экземпляром, который упадёт на следующем Dock().
             Lost?.Invoke();
             return;
         }
 
+        Win32.SetWindowLongPtr(hwnd, Win32.GwlpHwndParent, nint.Zero);
+
         try
         {
-            Topmost = false;
             Hide();
         }
         catch (InvalidOperationException)
         {
             // Защитный бэкстоп на гонку между проверкой IsWindow выше и
-            // вызовом Hide() ниже (WPF пометила Window закрытым именно в
-            // этом промежутке) — тот же вывод, что и в ветке выше: экземпляр
-            // мёртв, сигналим Lost вместо того чтобы тихо проглотить и
-            // оставить владельца с нерабочей ссылкой.
+            // вызовом Hide() ниже (WPF успела пометить Window закрытым
+            // именно в этом промежутке) — тот же вывод: экземпляр мёртв.
             Lost?.Invoke();
         }
     }
@@ -227,9 +220,9 @@ public sealed class TaskbarBandWindow : Window
         _content.SetMetrics(metrics);
 
         // Измеряем немедленно, а не откладываем на автоматический
-        // layout-pass — Reposition() (в том числе самая первая, из
-        // TryAttach) должна знать актуальную ширину контента прямо сейчас,
-        // а не после следующего кадра отрисовки.
+        // layout-pass — Reposition() (в том числе самая первая, из Dock())
+        // должна знать актуальную ширину контента прямо сейчас, а не после
+        // следующего кадра отрисовки.
         _content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
     }
 
@@ -239,79 +232,40 @@ public sealed class TaskbarBandWindow : Window
 
         var hwnd = new WindowInteropHelper(this).Handle;
 
-        // Не активируется и не появляется в alt-tab. WS_EX_TOOLWINDOW имеет
-        // смысл только для top-level окна (оверлей-режим) — дочернее окно и
-        // так не попадает в alt-tab, но выставлять флаги безусловно дешевле,
-        // чем помнить, в каком режиме окно сейчас находится, а
-        // WS_EX_NOACTIVATE не мешает и дочернему.
-        //
-        // WS_EX_LAYERED + SetLayeredWindowAttributes(..., 255, LWA_ALPHA) —
-        // стандартный приём оверлей-инструментов (FPS-счётчики, OSD), рисующих
-        // поверх контента чужих окон: заставляет DWM завести под окно
-        // независимую композиционную поверхность вместо обычной, вместо того
-        // чтобы полагаться на композитинг родителя/области, в которой окно
-        // оказалось. Alpha=255 — полностью непрозрачная (не полупрозрачный
-        // оверлей, просто другой механизм композитинга).
+        // Не активируется и не появляется в alt-tab. НЕ выставляем
+        // WS_EX_LAYERED вручную и НЕ зовём SetLayeredWindowAttributes:
+        // AllowsTransparency=true уже сделала окно layered сама (это ровно
+        // то, как WPF реализует поканальную прозрачность на Win32), и его
+        // собственный UpdateLayeredWindow-конвейер ломается, если поверх
+        // него дополнительно вызвать LWA_ALPHA — два независимых механизма
+        // управления одной и той же layered-поверхностью конфликтуют.
         var exStyle = (long)Win32.GetWindowLongPtr(hwnd, Win32.GwlExStyle);
-        exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow | Win32.WsExLayered;
+        exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow;
         Win32.SetWindowLongPtr(hwnd, Win32.GwlExStyle, (nint)exStyle);
-        Win32.SetLayeredWindowAttributes(hwnd, 0, 255, Win32.LwaAlpha);
 
         var source = HwndSource.FromHwnd(hwnd)
             ?? throw new InvalidOperationException("HwndSource is not available after SourceInitialized.");
         source.AddHook(WndProc);
     }
 
-    /// <summary>WM_DPICHANGED долетает до top-level окна (оверлей-режим) —
-    /// перепозиционируемся сразу, не дожидаясь следующего тика таймера.
-    /// Дочернее окно (attached) такого сообщения обычно не получает вовсе;
-    /// для него единственная страховка — 5-секундный таймер.</summary>
+    /// <summary>WM_DPICHANGED — перепозиционируемся сразу, не дожидаясь
+    /// следующего тика таймера.</summary>
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
         if (msg == Win32.WmDpiChanged) Reposition();
         return nint.Zero;
     }
 
-    /// <summary>
-    /// Откат к оверлею — вызывается и когда таскбар не нашёлся вовсе, и
-    /// когда SetParent отказал (Windows иногда режет кросс-процессный
-    /// SetParent политиками безопасности — задокументированная в брифе
-    /// причина деградации). Окно остаётся top-level, но не ворует фокус и не
-    /// встаёт в alt-tab (WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW уже выставлены
-    /// безусловно в OnSourceInitialized).
-    /// </summary>
-    private void ConfigureOverlay()
-    {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (_attached && hwnd != nint.Zero)
-        {
-            // Сюда можно попасть и после ранее успешного attach (повторный
-            // TryAttach, например таскбар на мгновение пропал) — откатываем
-            // WS_CHILD, иначе окно осталось бы "ребёнком" уже отсоединённого
-            // родителя.
-            Win32.SetParent(hwnd, nint.Zero);
-            SetChildStyle(hwnd, isChild: false);
-        }
-
-        _attached = false;
-        _attachedTrayHwnd = nint.Zero;
-        Topmost = true;
-
-        Reposition();
-        Show();
-        _repositionTimer.Start();
-    }
-
-    /// <summary>Пересчитывает позицию/размер под оба режима — ищет таскбар и
-    /// область трея заново при каждом вызове (не кэширует хэндлы для самого
-    /// поиска): explorer.exe может пересоздать Shell_TrayWnd, а простои/
-    /// добавление иконок в трее двигают TrayNotifyWnd — task-17-brief.md:
-    /// «таскбар перестраивается». Первым делом — самопроверка на
-    /// перезапуск explorer.exe: если он уничтожил старый Shell_TrayWnd, то
-    /// либо уничтожил вместе с ним и наш HWND (мы — WS_CHILD), либо, если мы
-    /// каким-то образом пережили это, всё ещё привязаны к уже мёртвому
-    /// хэндлу нового таскбара не видим. Оба случая требуют разного
-    /// восстановления, см. комментарии ниже.</summary>
+    /// <summary>Пересчитывает позицию/размер и (при необходимости)
+    /// перепристыковывает к таскбару — ищет таскбар и область трея заново
+    /// при каждом вызове (не кэширует хэндлы для самого поиска):
+    /// explorer.exe может пересоздать Shell_TrayWnd, а простои/добавление
+    /// иконок в трее двигают TrayNotifyWnd — task-17-brief.md: «таскбар
+    /// перестраивается». Первым делом — самопроверка на уничтожение
+    /// собственного HWND, затем — гвард на полноэкранное приложение поверх
+    /// нашего монитора, затем — дешёвая проверка "наш владелец всё ещё
+    /// текущий Shell_TrayWnd" (см. комментарий у RepositionCore
+    /// ниже).</summary>
     private void Reposition()
     {
         try
@@ -320,17 +274,10 @@ public sealed class TaskbarBandWindow : Window
         }
         catch (InvalidOperationException)
         {
-            // WPF сама уже считает это Window закрытым (WM_NCDESTROY от
-            // уничтоженного родителя дошёл до её собственного WndProc раньше
-            // этого тика) — тогда WindowInteropHelper.Handle успевает
-            // обнулиться ДО того как наша проверка ниже её увидит, и
-            // RepositionCore() падает на EnsureHandle/Show с
-            // InvalidOperationException("...после закрытия окна") вместо
-            // того чтобы аккуратно вернуть Zero. Ловим здесь, а не только
-            // проверкой IsWindow ниже: тот путь на практике не успевает
-            // сработать первым (проверено — исходная версия без try/catch
-            // валила весь процесс необработанным исключением при
-            // перезапуске explorer.exe).
+            // WPF сама уже считает это Window закрытым — какая-то операция
+            // ниже (например Show() после выхода из fullscreen) упала с
+            // InvalidOperationException("...после закрытия окна"). Экземпляр
+            // необратимо мёртв — сигналим наружу вместо попытки продолжить.
             _repositionTimer.Stop();
             Lost?.Invoke();
         }
@@ -341,126 +288,137 @@ public sealed class TaskbarBandWindow : Window
         var ownHwnd = new WindowInteropHelper(this).Handle;
         if (ownHwnd == nint.Zero || !Win32.IsWindow(ownHwnd))
         {
-            // Наш собственный HWND уничтожен извне — типичная причина:
-            // explorer.exe перезапустился, и DestroyWindow на старом
-            // Shell_TrayWnd потянул за собой все WS_CHILD, включая нас
-            // (Windows уничтожает дочерние окна вместе с родителем
-            // синхронно, вне зависимости от того, какому процессу они
-            // принадлежат). Этот экземпляр Window необратимо мёртв —
-            // сигналим наружу вместо попытки продолжить с ним работать.
+            // Наш собственный HWND уничтожен извне — см. doc-comment у Lost.
             // ownHwnd == Zero тоже сюда: EnsureHandle() ещё не вызывался
             // вовсе (не должно происходить, раз таймер уже тикает — но
             // безопаснее считать это тем же "нечем восстанавливать", чем
-            // упасть чуть ниже на GetClientRect/SetWindowPos с нулевым hwnd).
+            // упасть чуть ниже на SetWindowPos с нулевым hwnd).
             _repositionTimer.Stop();
             Lost?.Invoke();
             return;
         }
 
+        if (IsForegroundFullscreen(ownHwnd))
+        {
+            // Всегда-поверх-оверлей над полноэкранной игрой — то, чего
+            // пользователи явно не хотят (играют в игры, а лента ловит
+            // курсор/перекрывает HUD своим Topmost-слоем). Дешёвая проверка
+            // раз в 5 с — не на каждый кадр, поэтому не нужен отдельный,
+            // более частый таймер.
+            if (!_hiddenForFullscreen)
+            {
+                _hiddenForFullscreen = true;
+                Hide();
+            }
+            return; // репозиционировать спрятанное окно незачем — доделаем на первом тике после выхода из fullscreen
+        }
+
+        if (_hiddenForFullscreen)
+        {
+            _hiddenForFullscreen = false;
+            Show();
+        }
+
         var tray = Win32.FindWindow(TrayClassName, null);
         if (tray == nint.Zero) return; // таскбар временно недоступен (explorer между завершением и стартом) — оставляем прежнюю геометрию до следующего тика
 
-        if (_attached && _attachedTrayHwnd != nint.Zero && (_attachedTrayHwnd != tray || !Win32.IsWindow(_attachedTrayHwnd)))
+        // Дешёвая проверка "устарели ли мы" — вместо кэширования хэндла
+        // таскбара как раньше, читаем ТЕКУЩЕГО владельца прямо из окна:
+        // явно свежий источник истины, и заодно правильно ловит самый
+        // первый вызов (свежесозданный HWND ещё не имеет владельца, то есть
+        // GWLP_HWNDPARENT=0 != tray — естественно читается как "устарело",
+        // без отдельной ветки на "самый первый раз").
+        var currentOwner = Win32.GetWindowLongPtr(ownHwnd, Win32.GwlpHwndParent);
+        var stale = currentOwner != tray;
+
+        if (stale)
         {
-            // Наш HWND жив (проверка выше не сработала), но Shell_TrayWnd, к
-            // которому мы прицеплены, — уже не тот (explorer пересоздал его
-            // под новым хэндлом) или вовсе мёртв. Перепривязываемся к
-            // текущему таскбару тем же путём, что и первый TryAttach —
-            // включая откат на оверлей, если по какой-то причине новый
-            // SetParent тоже не пройдёт. Если и это упадёт (наш HWND всё же
-            // не переживёт следующую строчку) — исключение поймает Reposition().
-            TryAttach();
-            return;
+            // explorer.exe пересоздал Shell_TrayWnd (перезапуск) — или это
+            // самый первый Dock(). Перепривязываем владельца. HWND_TOPMOST
+            // переустанавливается ниже, вместе с позиционированием, ОДИН РАЗ
+            // — не на каждый последующий тик (см. doc-comment класса про то,
+            // почему периодическая переустановка ломает контекстные меню
+            // шелла).
+            Win32.SetWindowLongPtr(ownHwnd, Win32.GwlpHwndParent, tray);
         }
 
         var notify = Win32.FindWindowEx(tray, nint.Zero, TrayNotifyClassName, null);
         var dpi = Win32.GetDpiForWindow(tray);
         if (dpi == 0) dpi = 96;
 
+        if (!Win32.GetWindowRect(tray, out var trayRect)) return;
+        var bandHeightPx = trayRect.Bottom - trayRect.Top;
+
         var contentWidthDip = _content.DesiredSize.Width + OuterPaddingDip * 2;
         var bandWidthPx = ToPhysical(contentWidthDip, dpi);
         var gapPx = ToPhysical(GapDip, dpi);
 
-        if (_attached)
-            RepositionAttached(tray, notify, dpi, bandWidthPx, gapPx);
-        else
-            RepositionOverlay(tray, notify, dpi, bandWidthPx, gapPx);
+        var x = _position == "left"
+            ? trayRect.Left + ToPhysical(LeftPositionOffsetDip, dpi)
+            : ComputeTrayPositionX(trayRect, notify, bandWidthPx, gapPx);
+
+        var insertAfter = stale ? Win32.HwndTopMost : nint.Zero;
+        var flags = stale ? Win32.SwpNoActivate : (Win32.SwpNoZOrder | Win32.SwpNoActivate);
+        Win32.SetWindowPos(ownHwnd, insertAfter, x, trayRect.Top, bandWidthPx, bandHeightPx, flags);
     }
 
-    private void RepositionAttached(nint tray, nint notify, uint dpi, int bandWidthPx, int gapPx)
+    private static int ComputeTrayPositionX(Win32.RECT trayRect, nint notify, int bandWidthPx, int gapPx)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == nint.Zero) return;
-
-        Win32.GetClientRect(tray, out var trayClient);
-        var bandHeightPx = trayClient.Bottom - trayClient.Top;
-        if (bandHeightPx <= 0) bandHeightPx = ToPhysical(DefaultHeightDip, dpi);
-
-        int x;
         if (notify != nint.Zero && Win32.GetWindowRect(notify, out var notifyRect))
-        {
-            var topLeft = new Win32.POINT { X = notifyRect.Left, Y = notifyRect.Top };
-            Win32.ScreenToClient(tray, ref topLeft);
-            x = topLeft.X - gapPx - bandWidthPx;
-        }
-        else
-        {
-            // TrayNotifyWnd не нашёлся (нестандартная сборка explorer) —
-            // правый край клиентской области таскбара как более грубая, но
-            // безопасная оценка того же самого места.
-            x = trayClient.Right - trayClient.Left - bandWidthPx - gapPx;
-        }
-        x = Math.Max(0, x);
+            return notifyRect.Left - gapPx - bandWidthPx;
 
-        // HWND_TOP, не SWP_NOZORDER: вставляем себя в начало Z-порядка среди
-        // детей Shell_TrayWnd — на случай если наш дочерний HWND физически
-        // рисуется, но перекрыт/затенён другим композиционным слоем шелла
-        // (composited поверх нас, несмотря на формально более позднее
-        // создание нашего окна).
-        Win32.SetWindowPos(hwnd, Win32.HwndTop, x, 0, bandWidthPx, bandHeightPx, Win32.SwpNoActivate);
+        // TrayNotifyWnd не нашёлся (нестандартная сборка explorer) — правый
+        // край таскбара как более грубая, но безопасная оценка того же
+        // самого места.
+        return trayRect.Right - bandWidthPx - gapPx;
     }
 
-    private void RepositionOverlay(nint tray, nint notify, uint dpi, int bandWidthPx, int gapPx)
+    /// <summary>
+    /// Занимает ли foreground-окно целиком монитор, на котором сидит наша
+    /// лента, — типичный признак полноэкранной игры (эксклюзивной или
+    /// безрамочной). Тот же приём, которым другие always-on-top оверлеи
+    /// (Discord-оверлей, Xbox Game Bar) избегают зависать поверх геймплея:
+    /// GetForegroundWindow + сравнение его прямоугольника с прямоугольником
+    /// монитора, без более тяжёлых способов (Desktop Window Manager
+    /// composition API, детект конкретных игровых движков и т.п.), которые
+    /// для 5-секундного тика избыточны.
+    /// </summary>
+    private static bool IsForegroundFullscreen(nint ownHwnd)
     {
-        if (!Win32.GetWindowRect(tray, out var trayRect)) return;
-        var bandHeightPx = trayRect.Bottom - trayRect.Top;
+        var fg = Win32.GetForegroundWindow();
+        if (fg == nint.Zero || fg == ownHwnd) return false;
 
-        int xPhysical;
-        if (notify != nint.Zero && Win32.GetWindowRect(notify, out var notifyRect))
-            xPhysical = notifyRect.Left - gapPx - bandWidthPx;
-        else
-            xPhysical = trayRect.Right - bandWidthPx - gapPx;
+        // Program Manager / WorkerW — сам рабочий стол (иконки, обои), не
+        // приложение поверх него; становится foreground, когда пользователь
+        // свернул всё (Win+D) — прятать ленту в этом случае не нужно.
+        var className = Win32.GetClassName(fg);
+        if (className is "Progman" or "WorkerW") return false;
 
-        // Оверлей — самостоятельное top-level WPF окно: позиционируем через
-        // Left/Top/Width/Height в DIP, а не SetWindowPos. Начиная с .NET
-        // Core 3 WPF корректно учитывает DPI монитора, на котором окно
-        // физически оказывается — конвертируем через DPI самого таскбара
-        // (тот монитор, где он есть, обычно и есть искомый монитор).
-        Left = ToDip(xPhysical, dpi);
-        Top = ToDip(trayRect.Top, dpi);
-        Width = ToDip(bandWidthPx, dpi);
-        Height = ToDip(bandHeightPx, dpi);
-    }
+        if (!Win32.GetWindowRect(fg, out var winRect)) return false;
 
-    /// <summary>Переключает WS_CHILD/WS_POPUP — обязательный шаг после
-    /// SetParent (и его отката): Windows не делает это автоматически, а без
-    /// него дочернее окно продолжает вести себя как independent popup
-    /// (task-17-brief.md: важная деталь SetParent+WPF).</summary>
-    private static void SetChildStyle(nint hwnd, bool isChild)
-    {
-        var style = (long)Win32.GetWindowLongPtr(hwnd, Win32.GwlStyle);
-        style = isChild ? (style & ~Win32.WsPopup) | Win32.WsChild : (style & ~Win32.WsChild) | Win32.WsPopup;
-        Win32.SetWindowLongPtr(hwnd, Win32.GwlStyle, (nint)style);
+        // Монитор ЛЕНТЫ, а не монитор foreground-окна: на мультимониторной
+        // конфигурации игра в фуллскрине на другом мониторе не должна
+        // прятать ленту на этом. MONITOR_DEFAULTTONEAREST гарантирует
+        // ненулевой результат даже если наше окно сейчас нигде не
+        // отображается (например, пока мы сами спрятаны).
+        var monitor = Win32.MonitorFromWindow(ownHwnd, Win32.MonitorDefaultToNearest);
+        if (monitor == nint.Zero) return false;
 
-        // SWP_FRAMECHANGED — пересчитать неклиентскую область под новый
-        // стиль немедленно, а не откладывать до следующего перемещения/ресайза.
-        Win32.SetWindowPos(hwnd, nint.Zero, 0, 0, 0, 0,
-            Win32.SwpNoZOrder | Win32.SwpNoActivate | Win32.SwpNoMove | Win32.SwpNoSize | Win32.SwpFrameChanged);
+        var info = new Win32.MONITORINFO { cbSize = (uint)Marshal.SizeOf<Win32.MONITORINFO>() };
+        if (!Win32.GetMonitorInfo(monitor, ref info)) return false;
+
+        // "Занимает целиком" — сравниваем с rcMonitor (весь физический
+        // монитор), а не с rcWork (тот уже исключает таскбар): нас как раз
+        // интересует случай, когда окно НАМЕРЕННО легло поверх таскбара —
+        // это и есть полноэкранный режим. Допуск в 1 px — некоторые игры
+        // из-за округления DPI дают монитору на пиксель больше/меньше.
+        return winRect.Left <= info.rcMonitor.Left + 1
+            && winRect.Top <= info.rcMonitor.Top + 1
+            && winRect.Right >= info.rcMonitor.Right - 1
+            && winRect.Bottom >= info.rcMonitor.Bottom - 1;
     }
 
     private static int ToPhysical(double dip, uint dpi) => (int)Math.Round(dip * dpi / 96.0);
-
-    private static double ToDip(int physical, uint dpi) => physical * 96.0 / dpi;
 }
 
 /// <summary>
@@ -470,6 +428,9 @@ public sealed class TaskbarBandWindow : Window
 /// DialText.Format/DrawStackCentered, а не StackPanel из TextBlock (проще
 /// точно посчитать ширину каждой колонки для Reposition, чем заводить лишние
 /// алиасы под StackPanel/TextBlock, у которых есть тёзки в System.Windows.Forms).
+/// Белый текст с тёмной тенью-обводкой в 1 px — на прозрачном фоне поверх
+/// произвольного (светлого или тёмного) цвета таскбара один только белый
+/// местами сливался бы с фоном; тень читается на любом фоне.
 /// </summary>
 internal sealed class TaskbarBandContent : FrameworkElement
 {
@@ -477,6 +438,9 @@ internal sealed class TaskbarBandContent : FrameworkElement
     private const double ValueFontSize = 14;
     private const double LineSpacingDip = 1;
     private const double ColumnSpacingDip = 14;
+    private const double ShadowOffsetDip = 1;
+
+    private static readonly SolidColorBrush ShadowBrush = Freeze(new SolidColorBrush(Color.FromArgb(200, 0, 0, 0)));
 
     private IReadOnlyList<TrayMetric> _metrics = Array.Empty<TrayMetric>();
     private double[] _columnWidths = Array.Empty<double>();
@@ -524,13 +488,25 @@ internal sealed class TaskbarBandContent : FrameworkElement
         {
             var metric = _metrics[i];
             var width = i < _columnWidths.Length ? _columnWidths[i] : 0;
+            var center = new Point(x + width / 2, y);
+
+            // Тень — та же стопка строк, тем же кеглем, сдвинутая на 1 px
+            // по диагонали, рисуется ПЕРВОЙ (белый текст ложится поверх).
+            var labelShadow = DialText.Format(metric.Label, LabelFontSize, Theme.LabelWeight, ShadowBrush, pixelsPerDip);
+            var valueShadow = DialText.Format(metric.Value, ValueFontSize, Theme.ValueWeight, ShadowBrush, pixelsPerDip);
+            DialText.DrawStackCentered(dc, new Point(center.X + ShadowOffsetDip, center.Y + ShadowOffsetDip), LineSpacingDip, labelShadow, valueShadow);
 
             var labelText = DialText.Format(metric.Label, LabelFontSize, Theme.LabelWeight, Brushes.White, pixelsPerDip);
             var valueText = DialText.Format(metric.Value, ValueFontSize, Theme.ValueWeight, Brushes.White, pixelsPerDip);
-
-            DialText.DrawStackCentered(dc, new Point(x + width / 2, y), LineSpacingDip, labelText, valueText);
+            DialText.DrawStackCentered(dc, center, LineSpacingDip, labelText, valueText);
 
             x += width + ColumnSpacingDip;
         }
+    }
+
+    private static SolidColorBrush Freeze(SolidColorBrush brush)
+    {
+        brush.Freeze();
+        return brush;
     }
 }

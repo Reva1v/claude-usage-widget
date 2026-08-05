@@ -20,7 +20,9 @@ public sealed record TrayMenuState(
     string? SelectedModelBucket,
     bool ShowOnDesktop,
     bool PositionLocked,
-    bool TaskbarBandEnabled);
+    bool TaskbarBandEnabled,
+    string BandPosition,
+    string? ResolvedModelLabel);
 
 /// <summary>
 /// Иконка приложения в системном трее и её контекстное меню.
@@ -43,6 +45,8 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _modelLimitMenu = null!;
     private ToolStripMenuItem _showOnDesktopItem = null!;
     private ToolStripMenuItem _taskbarBandItem = null!;
+    private ToolStripMenuItem _bandPositionLeftItem = null!;
+    private ToolStripMenuItem _bandPositionTrayItem = null!;
     private ToolStripMenuItem _lockPositionItem = null!;
     private ToolStripMenuItem _launchAtLoginItem = null!;
 
@@ -66,6 +70,9 @@ public sealed class TrayIcon : IDisposable
 
     /// <summary>"Taskbar band" — новое желаемое состояние.</summary>
     public event Action<bool>? TaskbarBandToggled;
+
+    /// <summary>"Band position" — новое значение ("tray"/"left").</summary>
+    public event Action<string>? BandPositionSelected;
 
     /// <summary>"Lock position" — новое желаемое состояние.</summary>
     public event Action<bool>? LockPositionToggled;
@@ -139,6 +146,16 @@ public sealed class TrayIcon : IDisposable
         _trayShowsWeekItem.Checked = metricIndex == 1;
         _trayShowsModelItem.Checked = metricIndex == 2;
 
+        // "MODEL (Fable)" once we know which bucket actually resolved (same
+        // resolution DialModel.All uses for the third dial's own title) —
+        // plain "MODEL" before any snapshot has loaded. ModelBuckets.Label
+        // comes back SHOUTY ("FABLE"); title-case it for the menu specifically
+        // — the widget's own dial keeps the shouty version, this is purely a
+        // menu-text nicety.
+        _trayShowsModelItem.Text = string.IsNullOrEmpty(state.ResolvedModelLabel)
+            ? "MODEL"
+            : $"MODEL ({TitleCase(state.ResolvedModelLabel)})";
+
         // ModelBucketPicker.swift:145-163 — видно только когда есть из чего
         // выбирать; при 0/1 бакете выбор бессмысленен (Resolve и так возьмёт
         // единственный доступный).
@@ -164,12 +181,21 @@ public sealed class TrayIcon : IDisposable
 
         _showOnDesktopItem.Checked = state.ShowOnDesktop;
         _taskbarBandItem.Checked = state.TaskbarBandEnabled;
+        _bandPositionLeftItem.Checked = state.BandPosition == "left";
+        _bandPositionTrayItem.Checked = state.BandPosition != "left"; // "tray" and any unrecognized value default here, same fallback shape as MetricIndex
         _lockPositionItem.Checked = state.PositionLocked;
 
         // Launch at login не приходит через TrayMenuState: это не
         // JSON-настройка, а сам реестр — источник истины уже под рукой.
         _launchAtLoginItem.Checked = Autostart.IsEnabled();
     }
+
+    /// "FABLE" -> "Fable" — ModelBuckets.Label is deliberately SHOUTY for the
+    /// widget's own dial (Theme.LabelWeight etc. render everything caps
+    /// anyway); the tray menu is normal UI chrome where a shouty parenthetical
+    /// would look out of place next to "Auto"/"Left corner"/etc.
+    private static string TitleCase(string s) =>
+        s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
 
     /// <summary>SESSION/WEEK/MODEL → индекс в DialModel.All, которое всегда
     /// возвращает ровно эти три циферблата в этом порядке. Публичный и общий
@@ -200,9 +226,14 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add("Sign in to Claude.ai…", null, (_, _) => SignInRequested?.Invoke());
         menu.Items.Add(new ToolStripSeparator());
 
+        // Подписи короче ("5H"/"7D" вместо "SESSION"/"WEEK") — те же ключи
+        // TrayMetricKey под капотом ("five_hour"/"seven_day"/"model"), меняется
+        // только то, что видно в меню. "MODEL" здесь — заглушка на старте
+        // (снапшот ещё не загружен); SyncMenuState дописывает разрешённый
+        // бакет в скобках, как только он известен ("MODEL (Fable)").
         var trayShowsMenu = new ToolStripMenuItem("Tray shows");
-        _trayShowsSessionItem = new ToolStripMenuItem("SESSION", null, (_, _) => TrayMetricSelected?.Invoke("five_hour"));
-        _trayShowsWeekItem = new ToolStripMenuItem("WEEK", null, (_, _) => TrayMetricSelected?.Invoke("seven_day"));
+        _trayShowsSessionItem = new ToolStripMenuItem("5H", null, (_, _) => TrayMetricSelected?.Invoke("five_hour"));
+        _trayShowsWeekItem = new ToolStripMenuItem("7D", null, (_, _) => TrayMetricSelected?.Invoke("seven_day"));
         _trayShowsModelItem = new ToolStripMenuItem("MODEL", null, (_, _) => TrayMetricSelected?.Invoke("model"));
         trayShowsMenu.DropDownItems.Add(_trayShowsSessionItem);
         trayShowsMenu.DropDownItems.Add(_trayShowsWeekItem);
@@ -222,6 +253,16 @@ public sealed class TrayIcon : IDisposable
         _taskbarBandItem = new ToolStripMenuItem("Taskbar band");
         _taskbarBandItem.Click += (_, _) => TaskbarBandToggled?.Invoke(!_taskbarBandItem.Checked);
         menu.Items.Add(_taskbarBandItem);
+
+        // "Near tray"/"Left corner" — задаёт BandPosition независимо от того,
+        // включена ли сама лента сейчас (тот же принцип, что и "Tray shows":
+        // предпочтение сохраняется даже пока не на что смотреть).
+        var bandPositionMenu = new ToolStripMenuItem("Band position");
+        _bandPositionTrayItem = new ToolStripMenuItem("Near tray", null, (_, _) => BandPositionSelected?.Invoke("tray"));
+        _bandPositionLeftItem = new ToolStripMenuItem("Left corner", null, (_, _) => BandPositionSelected?.Invoke("left"));
+        bandPositionMenu.DropDownItems.Add(_bandPositionTrayItem);
+        bandPositionMenu.DropDownItems.Add(_bandPositionLeftItem);
+        menu.Items.Add(bandPositionMenu);
 
         _lockPositionItem = new ToolStripMenuItem("Lock position");
         _lockPositionItem.Click += (_, _) => LockPositionToggled?.Invoke(!_lockPositionItem.Checked);

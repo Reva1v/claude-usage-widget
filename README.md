@@ -47,12 +47,14 @@ The tray icon shows a live figure and opens a menu with:
 - **Refresh now** — fetch immediately instead of waiting out the 5-minute
   cycle
 - **Sign in to Claude.ai…**
-- **Tray shows** — pick which figure (SESSION, WEEK or MODEL) the tray icon
-  itself displays
+- **Tray shows** — pick which figure (5H, 7D or MODEL) the tray icon itself
+  displays
 - **Model limit** — pick which per-model weekly limit the dial shows
   (appears once the server returns more than one)
 - **Show on desktop** — hide the panel while keeping the tray icon
 - **Taskbar band** — toggle the optional taskbar-docked figure display
+- **Band position** — dock the band near the tray icons or in the taskbar's
+  left corner
 - **Lock position**
 - **Launch at login**
 - **Quit Claude Usage Widget**
@@ -97,10 +99,17 @@ specific model is a Max and Team Premium arrangement. On Pro and Team
 Standard that model is billed from usage credits instead, so the dial shows
 whichever per-model limit your account does have, or `n/a` if it has none.
 
-**Taskbar band legibility in attached mode.** On Windows 11, docking the
-band directly against the taskbar puts it under Mica compositing, which
-makes the text near-illegible. The overlay fallback mode renders crisply
-instead — prefer it if the attached band is hard to read on your system.
+**Taskbar band is a transparent window docked above the taskbar, not a true
+embed.** Windows 11's Mica compositing over the taskbar makes genuinely
+embedded (`WS_CHILD` of `Shell_TrayWnd`) content illegible — confirmed by
+direct pixel measurement — so the band is instead a normal top-level window
+*owned* by the taskbar (it always stays above it, without the Mica dimming a
+`WS_CHILD` gets). It doesn't steal focus or show up in Alt-Tab, renders
+white text with a subtle shadow directly over your wallpaper/taskbar color,
+and hides itself automatically whenever a fullscreen app (e.g. a game)
+covers the screen, reappearing once you leave it. Pick where it docks —
+next to the tray icons (default) or the taskbar's left corner — from the
+tray menu's "Band position" submenu.
 
 **Signing in happens in the widget's own window.** The sign-in window is a
 WebView2 view of claude.ai with its own cookie store, isolated from your
