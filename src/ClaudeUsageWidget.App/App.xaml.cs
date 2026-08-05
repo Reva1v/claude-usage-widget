@@ -18,6 +18,7 @@ public partial class App : System.Windows.Application
 {
     private TrayIcon? _trayIcon;
     private DesktopWidgetWindow? _widgetWindow;
+    private TaskbarBandWindow? _bandWindow;
     private SettingsStore? _settings;
     private ClaudeWebSession? _session;
     private UsageStore? _usageStore;
@@ -56,6 +57,7 @@ public partial class App : System.Windows.Application
         _trayIcon.TrayMetricSelected += OnTrayMetricSelected;
         _trayIcon.ModelBucketSelected += OnModelBucketSelected;
         _trayIcon.ShowOnDesktopToggled += OnShowOnDesktopToggled;
+        _trayIcon.TaskbarBandToggled += OnTaskbarBandToggled;
         _trayIcon.LockPositionToggled += OnLockPositionToggled;
         _trayIcon.MenuOpening += RefreshTrayMenuState;
 
@@ -110,6 +112,10 @@ public partial class App : System.Windows.Application
         // собой — иначе "Show on desktop" в меню и то, что реально на
         // экране, тут же разойдутся сразу после старта.
         if (_settings.Load().WidgetVisible) _widgetWindow.Show();
+
+        // Тот же принцип, что и для WidgetVisible строкой выше: состояние
+        // ленты в таскбаре переживает перезапуск приложения.
+        if (_settings.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
 
         FireAndForget(StartupAsync);
     }
@@ -229,6 +235,7 @@ public partial class App : System.Windows.Application
             UpdateTrayTooltip();
             RefreshTrayIcon();
             RefreshTrayMenuState();
+            RenderTaskbarBand();
         });
     }
 
@@ -310,6 +317,51 @@ public partial class App : System.Windows.Application
         // здесь дублировать нечего.
         _widgetWindow!.PositionLocked = locked;
         RefreshTrayMenuState();
+    }
+
+    private void OnTaskbarBandToggled(bool enabled)
+    {
+        var data = _settings!.Load();
+        _settings.Save(data with { TaskbarBandEnabled = enabled });
+        SetTaskbarBandVisible(enabled);
+        RefreshTrayMenuState();
+    }
+
+    /// <summary>Включает/выключает ленту. Окно создаётся лениво при первом
+    /// включении и переживает последующие выключения (Detach лишь прячет и
+    /// отвязывает от таскбара) — пересоздавать TaskbarBandWindow на каждый
+    /// чекбокс незачем, TryAttach/Detach уже идемпотентны.</summary>
+    private void SetTaskbarBandVisible(bool visible)
+    {
+        if (visible)
+        {
+            _bandWindow ??= new TaskbarBandWindow();
+            // Рендерим ДО TryAttach: тот сразу вызывает Reposition(),
+            // которому нужна актуальная ширина контента, а не ширина от
+            // предыдущего показа (или вовсе нулевая при самом первом).
+            RenderTaskbarBand();
+            _bandWindow.TryAttach();
+        }
+        else
+        {
+            _bandWindow?.Detach();
+        }
+    }
+
+    /// <summary>Свежие метрики для ленты — тот же DialModel.All/TrayText.Metrics,
+    /// что и у иконки трея и тултипа, просто нарисованные в другом окне.
+    /// Безвредно вызывать и когда лента выключена/ещё не создана.</summary>
+    private void RenderTaskbarBand()
+    {
+        if (_bandWindow is null) return;
+
+        var now = DateTimeOffset.Now;
+        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
+            ? okSnapshot
+            : _usageStore.LastSnapshot;
+        var data = _settings!.Load();
+        var models = DialModel.All(snapshot, data.ModelBucket, now);
+        _bandWindow.Render(TrayText.Metrics(models));
     }
 
     private void RenderWidget()
@@ -408,6 +460,13 @@ public partial class App : System.Windows.Application
 
         _widgetWindow?.Close();
         _widgetWindow = null;
+
+        // Detach перед Close: наше окно всё ещё может быть дочерним
+        // Shell_TrayWnd (чужого процесса) — сначала аккуратно отвязываем,
+        // потом закрываем как обычное WPF-окно.
+        _bandWindow?.Detach();
+        _bandWindow?.Close();
+        _bandWindow = null;
 
         base.OnExit(e);
     }

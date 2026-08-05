@@ -64,6 +64,9 @@ public sealed class TrayIcon : IDisposable
     /// <summary>"Show on desktop" — новое желаемое состояние.</summary>
     public event Action<bool>? ShowOnDesktopToggled;
 
+    /// <summary>"Taskbar band" — новое желаемое состояние.</summary>
+    public event Action<bool>? TaskbarBandToggled;
+
     /// <summary>"Lock position" — новое желаемое состояние.</summary>
     public event Action<bool>? LockPositionToggled;
 
@@ -216,10 +219,8 @@ public sealed class TrayIcon : IDisposable
         _showOnDesktopItem.Click += (_, _) => ShowOnDesktopToggled?.Invoke(!_showOnDesktopItem.Checked);
         menu.Items.Add(_showOnDesktopItem);
 
-        // Пока всегда disabled — Task 17 включит вместе с самой лентой в
-        // таскбаре; чекбокс уже здесь, чтобы порядок пунктов не менялся
-        // между задачами.
-        _taskbarBandItem = new ToolStripMenuItem("Taskbar band") { Enabled = false };
+        _taskbarBandItem = new ToolStripMenuItem("Taskbar band");
+        _taskbarBandItem.Click += (_, _) => TaskbarBandToggled?.Invoke(!_taskbarBandItem.Checked);
         menu.Items.Add(_taskbarBandItem);
 
         _lockPositionItem = new ToolStripMenuItem("Lock position");
