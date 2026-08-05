@@ -17,10 +17,10 @@ public class DialModelTests
         // system clock, so the result is deterministic.
         var model = DialModel.Make(
             "five_hour",
-            "SESSION",
+            "5H",
             Snapshot(new() { ["five_hour"] = (42, 7200) }),
             Now);
-        Assert.Equal("SESSION", model.Title);
+        Assert.Equal("5H", model.Title);
         Assert.Equal(0.42, model.Fraction!.Value, 10);
         Assert.Equal("2h 0m", model.Remaining);
     }
@@ -28,7 +28,7 @@ public class DialModelTests
     [Fact]
     public void MissingBucketYieldsEmptyDial()
     {
-        var model = DialModel.Make("five_hour", "SESSION", Snapshot(new()), Now);
+        var model = DialModel.Make("five_hour", "5H", Snapshot(new()), Now);
         Assert.Null(model.Fraction);
         Assert.Null(model.Remaining);
     }
@@ -36,7 +36,7 @@ public class DialModelTests
     [Fact]
     public void NoSnapshotYieldsEmptyDial()
     {
-        var model = DialModel.Make("five_hour", "SESSION", null, Now);
+        var model = DialModel.Make("five_hour", "5H", null, Now);
         Assert.Null(model.Fraction);
     }
 
@@ -51,7 +51,7 @@ public class DialModelTests
         });
         var dials = DialModel.All(s, null, Now);
         Assert.Equal(3, dials.Count);
-        Assert.Equal(new[] { "SESSION", "WEEK", "FABLE" }, dials.Select(d => d.Title));
+        Assert.Equal(new[] { "5H", "7D", "FABLE" }, dials.Select(d => d.Title));
         Assert.Equal(0.42, dials[0].Fraction!.Value, 10);
     }
 
@@ -85,7 +85,7 @@ public class DialModelTests
     public void MissingSnapshotYieldsEmptyDials()
     {
         var dials = DialModel.All(null, null, Now);
-        Assert.Equal(new[] { "SESSION", "WEEK", "MODEL" }, dials.Select(d => d.Title));
+        Assert.Equal(new[] { "5H", "7D", "MODEL" }, dials.Select(d => d.Title));
         Assert.All(dials, d => Assert.Null(d.Fraction));
     }
 }

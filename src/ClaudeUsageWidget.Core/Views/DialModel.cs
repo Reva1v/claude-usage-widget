@@ -18,13 +18,16 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     /// The three dials, always in the same order and always all three present —
     /// a dial with no data reads as `n/a` rather than disappearing and shifting
     /// the layout.
+    ///
+    /// "5H"/"7D" — пользователь выбрал подписи временных окон, а не имён
+    /// лимитов, чтобы совпадать с тем, что уже показывают taskbar-band и tray.
     public static IReadOnlyList<DialModel> All(UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now)
     {
         var modelKey = snapshot is null ? null : ModelBuckets.Resolve(preferredModelKey, snapshot);
         return
         [
-            Make("five_hour", "SESSION", snapshot, now),
-            Make("seven_day", "WEEK", snapshot, now),
+            Make("five_hour", "5H", snapshot, now),
+            Make("seven_day", "7D", snapshot, now),
             Make(
                 modelKey ?? "",
                 modelKey is not null ? ModelBuckets.Label(modelKey) : "MODEL",

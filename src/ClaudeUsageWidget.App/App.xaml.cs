@@ -459,7 +459,7 @@ public partial class App : System.Windows.Application
         var metrics = TrayText.Metrics(models);
         var statusLine = StatusLine.Text(state, now, _usageStore.RetryPausedUntil);
 
-        // "SES 42% · WEEK 18% · FAB 8%" — тот же разделитель " · ", что и в
+        // "5H 42% · 7D 18% · FAB 8%" — тот же разделитель " · ", что и в
         // строке статуса под циферблатами на панели; статус (если есть)
         // идёт отдельной строкой, а не тем же " · ", чтобы не сливаться с
         // цифрами при беглом взгляде на всплывающую подсказку.
