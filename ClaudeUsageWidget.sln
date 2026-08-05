@@ -7,9 +7,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{AEDE2AFA-A88
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeUsageWidget.Core", "src\ClaudeUsageWidget.Core\ClaudeUsageWidget.Core.csproj", "{BD75037A-D9D0-497E-B6FF-C9A771B26358}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{CE05605D-05F1-493B-B700-F578A854E29A}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{CE05605D-05F1-493B-B700-F578A854E29A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeUsageWidget.Core.Tests", "tests\ClaudeUsageWidget.Core.Tests\ClaudeUsageWidget.Core.Tests.csproj", "{0D082C8B-5B34-48A7-81E3-39FFE7DA3657}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeUsageWidget.Core.Tests", "Tests\ClaudeUsageWidget.Core.Tests\ClaudeUsageWidget.Core.Tests.csproj", "{0D082C8B-5B34-48A7-81E3-39FFE7DA3657}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
