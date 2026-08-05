@@ -15,8 +15,8 @@ public class TrayTextTests
         });
         Assert.Equal(new[]
         {
-            new TrayMetric("SES", "57%"),
-            new TrayMetric("WEEK", "38%"),
+            new TrayMetric("5H", "57%"),
+            new TrayMetric("7D", "38%"),
             new TrayMetric("FAB", "8%"),
         }, metrics);
     }
@@ -64,9 +64,19 @@ public class TrayTextTests
 
     [Fact]
     public void LabelForKeepsFourCharacterTitleWhole() =>
-        Assert.Equal("WEEK", TrayText.LabelFor("WEEK"));
+        Assert.Equal("FIVE", TrayText.LabelFor("FIVE"));
 
     [Fact]
     public void LabelForCutsLongerTitleToThree() =>
-        Assert.Equal("SES", TrayText.LabelFor("SESSION"));
+        Assert.Equal("SON", TrayText.LabelFor("SONNET"));
+
+    // SESSION/WEEK — особый случай: пользователь выбрал подписи временных
+    // окон, а не имён лимитов (см. why-comment у LabelFor).
+    [Fact]
+    public void LabelForRendersSessionAsFiveHour() =>
+        Assert.Equal("5H", TrayText.LabelFor("SESSION"));
+
+    [Fact]
+    public void LabelForRendersWeekAsSevenDay() =>
+        Assert.Equal("7D", TrayText.LabelFor("WEEK"));
 }

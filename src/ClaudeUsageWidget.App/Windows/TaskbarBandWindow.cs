@@ -63,22 +63,15 @@ public sealed class TaskbarBandWindow : Window
 
     private const double OuterPaddingDip = 8;
 
-    /// Отступ от левого края таскбара для BandPosition="left". Задача была
-    /// сформулирована как "левый край таскбара, где сидит кнопка Widgets" —
-    /// это буквально верно для выравнивания таскбара "Слева" (Windows 11
-    /// Personalization → Taskbar behaviors → Taskbar alignment): там
-    /// Start/Search/Task View/Widgets и правда начинаются от x=0, и это
-    /// значение встаёт сразу после них. При выравнивании ПО УМОЛЧАНИЮ
-    /// ("По центру") та же кнопка Widgets на деле сидит у центра экрана
-    /// (проверено живьём — Start у тестовой машины оказался на x≈849 из
-    /// 1920), так что этот отступ туда не попадает — но он и не должен:
-    /// цель "левый угол" в брифе понимается буквально, и x=160 гарантированно
-    /// свободен от Start/Search/Task View при любом выравнивании (те не
-    /// доходят настолько далеко влево ни в одной раскладке). Фиксированный
-    /// отступ, а не поиск дочерних окон Start/Search/Widgets: те скрыты за
-    /// XAML Islands без стабильных публичных классов, которые можно было бы
-    /// безопасно искать через FindWindowEx на каждый тик.
-    private const double LeftPositionOffsetDip = 160;
+    /// Отступ от левого края таскбара для BandPosition="left" — живая
+    /// проверка (task-17-report.md, round 5) показала лишний отступ ~130px
+    /// вместо ожидаемого «впритык к краю»: было 160 DIP, унаследованные из
+    /// более ранней идеи встать сразу после Start/Search/Task View/Widgets
+    /// при выравнивании таскбара "Слева". Пользователь имел в виду буквально
+    /// левый край — тот же зазор, что и GapDip у позиции "tray" (там 8 px от
+    /// TrayNotifyWnd), просто с другой стороны экрана, а не отступ вслед за
+    /// скрытыми системными кнопками.
+    private const double LeftPositionOffsetDip = GapDip;
 
     /// Высота таскбара Windows 10/11 по умолчанию при масштабе 100% —
     /// используется только как временное значение до первого вызова
@@ -98,6 +91,16 @@ public sealed class TaskbarBandWindow : Window
     /// состояние с "лента выключена пользователем" — здесь просто временная
     /// приостановка показа.
     private bool _hiddenForFullscreen;
+
+    /// Последняя геометрия, реально применённая через SetWindowPos в
+    /// RepositionCore() — см. why-comment там: используется, чтобы пропускать
+    /// SetWindowPos на тиках, где ничего не изменилось (перф). int.MinValue —
+    /// заведомо непохоже ни на один настоящий x/y/размер, поэтому самый
+    /// первый вызов всегда проходит без специальной ветки на "ещё не было".
+    private int _lastX = int.MinValue;
+    private int _lastY = int.MinValue;
+    private int _lastWidthPx = int.MinValue;
+    private int _lastHeightPx = int.MinValue;
 
     /// <summary>
     /// Нативный HWND этого окна уничтожен не через наш собственный Detach()/
@@ -219,11 +222,18 @@ public sealed class TaskbarBandWindow : Window
     {
         _content.SetMetrics(metrics);
 
-        // Измеряем немедленно, а не откладываем на автоматический
-        // layout-pass — Reposition() (в том числе самая первая, из Dock())
-        // должна знать актуальную ширину контента прямо сейчас, а не после
-        // следующего кадра отрисовки.
-        _content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        // Измерение контента НЕ делается здесь (раньше — делалось, сразу
+        // после SetMetrics) — оно намеренно перенесено целиком в
+        // RepositionCore() (см. её комментарий про "F"/"5"-баг): App.
+        // SetTaskbarBandVisible вызывает Render() ДО Dock()/EnsureHandle(),
+        // то есть в момент, когда у окна ещё может не быть HWND и
+        // PresentationSource — DialText.PixelsPerDip(_content) в этот
+        // момент не знает реальный DPI монитора, на котором окно окажется, и
+        // намеренный синхронный Measure() тут посчитал бы ширину по
+        // неверному DPI. RepositionCore() всегда выполняется уже после
+        // EnsureHandle() и сама заново измеряет контент непосредственно
+        // перед тем, как прочитать DesiredSize — единственное место, где
+        // измерение действительно нужно.
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -349,6 +359,17 @@ public sealed class TaskbarBandWindow : Window
         if (!Win32.GetWindowRect(tray, out var trayRect)) return;
         var bandHeightPx = trayRect.Bottom - trayRect.Top;
 
+        // Измеряем контент ЗДЕСЬ, а не полагаемся на Render() (которая может
+        // выполниться до EnsureHandle() — см. её комментарий): это гарантирует,
+        // что DesiredSize всегда посчитан в том же DPI-контексте, в котором
+        // OnRender затем реально рисует текст. Без этого при первом Dock()
+        // ширина окна считалась по DPI "до присоединения" (возможен fallback
+        // на системный DPI), а рисовался текст уже по настоящему DPI монитора
+        // — на масштабе, отличном от 100%, они расходились, и третья колонка
+        // обрезалась почти до одного символа ("FAB"/"53%" → "F"/"5",
+        // task-17-report.md round 5, live-finding #2). Дёшево — пересчёт
+        // ширины трёх FormattedText-колонок, а не перерисовка.
+        _content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         var contentWidthDip = _content.DesiredSize.Width + OuterPaddingDip * 2;
         var bandWidthPx = ToPhysical(contentWidthDip, dpi);
         var gapPx = ToPhysical(GapDip, dpi);
@@ -357,9 +378,29 @@ public sealed class TaskbarBandWindow : Window
             ? trayRect.Left + ToPhysical(LeftPositionOffsetDip, dpi)
             : ComputeTrayPositionX(trayRect, notify, bandWidthPx, gapPx);
 
+        // Пропускаем SetWindowPos целиком, если геометрия не поменялась ни на
+        // пиксель (кроме "устаревшего" случая — там необходимо заново
+        // перепривязать владельца/Z-order через SetWindowPos, даже если сами
+        // x/y/размер совпали с прошлым разом): каждый вызов SetWindowPos — это
+        // WM_WINDOWPOSCHANGED/WM_SIZE и, для layered-окна (AllowsTransparency
+        // =true), повторная композиция DWM — недорого один раз, но незачем
+        // платить эту цену каждые 5 секунд бесконечно, когда почти всегда
+        // ничего не изменилось (task-17-report.md round 5, live-finding #3:
+        // "очень заторможено").
+        if (!stale
+            && x == _lastX && trayRect.Top == _lastY
+            && bandWidthPx == _lastWidthPx && bandHeightPx == _lastHeightPx)
+        {
+            return;
+        }
+
         var insertAfter = stale ? Win32.HwndTopMost : nint.Zero;
         var flags = stale ? Win32.SwpNoActivate : (Win32.SwpNoZOrder | Win32.SwpNoActivate);
         Win32.SetWindowPos(ownHwnd, insertAfter, x, trayRect.Top, bandWidthPx, bandHeightPx, flags);
+        _lastX = x;
+        _lastY = trayRect.Top;
+        _lastWidthPx = bandWidthPx;
+        _lastHeightPx = bandHeightPx;
     }
 
     private static int ComputeTrayPositionX(Win32.RECT trayRect, nint notify, int bandWidthPx, int gapPx)
