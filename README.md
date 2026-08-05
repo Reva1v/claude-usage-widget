@@ -14,7 +14,13 @@ authenticated claude.ai web session; the desktop widget, tray icon, sign-in
 flow, refresh cycle and settings persistence are all reimplemented for
 Windows.
 
-TODO: screenshot of the widget on Windows.
+<img src="assets/widget.png" width="220" alt="Claude Usage Widget on the Windows desktop">
+
+The optional taskbar band — transparent, just the figures, docked to the
+taskbar's left corner:
+
+<img src="assets/taskbar-band.png" alt="Taskbar band showing 5H, 7D and per-model usage">
+
 
 ## The panel
 
