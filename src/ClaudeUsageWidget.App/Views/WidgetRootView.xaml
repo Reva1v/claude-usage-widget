@@ -1,0 +1,146 @@
+<UserControl x:Class="ClaudeUsageWidget.App.Views.WidgetRootView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:ClaudeUsageWidget.App.Views"
+             Background="Transparent"
+             ClipToBounds="True">
+    <UserControl.Resources>
+        <!-- Плоская кнопка-иконка: без стандартного WPF-хрома (рамка/подсветка),
+             который бы не вписался в тёмную панель. Порт .buttonStyle(.plain). -->
+        <Style x:Key="IconButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SignInButtonStyle" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{x:Static views:Theme.TextBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{x:Static views:Theme.DimBrush}"
+                                Opacity="0.35"
+                                CornerRadius="10"
+                                Padding="10,4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.55"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <!-- Background="Transparent", а не пусто: Panel без Background не
+         участвует в hit-тестировании по своим "пустым" пикселям, а
+         MouseEnter/MouseLeave (нужны для hover-хедера) должны надёжно
+         срабатывать по всему квадрату side x side, а не только там, где
+         что-то реально закрашено внутри. -->
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <!-- Панель: тёмный полупрозрачный фон со скруглением, внутри — сетка
+             2x2 из циферблатов. Порядок детей в Grid — это и порядок
+             отрисовки (z-order), как overlay-цепочка в WidgetRootView.swift. -->
+        <Border x:Name="PanelBorder" Background="{x:Static views:Theme.PanelBackgroundBrush}">
+            <!-- Auto-размер строк/колонок: сетка ужимается ровно до контента
+                 (2 * dialSize + gap), а не растягивается по звёздам — так
+                 зазор между циферблатами задаётся простыми Margin на
+                 правом/нижнем циферблатах, без пересчёта звёздных долей. -->
+            <Grid x:Name="DialGrid" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <views:DialControl x:Name="SessionDial" Grid.Row="0" Grid.Column="0"/>
+                <views:DialControl x:Name="WeekDial" Grid.Row="0" Grid.Column="1"/>
+                <views:DialControl x:Name="ModelDial" Grid.Row="1" Grid.Column="0"/>
+                <views:StatusDialControl x:Name="StatusDial" Grid.Row="1" Grid.Column="1"/>
+            </Grid>
+        </Border>
+
+        <!-- Плашка поверх циферблатов, когда их цифрам нельзя доверять
+             (NoCredentials/Unauthorized). Порт BlockingNotice.swift +
+             overlay в WidgetRootView.swift:186-208.
+
+             IsHitTestVisible здесь намеренно НЕ выключен (в отличие от
+             Swift-оригинала, где .allowsHitTesting(false) держит всю плашку
+             прозрачной для кликов): в WPF выключение hit-теста на предке
+             вырубает его для всего поддерева, включая SignInButton, и
+             сделать кнопку кликабельной обратно снизу уже нельзя. Вместо
+             этого просто не мешаем всплытию: сам Border и текстовые блоки
+             не выставляют e.Handled, поэтому клик по фону плашки всё равно
+             доходит до DesktopWidgetWindow и запускает drag — тот же эффект,
+             без потери кнопки. -->
+        <Border x:Name="NoticeBorder" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
+                Visibility="Collapsed">
+            <StackPanel x:Name="NoticeStack" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock x:Name="NoticeTitleText" HorizontalAlignment="Center" TextAlignment="Center"
+                           FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.ValueWeight}"
+                           Foreground="{x:Static views:Theme.TextBrush}"/>
+                <TextBlock x:Name="NoticeDetailText" HorizontalAlignment="Center" TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
+                           Foreground="{x:Static views:Theme.DimBrush}"/>
+                <!-- Видна только для Failed(NoCredentials) — SetContent переключает Visibility. -->
+                <Button x:Name="SignInButton" Content="Sign in" Margin="0,8,0,0"
+                        Style="{StaticResource SignInButtonStyle}"
+                        Visibility="Collapsed"
+                        Click="SignInButton_Click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Hover-хедер: глаз (скрыть) и замок (лок позиции). Виден только
+             при наведении на панель — WidgetRootView.swift:110-166. -->
+        <Border x:Name="HeaderBorder" VerticalAlignment="Top" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
+                Opacity="0" IsHitTestVisible="False">
+            <Grid x:Name="HeaderGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="EyeButton" Grid.Column="0" Style="{StaticResource IconButtonStyle}"
+                        Foreground="{x:Static views:Theme.DimBrush}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE890;"
+                        ToolTip="Hide widget — bring it back from the tray icon"
+                        Click="EyeButton_Click"/>
+
+                <Button x:Name="LockButton" Grid.Column="2" Style="{StaticResource IconButtonStyle}"
+                        Foreground="{x:Static views:Theme.DimBrush}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE785;"
+                        ToolTip="Click to lock the widget position and size"
+                        Click="LockButton_Click"/>
+            </Grid>
+        </Border>
+
+        <!-- Строка статуса — молчит, пока всё в порядке (StatusLine.Text
+             возвращает null). WidgetRootView.swift:170-177. -->
+        <TextBlock x:Name="StatusLineText" VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                   FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
+                   Foreground="{x:Static views:Theme.DimBrush}"
+                   Visibility="Collapsed" IsHitTestVisible="False"/>
+    </Grid>
+</UserControl>
