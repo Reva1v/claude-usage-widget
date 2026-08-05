@@ -173,7 +173,9 @@ public sealed class TaskbarBandWindow : Window
         _repositionTimer.Stop();
 
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd != nint.Zero)
+        var hwndAlive = hwnd != nint.Zero && Win32.IsWindow(hwnd);
+
+        if (hwndAlive)
         {
             Win32.SetParent(hwnd, nint.Zero);
             if (_attached) SetChildStyle(hwnd, isChild: false);
@@ -181,8 +183,41 @@ public sealed class TaskbarBandWindow : Window
 
         _attached = false;
         _attachedTrayHwnd = nint.Zero;
-        Topmost = false;
-        Hide();
+
+        if (!hwndAlive)
+        {
+            // Зомби: тот же сценарий, что и в RepositionCore() — explorer.exe
+            // перезапустился, наш WS_CHILD уничтожен вместе со старым
+            // Shell_TrayWnd, и WPF уже считает это Window закрытым. Раньше
+            // это было недостижимо отсюда (процесс падал на следующем тике
+            // Reposition() раньше, чем пользователь успел бы снять галочку),
+            // но самовосстановление сделало гонку видимой: между смертью
+            // HWND и ближайшим тиком таймера есть до 5 секунд, и Detach()
+            // (пользователь снял галочку) может случиться первым. Мы только
+            // что остановили _repositionTimer выше — значит Reposition()
+            // больше НЕ поднимет Lost сам, и просто промолчать здесь означало
+            // бы оставить владельца (App.xaml.cs) с мёртвым экземпляром,
+            // который упадёт на следующем TryAttach(). Поэтому сигналим сами
+            // и не трогаем Topmost/Hide() — оба бросили бы то же
+            // InvalidOperationException на закрытом Window.
+            Lost?.Invoke();
+            return;
+        }
+
+        try
+        {
+            Topmost = false;
+            Hide();
+        }
+        catch (InvalidOperationException)
+        {
+            // Защитный бэкстоп на гонку между проверкой IsWindow выше и
+            // вызовом Hide() ниже (WPF пометила Window закрытым именно в
+            // этом промежутке) — тот же вывод, что и в ветке выше: экземпляр
+            // мёртв, сигналим Lost вместо того чтобы тихо проглотить и
+            // оставить владельца с нерабочей ссылкой.
+            Lost?.Invoke();
+        }
     }
 
     /// <summary>Перерисовывает колонки свежими метриками — источник тот же
