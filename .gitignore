@@ -1,8 +1,3 @@
-.build/
-dist/
-.DS_Store
-*.xcodeproj
-.swiftpm/
 .superpowers/
 .idea/
 *.iml
