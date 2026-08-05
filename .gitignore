@@ -6,3 +6,9 @@ dist/
 .superpowers/
 .idea/
 *.iml
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
