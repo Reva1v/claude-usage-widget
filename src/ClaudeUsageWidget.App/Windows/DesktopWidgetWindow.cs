@@ -116,6 +116,7 @@ public sealed class DesktopWidgetWindow : Window
         MouseLeftButtonDown += OnWindowMouseLeftButtonDown;
         MouseMove += OnWindowMouseMove;
         MouseLeftButtonUp += OnWindowMouseLeftButtonUp;
+        LostMouseCapture += OnLostMouseCapture;
         Closing += (_, _) => FlushPendingPersist();
     }
 
@@ -289,6 +290,22 @@ public sealed class DesktopWidgetWindow : Window
     {
         var pos = e.GetPosition(this);
 
+        // Пояс поверх подтяжек OnLostMouseCapture: если _dragging/_resizing
+        // всё же остался true без реально зажатой левой кнопки (гонка
+        // событий или сценарий потери capture, который LostMouseCapture по
+        // какой-то причине не поймал), не даём фантомный drag/resize по
+        // голому наведению — сбрасываем состояние и ведём себя как обычный
+        // hover. WM_MOUSEMOVE приходит независимо от того, захвачена мышь
+        // или нет, поэтому без этой проверки следующее наведение на панель
+        // читалось бы как продолжение перетаскивания со старым якорем.
+        if ((_dragging || _resizing) && Mouse.LeftButton != MouseButtonState.Pressed)
+        {
+            _dragging = false;
+            _resizing = false;
+            _resizeEdge = ResizeEdge.None;
+            if (IsMouseCaptured) ReleaseMouseCapture();
+        }
+
         if (_dragging)
         {
             // Инкрементальная поправка, пересчитанная на каждый tick:
@@ -327,6 +344,27 @@ public sealed class DesktopWidgetWindow : Window
         _resizing = false;
         _resizeEdge = ResizeEdge.None;
         ReleaseMouseCapture();
+        SchedulePersistGeometry();
+    }
+
+    /// <summary>
+    /// Захват мыши можно потерять не только через наш собственный
+    /// ReleaseMouseCapture: системный модальный диалог, блокировка экрана,
+    /// разрыв RDP-сессии или другое приложение, перехватившее capture —
+    /// во всех этих случаях OnWindowMouseLeftButtonUp никогда не вызывается,
+    /// а _dragging/_resizing застряли бы в true навсегда. WM_MOUSEMOVE при
+    /// этом продолжает приходить и при обычном наведении без зажатой
+    /// кнопки, поэтому без этого сброса следующий hover над панелью читался
+    /// бы как продолжение drag/resize со старым (уже неактуальным) якорем —
+    /// фантомное перемещение/ресайз до следующего настоящего mouse-down.
+    /// </summary>
+    private void OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (!_dragging && !_resizing) return;
+
+        _dragging = false;
+        _resizing = false;
+        _resizeEdge = ResizeEdge.None;
         SchedulePersistGeometry();
     }
 
