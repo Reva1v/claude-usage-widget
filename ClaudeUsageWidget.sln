@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{CE05605D
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeUsageWidget.Core.Tests", "Tests\ClaudeUsageWidget.Core.Tests\ClaudeUsageWidget.Core.Tests.csproj", "{0D082C8B-5B34-48A7-81E3-39FFE7DA3657}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeUsageWidget.App", "src\ClaudeUsageWidget.App\ClaudeUsageWidget.App.csproj", "{76A043C5-73C1-432A-9DD1-255306FCB018}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{0D082C8B-5B34-48A7-81E3-39FFE7DA3657}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0D082C8B-5B34-48A7-81E3-39FFE7DA3657}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0D082C8B-5B34-48A7-81E3-39FFE7DA3657}.Release|Any CPU.Build.0 = Release|Any CPU
+		{76A043C5-73C1-432A-9DD1-255306FCB018}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{76A043C5-73C1-432A-9DD1-255306FCB018}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{76A043C5-73C1-432A-9DD1-255306FCB018}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{76A043C5-73C1-432A-9DD1-255306FCB018}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{BD75037A-D9D0-497E-B6FF-C9A771B26358} = {AEDE2AFA-A888-4C24-BAF4-77BA02423C02}
 		{0D082C8B-5B34-48A7-81E3-39FFE7DA3657} = {CE05605D-05F1-493B-B700-F578A854E29A}
+		{76A043C5-73C1-432A-9DD1-255306FCB018} = {AEDE2AFA-A888-4C24-BAF4-77BA02423C02}
 	EndGlobalSection
 EndGlobal

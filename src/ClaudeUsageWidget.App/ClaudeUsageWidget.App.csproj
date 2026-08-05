@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ClaudeUsageWidget.Core\ClaudeUsageWidget.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- NotifyIcon и ContextMenuStrip живут в WinForms; WPF своего трея не имеет. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.2.0</Version>
+    <AssemblyTitle>Claude Usage Widget</AssemblyTitle>
+    <!-- WFAC010 предлагает ApplicationHighDpiMode/SetHighDpiMode — API из мира
+         WinForms-приложений. Здесь процесс хозяйский WPF, WinForms используется
+         только под трей, а PerMonitorV2 в манифесте — задокументированный способ
+         DPI-awareness для WPF, поэтому предупреждение неприменимо. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+
+</Project>
