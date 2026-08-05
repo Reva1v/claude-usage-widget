@@ -244,6 +244,36 @@ public class UsageStoreTests
         Assert.Equal(1, calls);
     }
 
+    // The test above only proves coalescing on one thread, where the
+    // check-then-set on `_inFlight` can never actually interleave. The App
+    // layer calls LoadAsync() from the UI thread and from
+    // SystemEvents.PowerModeChanged (a worker thread), so this drives two
+    // real OS threads at `_inFlight` via a Barrier to make them arrive at
+    // LoadAsync() together as often as possible. The lock makes the
+    // outcome exact regardless of how close the threads land; the barrier
+    // just maximizes how often the race window is actually exercised.
+    [Fact]
+    public async Task CoalescesConcurrentLoadAsyncAcrossThreads()
+    {
+        var calls = 0;
+        var store = MakeStore(fetch: _ =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(Snapshot(1));
+        });
+
+        var barrier = new Barrier(2);
+        Task Racer() => Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            return store.LoadAsync();
+        });
+
+        await Task.WhenAll(Racer(), Racer());
+
+        Assert.Equal(1, calls);
+    }
+
     // Changed has no Swift equivalent (Swift observation is implicit via
     // @Observable); these pin down the C#-specific event contract.
     [Fact]

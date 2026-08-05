@@ -47,6 +47,14 @@ public sealed class UsageStore
     /// оказаться снимок старее уже показанного.
     private Task? _inFlight;
 
+    /// Синхронизирует проверку-и-публикацию `_inFlight`. В отличие от
+    /// Swift-оригинала, где @MainActor сериализовал всех вызывающих,
+    /// LoadAsync() здесь дёргают и с UI-потока (таймер, пункт меню), и с
+    /// worker-потока SystemEvents.PowerModeChanged — без блокировки два
+    /// потока могут одновременно увидеть `_inFlight == null` и оба запустить
+    /// свой fetch, нарушая контракт "один fetch на все параллельные вызовы".
+    private readonly object _inFlightGate = new();
+
     public UsageState CurrentState { get; private set; } = new UsageState.Loading();
 
     /// The most recent successful snapshot. Kept so a failing refresh dims the
@@ -90,14 +98,22 @@ public sealed class UsageStore
     /// handler firing together still make exactly one request.
     public Task LoadAsync()
     {
-        if (_inFlight is { } inFlight) return inFlight;
+        TaskCompletionSource tcs;
+        lock (_inFlightGate)
+        {
+            if (_inFlight is { } inFlight) return inFlight;
 
-        // A synchronously-resolving fetch would let RunLoadAsync race to
-        // completion (finally included) before this method could record it,
-        // clobbering the very field the finally just cleared. Publishing the
-        // completion source's task up front closes that window.
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _inFlight = tcs.Task;
+            // A synchronously-resolving fetch would let RunLoadAsync race to
+            // completion (finally included) before this method could record it,
+            // clobbering the very field the finally just cleared. Publishing the
+            // completion source's task up front closes that window.
+            tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _inFlight = tcs.Task;
+        }
+
+        // Deliberately outside the lock: the fetch itself, and everything it
+        // awaits, must never run while holding a lock a second caller needs
+        // just to check whether a fetch is already running.
         _ = RunLoadAsync(tcs);
         return tcs.Task;
     }
@@ -115,39 +131,49 @@ public sealed class UsageStore
         }
         finally
         {
-            _inFlight = null;
+            lock (_inFlightGate) { _inFlight = null; }
         }
     }
 
     private async Task PerformLoadAsync()
     {
-        if (RetryPausedUntil is { } pausedUntil && _now() < pausedUntil) return;
-        RetryPausedUntil = null;
-
-        if (!_hasCredentials())
-        {
-            SetState(new UsageState.Failed(UsageError.NoCredentials));
-            return;
-        }
-
+        // Everything below — including `_now()` and `_hasCredentials()` — is
+        // caller-injected and can throw. That must land in Failed(Network)
+        // like any other unexpected error, not skip SetState entirely and
+        // leave CurrentState stale (which is what happened when only the
+        // fetch call itself was guarded). A nested try/catch's handler body
+        // is still inside this outer try, so an exception raised while
+        // computing the rate-limit escalation below is covered too.
         try
         {
-            var snapshot = await _fetch(CancellationToken.None);
-            Publish(snapshot);
-        }
-        catch (UsageException ex)
-        {
-            var error = ex.Error;
-            if (error.Kind == UsageErrorKind.RateLimited)
+            if (RetryPausedUntil is { } pausedUntil && _now() < pausedUntil) return;
+            RetryPausedUntil = null;
+
+            if (!_hasCredentials())
             {
-                _consecutiveRateLimits++;
-                var index = Math.Min(_consecutiveRateLimits - 1, RateLimitBackoffSeconds.Length - 1);
-                var wait = Math.Max(error.RetryAfterSeconds ?? 0, RateLimitBackoffSeconds[index]);
-                var deadline = _now() + TimeSpan.FromSeconds(wait + RetryMarginSeconds);
-                RetryPausedUntil = deadline;
-                _saveRetryState(new UsageRetryState(deadline, _consecutiveRateLimits));
+                SetState(new UsageState.Failed(UsageError.NoCredentials));
+                return;
             }
-            SetState(new UsageState.Failed(error));
+
+            try
+            {
+                var snapshot = await _fetch(CancellationToken.None);
+                Publish(snapshot);
+            }
+            catch (UsageException ex)
+            {
+                var error = ex.Error;
+                if (error.Kind == UsageErrorKind.RateLimited)
+                {
+                    _consecutiveRateLimits++;
+                    var index = Math.Min(_consecutiveRateLimits - 1, RateLimitBackoffSeconds.Length - 1);
+                    var wait = Math.Max(error.RetryAfterSeconds ?? 0, RateLimitBackoffSeconds[index]);
+                    var deadline = _now() + TimeSpan.FromSeconds(wait + RetryMarginSeconds);
+                    RetryPausedUntil = deadline;
+                    _saveRetryState(new UsageRetryState(deadline, _consecutiveRateLimits));
+                }
+                SetState(new UsageState.Failed(error));
+            }
         }
         catch (Exception ex)
         {
