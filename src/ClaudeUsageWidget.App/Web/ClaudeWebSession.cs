@@ -1,6 +1,8 @@
 using System.IO;
 using System.Text.Json;
+using System.Windows;
 using System.Windows.Interop;
+using ClaudeUsageWidget.App.Windows;
 using ClaudeUsageWidget.Core;
 using Microsoft.Web.WebView2.Core;
 
@@ -41,7 +43,7 @@ public sealed class ClaudeWebSession
     // отдельного webview на запрос не создаём, а сериализуем обращения к
     // этому через _fetchGate ниже.
     private Task<CoreWebView2>? _fetchWebViewTask;
-    private HwndSource? _hiddenHost;
+    private Window? _hiddenHost;
 
     // Один разделяемый webview не может обслуживать две навигации одновременно
     // — вторая Navigate() перезапишет страницу раньше, чем обработчик первой
@@ -309,19 +311,50 @@ public sealed class ClaudeWebSession
     {
         var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
 
-        // HwndSource вместо WPF Window: даёт голый нативный HWND без
-        // WS_VISIBLE и без жизненного цикла Show()/Activate/Loaded — этому
-        // хосту никогда не нужен экран, только валидный родитель для
-        // CreateCoreWebView2ControllerAsync. IsVisible = false на самом
-        // контроллере ниже — вторая, независимая гарантия невидимости.
-        _hiddenHost = new HwndSource(new HwndSourceParameters("ClaudeWebSessionFetchHost")
+        // Раньше здесь был голый HwndSource(Width=0,Height=0) в расчёте на
+        // то, что CreateWindowEx без WS_VISIBLE в стиле останется невидимым
+        // сам по себе. На практике пользователь всё равно увидел на рабочем
+        // столе чёрное окно "ClaudeWebSessionFetchHost" — судя по всему,
+        // CoreWebView2Controller при первом прикреплении к родителю сам
+        // выставляет этому HWND WS_VISIBLE как побочный эффект (раннер
+        // WebView2 недокументированно расчитан на "обычное" встраивание в
+        // видимое окно, а не в чистый message-only хост). Полагаться на то,
+        // что родитель, отданный контроллеру, останется невидимым сам по
+        // себе, оказалось недостаточно — нужна гарантия, которая переживёт
+        // то, что делает сам контроллер.
+        //
+        // Поэтому вместо HwndSource — обычное WPF Window, но с HWND,
+        // принудительно созданным через EnsureHandle() (тот же приём, что
+        // и в Windows/TaskbarBandWindow.TryAttach — там тоже нужен реальный
+        // HWND до того, как окно вообще может появиться на экране): весь
+        // путь WPF, которым выставляется WS_VISIBLE, лежит внутри Show()/
+        // Visibility-setter'а, а раз Show() здесь не вызывается никогда,
+        // сработать ему просто негде. Поверх — четыре независимых слоя
+        // подстраховки на случай, если WebView2 всё же попытается вернуть
+        // родителю видимость: офф-скрин позиция, нулевой размер,
+        // WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE (не попадёт в alt-tab/панель
+        // задач, даже если формально станет видимым) и, отдельно,
+        // controller.IsVisible=false на стороне самого WebView2.
+        _hiddenHost = new Window
         {
+            WindowStyle = WindowStyle.None,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            AllowsTransparency = false,
+            Visibility = Visibility.Hidden,
             Width = 0,
             Height = 0,
-        });
+            Left = -32000,
+            Top = -32000,
+        };
 
-        var controller = await environment
-            .CreateCoreWebView2ControllerAsync(_hiddenHost.Handle).ConfigureAwait(true);
+        var hwnd = new WindowInteropHelper(_hiddenHost).EnsureHandle();
+
+        var exStyle = (long)Win32.GetWindowLongPtr(hwnd, Win32.GwlExStyle);
+        exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow;
+        Win32.SetWindowLongPtr(hwnd, Win32.GwlExStyle, (nint)exStyle);
+
+        var controller = await environment.CreateCoreWebView2ControllerAsync(hwnd).ConfigureAwait(true);
         controller.IsVisible = false;
         return controller.CoreWebView2;
     }
