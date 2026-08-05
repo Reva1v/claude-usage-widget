@@ -47,6 +47,18 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
+        // Для трей-виджета необработанное исключение на UI-потоке (по
+        // умолчанию WPF после него завершает процесс) хуже, чем одна неверная
+        // или устаревшая цифра на панели — трей-иконка и уже отрисованное
+        // состояние должны пережить сбой конкретного обработчика, а не
+        // утащить с собой весь процесс. Без диалогов и намеренно минимально:
+        // это фоновый виджет, а не окно, в котором есть кому нажать "ОК".
+        DispatcherUnhandledException += (_, args) =>
+        {
+            System.Diagnostics.Debug.WriteLine($"Unhandled UI-thread exception: {args.Exception}");
+            args.Handled = true;
+        };
+
         // Без окна и MainWindow сборка живёт, пока жив трей-объект и
         // ShutdownMode остаётся OnExplicitShutdown (см. App.xaml) — иначе WPF
         // закрыл бы процесс сразу после OnStartup, не дождавшись Quit.
@@ -137,9 +149,14 @@ public partial class App : System.Windows.Application
         }
         catch
         {
-            // Ничего не делаем: RefreshAllAsync() ниже сам столкнётся с той
-            // же ошибкой и честно её покажет — здесь достаточно не пытаться
-            // открыть LoginWindow поверх заведомо сломанной среды.
+            // Ничего не делаем: hasSession остаётся false, и код ниже всё
+            // равно попытается открыть LoginWindow — это не страшно, даже
+            // если среда WebView2 сломана. EnsureEnvironmentAsync внутри
+            // OpenLoginWindowAsync либо создаст среду заново (см. её
+            // faulted-сброс), либо просто ещё раз дёшево провалится — и этот
+            // сбой отдельно перехвачен ниже. RefreshAllAsync() после этого
+            // блока в любом случае столкнётся с той же ошибкой и честно её
+            // покажет, независимо от того, открылось окно логина или нет.
         }
 
         if (!hasSession)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
@@ -48,12 +49,41 @@ public sealed class LoginWindow : Window
         // после каждой навигации и раз в 2 с (на случай, если кука появится
         // без новой навигации, например через редирект внутри SPA).
         _cookiePollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _cookiePollTimer.Tick += async (_, _) => await CheckForSessionCookieAsync().ConfigureAwait(true);
+        _cookiePollTimer.Tick += async (_, _) =>
+        {
+            // async void: необработанное исключение здесь ушло бы прямо в
+            // Dispatcher и уронило бы весь процесс. Тик мог уже стоять в
+            // очереди Dispatcher'а в момент, когда контроллер WebView2 был
+            // разрушен (например, окно закрылось) — CookieManager тогда
+            // бросает, и это не должно быть фатальным для трей-виджета.
+            try
+            {
+                await CheckForSessionCookieAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Cookie poll tick failed: {ex}");
+            }
+        };
 
         // EnsureCoreWebView2Async создаёт дочерний HWND контрола — тому
         // нужен реальный родитель, поэтому инициализация ждёт Loaded, а не
         // запускается прямо в конструкторе.
-        Loaded += async (_, _) => await InitializeAsync().ConfigureAwait(true);
+        Loaded += async (_, _) =>
+        {
+            // Тот же риск, что и у Tick выше: EnsureCoreWebView2Async может
+            // бросить (например, процесс браузера WebView2 не поднялся, или
+            // папка профиля занята другим процессом) — async void на
+            // Dispatcher'е не должен ронять приложение из-за этого.
+            try
+            {
+                await InitializeAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"LoginWindow initialization failed: {ex}");
+            }
+        };
         Closed += (_, _) =>
         {
             _closed = true;
@@ -75,7 +105,23 @@ public sealed class LoginWindow : Window
         await core.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
         if (_closed) return;
 
-        core.NavigationCompleted += async (_, _) => await CheckForSessionCookieAsync().ConfigureAwait(true);
+        core.NavigationCompleted += async (_, _) =>
+        {
+            // Как и Tick/Loaded выше: async void на событии WebView2 не
+            // должен ронять процесс, если CheckForSessionCookieAsync бросит
+            // (например, CookieManager обратился к уже разрушенному
+            // контроллеру между навигацией и обработкой её события) —
+            // порт того же принципа, что и в ClaudeWebSession.OnNavigationCompleted
+            // (ClaudeWebSession.cs:207-250).
+            try
+            {
+                await CheckForSessionCookieAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Navigation-completed cookie check failed: {ex}");
+            }
+        };
         _cookiePollTimer.Start();
 
         core.Navigate("https://claude.ai/login");
@@ -84,6 +130,14 @@ public sealed class LoginWindow : Window
     private async Task CheckForSessionCookieAsync()
     {
         if (_signedIn) return;
+
+        // И таймер, и NavigationCompleted могут сработать уже после Close():
+        // тик — если успел встать в очередь Dispatcher'а до Stop(),
+        // NavigationCompleted — если событие поднялось до того, как
+        // InitializeAsync дошёл до отписки. Без этой проверки метод обратился
+        // бы к CoreWebView2/CookieManager на уже закрытом окне.
+        if (_closed) return;
+
         var core = _webView.CoreWebView2;
         if (core is null) return;
 

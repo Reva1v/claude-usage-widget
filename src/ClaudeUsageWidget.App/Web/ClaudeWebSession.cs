@@ -265,8 +265,33 @@ public sealed class ClaudeWebSession
     // Ленивая, разделяемая среда/webview.
     // ------------------------------------------------------------------
 
-    private Task<CoreWebView2Environment> EnsureEnvironmentAsync() =>
-        _environmentTask ??= CreateEnvironmentAsync();
+    private Task<CoreWebView2Environment> EnsureEnvironmentAsync()
+    {
+        // Тот же приём, что и у `_openLoginWindowTask` в CreateLoginWindowAsync
+        // (см. finally-комментарий выше): без него `??=` запомнил бы FAULTED
+        // (или CANCELED) Task навсегда — если первая попытка провалилась
+        // (например, Runtime WebView2 ещё не установлен), пользователь мог бы
+        // поставить его прямо во время работы приложения, но UI продолжал бы
+        // показывать ту же самую ошибку до перезапуска, потому что
+        // CreateEnvironmentAsync() больше никогда не вызвалась бы повторно.
+        // Сбрасываем кеш перед `??=`, чтобы следующий вызов пересоздал среду
+        // с нуля.
+        //
+        // Конкурентность: блокировка не нужна, потому что все вызовы этого
+        // метода приходят с UI-потока. EnsureEnvironmentAsync вызывается
+        // только из CreateFetchWebViewAsync (через EnsureFetchWebViewAsync) и
+        // CreateLoginWindowAsync — оба, в свою очередь, вызываются
+        // исключительно из App.xaml.cs (RefreshAllAsync/StartupAsync и
+        // OpenLoginWindowAsync через SignInRequested/OnSignedIn), где каждый
+        // await всюду использует ConfigureAwait(true) и возвращается на
+        // Dispatcher; единственный источник вызовов с не-UI-потока,
+        // SystemEvents.PowerModeChanged, сам явно маршалится через
+        // Dispatcher.Invoke перед тем, как дойти до RefreshAllAsync.
+        if (_environmentTask is { IsFaulted: true } or { IsCanceled: true })
+            _environmentTask = null;
+
+        return _environmentTask ??= CreateEnvironmentAsync();
+    }
 
     private async Task<CoreWebView2Environment> CreateEnvironmentAsync()
     {

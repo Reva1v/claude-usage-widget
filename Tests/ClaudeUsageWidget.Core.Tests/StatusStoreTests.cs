@@ -46,16 +46,27 @@ public class StatusStoreTests
     [Fact]
     public async Task CoalescesOverlappingLoads()
     {
+        // A Task.Delay(50) fence is flaky: LoadAsync() runs synchronously up
+        // to and including `calls++` before the fetch's first await, so
+        // `first`'s in-flight task is already recorded by the time the
+        // statement below returns — but if the test runner stalls for more
+        // than 50ms between the two LoadAsync() statements, the delay can
+        // elapse and its continuation can clear `_inFlight` before `second`
+        // is even issued, letting it start a real second fetch. A manually
+        // released gate makes the fetch stay pending until both LoadAsync()
+        // calls have definitely been issued, no matter how slow the runner is.
         var calls = 0;
+        var gate = new TaskCompletionSource();
         var store = MakeStore(async _ =>
         {
             calls++;
-            await Task.Delay(50);
+            await gate.Task;
             return ServiceStatus.Operational;
         });
 
         var first = store.LoadAsync();
         var second = store.LoadAsync();
+        gate.SetResult();
         await Task.WhenAll(first, second);
 
         Assert.Equal(1, calls);
