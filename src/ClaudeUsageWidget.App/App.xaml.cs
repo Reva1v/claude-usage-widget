@@ -53,6 +53,11 @@ public partial class App : System.Windows.Application
         _trayIcon.QuitRequested += Shutdown;
         _trayIcon.RefreshRequested += () => FireAndForget(RefreshAllAsync);
         _trayIcon.SignInRequested += () => FireAndForget(() => _session!.OpenLoginWindowAsync());
+        _trayIcon.TrayMetricSelected += OnTrayMetricSelected;
+        _trayIcon.ModelBucketSelected += OnModelBucketSelected;
+        _trayIcon.ShowOnDesktopToggled += OnShowOnDesktopToggled;
+        _trayIcon.LockPositionToggled += OnLockPositionToggled;
+        _trayIcon.MenuOpening += RefreshTrayMenuState;
 
         var settingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -97,7 +102,14 @@ public partial class App : System.Windows.Application
 
         RenderWidget();
         UpdateTrayTooltip();
-        _widgetWindow.Show();
+        RefreshTrayIcon();
+        RefreshTrayMenuState();
+
+        // Порт widgetVisible-хранимого состояния: если пользователь спрятал
+        // виджет глазом в прошлом запуске, он не должен возвращаться сам
+        // собой — иначе "Show on desktop" в меню и то, что реально на
+        // экране, тут же разойдутся сразу после старта.
+        if (_settings.Load().WidgetVisible) _widgetWindow.Show();
 
         FireAndForget(StartupAsync);
     }
@@ -188,9 +200,11 @@ public partial class App : System.Windows.Application
     {
         // Сам DesktopWidgetWindow уже спрятал себя и сохранил
         // WidgetVisible=false в OnEyeClicked до того, как поднял это
-        // событие — здесь заново делать нечего. Подписка оставлена ради
-        // симметрии с остальными событиями окна/трея и как место, где это
-        // объяснено.
+        // событие — здесь заново делать нечего, кроме как подтянуть в меню
+        // трея снятую галочку "Show on desktop": глаз на панели меняет то же
+        // самое состояние, что и пункт меню, и они обязаны показывать одно и
+        // то же, даже если это меню сейчас не открыто.
+        RefreshTrayMenuState();
     }
 
     private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
@@ -213,7 +227,98 @@ public partial class App : System.Windows.Application
         {
             RenderWidget();
             UpdateTrayTooltip();
+            RefreshTrayIcon();
+            RefreshTrayMenuState();
         });
+    }
+
+    /// <summary>Пересчитывает живую цифру трея из свежих данных — та же
+    /// пара DialModel.All/TrayText.Metrics, что и тултип, но берёт из неё
+    /// только метрику, выбранную в "Tray shows" (TrayMetricKey).</summary>
+    private void RefreshTrayIcon()
+    {
+        var now = DateTimeOffset.Now;
+        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
+            ? okSnapshot
+            : _usageStore.LastSnapshot;
+        var data = _settings!.Load();
+        var models = DialModel.All(snapshot, data.ModelBucket, now);
+        var metrics = TrayText.Metrics(models);
+
+        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayMetricIndex(data.TrayMetricKey)].Value));
+    }
+
+    /// <summary>SESSION/WEEK/MODEL → индекс в DialModel.All, которое всегда
+    /// возвращает ровно эти три циферблата в этом порядке.</summary>
+    private static int TrayMetricIndex(string trayMetricKey) => trayMetricKey switch
+    {
+        "seven_day" => 1,
+        "model" => 2,
+        _ => 0, // "five_hour" и любое нераспознанное значение — сессия по умолчанию
+    };
+
+    /// <summary>Подтягивает в меню трея (чекбоксы, "Model limit") актуальное
+    /// состояние — на старте и на каждый TrayIcon.MenuOpening/Changed
+    /// стора, поскольку часть этого состояния (PositionLocked, доступные
+    /// model-бакеты) может измениться не через сам пункт меню.</summary>
+    private void RefreshTrayMenuState()
+    {
+        var data = _settings!.Load();
+        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
+            ? okSnapshot
+            : _usageStore.LastSnapshot;
+        var availableBuckets = snapshot is null ? Array.Empty<string>() : ModelBuckets.Available(snapshot);
+
+        _trayIcon!.SyncMenuState(new TrayMenuState(
+            data.TrayMetricKey,
+            availableBuckets,
+            data.ModelBucket,
+            data.WidgetVisible,
+            _widgetWindow!.PositionLocked,
+            data.TaskbarBandEnabled));
+    }
+
+    private void OnTrayMetricSelected(string key)
+    {
+        var data = _settings!.Load();
+        _settings.Save(data with { TrayMetricKey = key });
+        RefreshTrayIcon();
+        RefreshTrayMenuState();
+    }
+
+    private void OnModelBucketSelected(string? key)
+    {
+        var data = _settings!.Load();
+        _settings.Save(data with { ModelBucket = key });
+
+        // В отличие от TrayMetricKey, ModelBucket виден и на панели виджета
+        // (третий циферблат), и в тултипе, а не только в иконке трея.
+        RenderWidget();
+        UpdateTrayTooltip();
+        RefreshTrayIcon();
+        RefreshTrayMenuState();
+    }
+
+    private void OnShowOnDesktopToggled(bool visible)
+    {
+        var data = _settings!.Load();
+        _settings.Save(data with { WidgetVisible = visible });
+
+        // Тот же переключатель, что и глаз на панели — просто вход с
+        // противоположной стороны, поэтому просто Show/Hide, без
+        // PersistWidgetVisible ниже: настройка уже сохранена строкой выше.
+        if (visible) _widgetWindow!.Show(); else _widgetWindow!.Hide();
+
+        RefreshTrayMenuState();
+    }
+
+    private void OnLockPositionToggled(bool locked)
+    {
+        // Сеттер PositionLocked сам обновляет _root.PositionLocked и
+        // сохраняет настройку (см. DesktopWidgetWindow.PositionLocked) —
+        // здесь дублировать нечего.
+        _widgetWindow!.PositionLocked = locked;
+        RefreshTrayMenuState();
     }
 
     private void RenderWidget()
@@ -247,16 +352,22 @@ public partial class App : System.Windows.Application
         }
 
         var now = DateTimeOffset.Now;
-        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
-            ? okSnapshot
-            : _usageStore.LastSnapshot;
+        var state = _usageStore!.CurrentState;
+        var snapshot = state is UsageState.Ok(var okSnapshot, _) ? okSnapshot : _usageStore.LastSnapshot;
         var data = _settings!.Load();
         var models = DialModel.All(snapshot, data.ModelBucket, now);
         var metrics = TrayText.Metrics(models);
+        var statusLine = StatusLine.Text(state, now, _usageStore.RetryPausedUntil);
 
-        _trayIcon!.SetTooltip(metrics.Count == 0
+        // "SES 42% · WEEK 18% · FAB 8%" — тот же разделитель " · ", что и в
+        // строке статуса под циферблатами на панели; статус (если есть)
+        // идёт отдельной строкой, а не тем же " · ", чтобы не сливаться с
+        // цифрами при беглом взгляде на всплывающую подсказку.
+        var metricsText = metrics.Count == 0
             ? "Claude Usage Widget"
-            : "Claude Usage Widget — " + string.Join("  ", metrics.Select(m => $"{m.Label} {m.Value}")));
+            : "Claude Usage Widget — " + string.Join(" · ", metrics.Select(m => $"{m.Label} {m.Value}"));
+
+        _trayIcon!.SetTooltip(statusLine is null ? metricsText : $"{metricsText}\n{statusLine}");
     }
 
     private UsageRetryState? LoadRetryState()
