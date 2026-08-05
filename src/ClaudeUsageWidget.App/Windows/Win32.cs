@@ -41,6 +41,40 @@ internal static class Win32
     /// окно временно не пересекает ни один монитор.
     public const uint MonitorDefaultToNearest = 0x00000002;
 
+    /// WINEVENT_OUTOFCONTEXT — колбэк живёт в НАШЕМ процессе, ОС не
+    /// инжектирует нашу DLL в чужие процессы, чтобы доставить событие (в
+    /// отличие от WINEVENT_INCONTEXT). Событие приходит в поток, который
+    /// вызвал SetWinEventHook (тот, что качает насос сообщений) — у нас это
+    /// UI-поток WPF-Dispatcher'а.
+    public const uint WinEventOutOfContext = 0x0000;
+
+    /// EVENT_SYSTEM_FOREGROUND — сменилось активное (foreground) окно.
+    public const uint EventSystemForeground = 0x0003;
+
+    /// EVENT_OBJECT_LOCATIONCHANGE — окно/объект переместилось или
+    /// изменило размер. Ловит переключение в fullscreen БЕЗ смены
+    /// foreground-окна (F11, безрамочный режим той же игры).
+    public const uint EventObjectLocationChange = 0x800B;
+
+    /// OBJID_WINDOW/CHILDID_SELF — фильтр "событие про само окно целиком",
+    /// а не про один из его внутренних UI-элементов (кнопку, скроллбар и
+    /// т.п.) — тех IDOBJECT/IDCHILD событий system-wide хук получает
+    /// на порядки больше, и почти все не имеют отношения к fullscreen.
+    public const int ObjIdWindow = 0;
+    public const int ChildIdSelf = 0;
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate void WinEventDelegate(
+        nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint idEventThread, uint idEventTime);
+
+    [DllImport("user32.dll")]
+    public static extern nint SetWinEventHook(
+        uint eventMin, uint eventMax, nint hmodWinEventProc, WinEventDelegate lpfnWinEventProc,
+        uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnhookWinEvent(nint hWinEventHook);
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {

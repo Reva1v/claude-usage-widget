@@ -82,6 +82,27 @@ public sealed class TaskbarBandWindow : Window
     private readonly TaskbarBandContent _content;
     private readonly DispatcherTimer _repositionTimer;
 
+    /// Делегат для SetWinEventHook — ОБЯЗАН жить в поле, а не быть временным
+    /// значением на вызове: нативный код держит только указатель на функцию,
+    /// без managed-ссылки, так что без этого поля GC вправе собрать делегат
+    /// в любой момент между установкой хука и первым же событием —
+    /// классическая тихая P/Invoke-ловушка (колбэк вызывается через уже
+    /// освобождённую память → падение либо тихая нерабочая доставка событий).
+    private readonly Win32.WinEventDelegate _winEventProc;
+
+    /// EVENT_SYSTEM_FOREGROUND — смена активного окна.
+    private nint _foregroundHook;
+
+    /// EVENT_OBJECT_LOCATIONCHANGE — перемещение/ресайз foreground-окна
+    /// (ловит F11/безрамочный fullscreen без смены активного окна).
+    private nint _locationHook;
+
+    /// Дребезг для EVENT_OBJECT_LOCATIONCHANGE — тот сыплется пачками во
+    /// время обычного перетаскивания/анимации окна, а не только при входе/
+    /// выходе из fullscreen; реально перепроверяем полноэкранность только
+    /// спустя ~200 мс тишины после последнего такого события.
+    private readonly DispatcherTimer _locationDebounceTimer;
+
     /// "tray" (по умолчанию) или "left" — см. <see cref="SetPosition"/>.
     private string _position = "tray";
 
@@ -147,6 +168,14 @@ public sealed class TaskbarBandWindow : Window
 
         _repositionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _repositionTimer.Tick += (_, _) => Reposition();
+
+        _winEventProc = OnWinEvent;
+        _locationDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _locationDebounceTimer.Tick += (_, _) =>
+        {
+            _locationDebounceTimer.Stop();
+            Reposition();
+        };
     }
 
     /// <summary>
@@ -162,6 +191,7 @@ public sealed class TaskbarBandWindow : Window
         new WindowInteropHelper(this).EnsureHandle();
         _hiddenForFullscreen = false;
 
+        HookFullscreenEvents();
         Reposition();
         Show();
         _repositionTimer.Start();
@@ -187,6 +217,7 @@ public sealed class TaskbarBandWindow : Window
     public void Detach()
     {
         _repositionTimer.Stop();
+        UnhookFullscreenEvents();
 
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == nint.Zero || !Win32.IsWindow(hwnd))
@@ -266,6 +297,91 @@ public sealed class TaskbarBandWindow : Window
         return nint.Zero;
     }
 
+    /// <summary>
+    /// Устанавливает системные (idProcess=0/idThread=0 — весь компьютер, не
+    /// только наш процесс) WinEvent-хуки, чтобы реагировать на вход/выход из
+    /// fullscreen мгновенно, а не ждать следующего 5-секундного тика —
+    /// живая проверка (task-17-report.md, round 6) показала заметную
+    /// задержку до 5 с в обе стороны при чисто тик-based детекте.
+    /// EVENT_SYSTEM_FOREGROUND — сменилось активное окно (обычный Alt-Tab/
+    /// запуск игры). EVENT_OBJECT_LOCATIONCHANGE — окно поменяло размер/
+    /// положение БЕЗ смены активного окна (F11 в том же окне, переключение
+    /// эксклюзивный/безрамочный fullscreen той же игры) — единственный
+    /// способ поймать этот случай, раз foreground-окно не меняется.
+    /// WINEVENT_OUTOFCONTEXT — без инжекции DLL в чужие процессы, события
+    /// доставляются в поток-установщик хука (наш UI-поток) через тот же
+    /// насос сообщений, что качает WPF Dispatcher. Идемпотентно: Dock()
+    /// может вызываться повторно (редок после Detach), хук устанавливается
+    /// только если ещё не установлен.
+    /// </summary>
+    private void HookFullscreenEvents()
+    {
+        if (_foregroundHook != nint.Zero) return;
+
+        _foregroundHook = Win32.SetWinEventHook(
+            Win32.EventSystemForeground, Win32.EventSystemForeground,
+            nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
+        _locationHook = Win32.SetWinEventHook(
+            Win32.EventObjectLocationChange, Win32.EventObjectLocationChange,
+            nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
+    }
+
+    /// <summary>Снимает оба хука (если стоят) и гасит дребезг-таймер —
+    /// вызывается из Detach() и из всех мест, где экземпляр объявляется
+    /// мёртвым (см. Lost), чтобы не оставлять хук, доставляющий события
+    /// делегату, который больше никому не нужен.</summary>
+    private void UnhookFullscreenEvents()
+    {
+        if (_foregroundHook != nint.Zero)
+        {
+            Win32.UnhookWinEvent(_foregroundHook);
+            _foregroundHook = nint.Zero;
+        }
+        if (_locationHook != nint.Zero)
+        {
+            Win32.UnhookWinEvent(_locationHook);
+            _locationHook = nint.Zero;
+        }
+        _locationDebounceTimer.Stop();
+    }
+
+    /// <summary>Колбэк системного WinEvent-хука — вызывается нативным кодом
+    /// изнутри насоса сообщений нашего же UI-потока, но не полагаемся на
+    /// это как на документированную гарантию: маршалим через
+    /// Dispatcher.BeginInvoke, а не делаем что-либо содержательное прямо в
+    /// кадре низкоуровневого системного колбэка. BeginInvoke, а не Invoke —
+    /// колбэк должен вернуть управление ОС максимально быстро.</summary>
+    private void OnWinEvent(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint idEventThread, uint idEventTime)
+    {
+        if (eventType == Win32.EventSystemForeground)
+        {
+            Dispatcher.BeginInvoke(Reposition);
+            return;
+        }
+
+        if (eventType != Win32.EventObjectLocationChange) return;
+
+        // OBJID_WINDOW/CHILDID_SELF — событие про само окно целиком, не про
+        // один из его внутренних элементов управления (хук системный, шлёт
+        // события по всем окнам всех процессов — без этого фильтра здесь
+        // тонуло бы в шуме).
+        if (idObject != Win32.ObjIdWindow || idChild != Win32.ChildIdSelf) return;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            // Интересует только СЕЙЧАС активное окно — хук системный,
+            // событие могло прилететь про любое окно где угодно.
+            if (hwnd != Win32.GetForegroundWindow()) return;
+
+            // Дребезг: во время обычного перетаскивания/анимации окна таких
+            // событий летят десятки — переоткладываем таймер на 200 мс от
+            // каждого нового, реально проверяем полноэкранность только
+            // когда окно ~200 мс не двигалось.
+            _locationDebounceTimer.Stop();
+            _locationDebounceTimer.Start();
+        });
+    }
+
     /// <summary>Пересчитывает позицию/размер и (при необходимости)
     /// перепристыковывает к таскбару — ищет таскбар и область трея заново
     /// при каждом вызове (не кэширует хэндлы для самого поиска):
@@ -289,6 +405,7 @@ public sealed class TaskbarBandWindow : Window
             // InvalidOperationException("...после закрытия окна"). Экземпляр
             // необратимо мёртв — сигналим наружу вместо попытки продолжить.
             _repositionTimer.Stop();
+            UnhookFullscreenEvents();
             Lost?.Invoke();
         }
     }
@@ -304,6 +421,7 @@ public sealed class TaskbarBandWindow : Window
             // безопаснее считать это тем же "нечем восстанавливать", чем
             // упасть чуть ниже на SetWindowPos с нулевым hwnd).
             _repositionTimer.Stop();
+            UnhookFullscreenEvents();
             Lost?.Invoke();
             return;
         }
@@ -312,9 +430,12 @@ public sealed class TaskbarBandWindow : Window
         {
             // Всегда-поверх-оверлей над полноэкранной игрой — то, чего
             // пользователи явно не хотят (играют в игры, а лента ловит
-            // курсор/перекрывает HUD своим Topmost-слоем). Дешёвая проверка
-            // раз в 5 с — не на каждый кадр, поэтому не нужен отдельный,
-            // более частый таймер.
+            // курсор/перекрывает HUD своим Topmost-слоем). RepositionCore()
+            // вызывается не только по 5-секундному таймеру, но и мгновенно
+            // из HookFullscreenEvents()'s OnWinEvent (round 6: тик-based
+            // детект давал задержку до 5 с в обе стороны, живая проверка
+            // это заметила) — таймер остался как дешёвый бэкстоп на случай
+            // пропущенного события, а не основной механизм.
             if (!_hiddenForFullscreen)
             {
                 _hiddenForFullscreen = true;
