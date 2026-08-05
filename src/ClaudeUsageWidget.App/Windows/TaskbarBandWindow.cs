@@ -48,6 +48,25 @@ public sealed class TaskbarBandWindow : Window
 
     private bool _attached;
 
+    /// HWND таскбара, к которому мы сейчас прицеплены (WS_CHILD) — только
+    /// для самопроверки в Reposition(): explorer.exe, перезапустившись,
+    /// пересоздаёт Shell_TrayWnd под новым хэндлом. nint.Zero, когда не
+    /// attached.
+    private nint _attachedTrayHwnd;
+
+    /// <summary>
+    /// Нативный HWND этого окна уничтожен не через наш собственный Detach()/
+    /// Close() — типичная причина: explorer.exe перезапустился, и
+    /// DestroyWindow на старом Shell_TrayWnd потянул за собой все его
+    /// WS_CHILD, включая нас (Windows уничтожает дочерние окна вместе с
+    /// родителем, независимо от того, какому процессу они принадлежат). WPF
+    /// не поддерживает повторный Show()/EnsureHandle() у Window, чей HWND
+    /// пропал таким образом — единственный рабочий путь восстановления это
+    /// новый экземпляр TaskbarBandWindow, поэтому здесь только сигнал,
+    /// пересоздание — на стороне владельца (App.xaml.cs).
+    /// </summary>
+    public event Action? Lost;
+
     public TaskbarBandWindow()
     {
         WindowStyle = WindowStyle.None;
@@ -117,15 +136,26 @@ public sealed class TaskbarBandWindow : Window
             return false;
         }
 
+        // Стиль меняем ДО SetParent, не после: смена родителя первой (старый
+        // порядок) иногда оставляет DWM redirection-surface окна в "ещё
+        // top-level" состоянии даже после того как SetParent формально
+        // сделал его дочерним — задокументированный артефакт порядка
+        // вызовов при встраивании через SetParent (проверено по замечанию
+        // ревью; см. отчёт по итогам измерения).
+        SetChildStyle(hwnd, isChild: true);
+
         if (Win32.SetParent(hwnd, tray) == nint.Zero)
         {
+            // SetParent не удался — откатываем стиль: WS_CHILD с текущим
+            // родителем "рабочий стол" (0) невалидная комбинация.
+            SetChildStyle(hwnd, isChild: false);
             ConfigureOverlay();
             return false;
         }
 
         _attached = true;
+        _attachedTrayHwnd = tray;
         Topmost = false;
-        SetChildStyle(hwnd, isChild: true);
 
         Reposition();
         Show();
@@ -150,6 +180,7 @@ public sealed class TaskbarBandWindow : Window
         }
 
         _attached = false;
+        _attachedTrayHwnd = nint.Zero;
         Topmost = false;
         Hide();
     }
@@ -178,9 +209,18 @@ public sealed class TaskbarBandWindow : Window
         // так не попадает в alt-tab, но выставлять флаги безусловно дешевле,
         // чем помнить, в каком режиме окно сейчас находится, а
         // WS_EX_NOACTIVATE не мешает и дочернему.
+        //
+        // WS_EX_LAYERED + SetLayeredWindowAttributes(..., 255, LWA_ALPHA) —
+        // стандартный приём оверлей-инструментов (FPS-счётчики, OSD), рисующих
+        // поверх контента чужих окон: заставляет DWM завести под окно
+        // независимую композиционную поверхность вместо обычной, вместо того
+        // чтобы полагаться на композитинг родителя/области, в которой окно
+        // оказалось. Alpha=255 — полностью непрозрачная (не полупрозрачный
+        // оверлей, просто другой механизм композитинга).
         var exStyle = (long)Win32.GetWindowLongPtr(hwnd, Win32.GwlExStyle);
-        exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow;
+        exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow | Win32.WsExLayered;
         Win32.SetWindowLongPtr(hwnd, Win32.GwlExStyle, (nint)exStyle);
+        Win32.SetLayeredWindowAttributes(hwnd, 0, 255, Win32.LwaAlpha);
 
         var source = HwndSource.FromHwnd(hwnd)
             ?? throw new InvalidOperationException("HwndSource is not available after SourceInitialized.");
@@ -219,6 +259,7 @@ public sealed class TaskbarBandWindow : Window
         }
 
         _attached = false;
+        _attachedTrayHwnd = nint.Zero;
         Topmost = true;
 
         Reposition();
@@ -227,16 +268,75 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>Пересчитывает позицию/размер под оба режима — ищет таскбар и
-    /// область трея заново при каждом вызове (не кэширует хэндлы): explorer.exe
-    /// может пересоздать Shell_TrayWnd, а простои/добавление иконок в трее
-    /// двигают TrayNotifyWnd — task-17-brief.md: «таскбар перестраивается».
-    /// Полное восстановление после перезапуска explorer.exe (когда наш HWND
-    /// уничтожается вместе с уничтоженным родителем) вне рамок этой задачи —
-    /// см. отчёт.</summary>
+    /// область трея заново при каждом вызове (не кэширует хэндлы для самого
+    /// поиска): explorer.exe может пересоздать Shell_TrayWnd, а простои/
+    /// добавление иконок в трее двигают TrayNotifyWnd — task-17-brief.md:
+    /// «таскбар перестраивается». Первым делом — самопроверка на
+    /// перезапуск explorer.exe: если он уничтожил старый Shell_TrayWnd, то
+    /// либо уничтожил вместе с ним и наш HWND (мы — WS_CHILD), либо, если мы
+    /// каким-то образом пережили это, всё ещё привязаны к уже мёртвому
+    /// хэндлу нового таскбара не видим. Оба случая требуют разного
+    /// восстановления, см. комментарии ниже.</summary>
     private void Reposition()
     {
+        try
+        {
+            RepositionCore();
+        }
+        catch (InvalidOperationException)
+        {
+            // WPF сама уже считает это Window закрытым (WM_NCDESTROY от
+            // уничтоженного родителя дошёл до её собственного WndProc раньше
+            // этого тика) — тогда WindowInteropHelper.Handle успевает
+            // обнулиться ДО того как наша проверка ниже её увидит, и
+            // RepositionCore() падает на EnsureHandle/Show с
+            // InvalidOperationException("...после закрытия окна") вместо
+            // того чтобы аккуратно вернуть Zero. Ловим здесь, а не только
+            // проверкой IsWindow ниже: тот путь на практике не успевает
+            // сработать первым (проверено — исходная версия без try/catch
+            // валила весь процесс необработанным исключением при
+            // перезапуске explorer.exe).
+            _repositionTimer.Stop();
+            Lost?.Invoke();
+        }
+    }
+
+    private void RepositionCore()
+    {
+        var ownHwnd = new WindowInteropHelper(this).Handle;
+        if (ownHwnd == nint.Zero || !Win32.IsWindow(ownHwnd))
+        {
+            // Наш собственный HWND уничтожен извне — типичная причина:
+            // explorer.exe перезапустился, и DestroyWindow на старом
+            // Shell_TrayWnd потянул за собой все WS_CHILD, включая нас
+            // (Windows уничтожает дочерние окна вместе с родителем
+            // синхронно, вне зависимости от того, какому процессу они
+            // принадлежат). Этот экземпляр Window необратимо мёртв —
+            // сигналим наружу вместо попытки продолжить с ним работать.
+            // ownHwnd == Zero тоже сюда: EnsureHandle() ещё не вызывался
+            // вовсе (не должно происходить, раз таймер уже тикает — но
+            // безопаснее считать это тем же "нечем восстанавливать", чем
+            // упасть чуть ниже на GetClientRect/SetWindowPos с нулевым hwnd).
+            _repositionTimer.Stop();
+            Lost?.Invoke();
+            return;
+        }
+
         var tray = Win32.FindWindow(TrayClassName, null);
-        if (tray == nint.Zero) return; // таскбар временно недоступен — оставляем прежнюю геометрию до следующего тика
+        if (tray == nint.Zero) return; // таскбар временно недоступен (explorer между завершением и стартом) — оставляем прежнюю геометрию до следующего тика
+
+        if (_attached && _attachedTrayHwnd != nint.Zero && (_attachedTrayHwnd != tray || !Win32.IsWindow(_attachedTrayHwnd)))
+        {
+            // Наш HWND жив (проверка выше не сработала), но Shell_TrayWnd, к
+            // которому мы прицеплены, — уже не тот (explorer пересоздал его
+            // под новым хэндлом) или вовсе мёртв. Перепривязываемся к
+            // текущему таскбару тем же путём, что и первый TryAttach —
+            // включая откат на оверлей, если по какой-то причине новый
+            // SetParent тоже не пройдёт. Если и это упадёт (наш HWND всё же
+            // не переживёт следующую строчку) — исключение поймает Reposition().
+            TryAttach();
+            return;
+        }
 
         var notify = Win32.FindWindowEx(tray, nint.Zero, TrayNotifyClassName, null);
         var dpi = Win32.GetDpiForWindow(tray);
@@ -277,7 +377,12 @@ public sealed class TaskbarBandWindow : Window
         }
         x = Math.Max(0, x);
 
-        Win32.SetWindowPos(hwnd, nint.Zero, x, 0, bandWidthPx, bandHeightPx, Win32.SwpNoZOrder | Win32.SwpNoActivate);
+        // HWND_TOP, не SWP_NOZORDER: вставляем себя в начало Z-порядка среди
+        // детей Shell_TrayWnd — на случай если наш дочерний HWND физически
+        // рисуется, но перекрыт/затенён другим композиционным слоем шелла
+        // (composited поверх нас, несмотря на формально более позднее
+        // создание нашего окна).
+        Win32.SetWindowPos(hwnd, Win32.HwndTop, x, 0, bandWidthPx, bandHeightPx, Win32.SwpNoActivate);
     }
 
     private void RepositionOverlay(nint tray, nint notify, uint dpi, int bandWidthPx, int gapPx)

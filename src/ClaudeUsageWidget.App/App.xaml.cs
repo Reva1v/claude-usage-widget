@@ -335,7 +335,11 @@ public partial class App : System.Windows.Application
     {
         if (visible)
         {
-            _bandWindow ??= new TaskbarBandWindow();
+            if (_bandWindow is null)
+            {
+                _bandWindow = new TaskbarBandWindow();
+                _bandWindow.Lost += OnTaskbarBandLost;
+            }
             // Рендерим ДО TryAttach: тот сразу вызывает Reposition(),
             // которому нужна актуальная ширина контента, а не ширина от
             // предыдущего показа (или вовсе нулевая при самом первом).
@@ -346,6 +350,19 @@ public partial class App : System.Windows.Application
         {
             _bandWindow?.Detach();
         }
+    }
+
+    /// <summary>TaskbarBandWindow.Lost: explorer.exe перезапустился и унёс
+    /// наш дочерний HWND вместе со старым Shell_TrayWnd. WPF не даёт
+    /// повторно показать Window, чей нативный хэндл пропал не через её же
+    /// Close() — бросаем старый экземпляр (его HWND уже недействителен,
+    /// закрывать нечего) и, если лента всё ещё должна быть включена,
+    /// заводим новый и пытаемся встроиться заново, как при обычном первом
+    /// включении.</summary>
+    private void OnTaskbarBandLost()
+    {
+        _bandWindow = null;
+        if (_settings!.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
     }
 
     /// <summary>Свежие метрики для ленты — тот же DialModel.All/TrayText.Metrics,

@@ -21,6 +21,15 @@ internal static class Win32
 
     public const long WsExNoActivate = 0x08000000L;
     public const long WsExToolWindow = 0x00000080L;
+    public const long WsExLayered = 0x00080000L;
+
+    public const uint LwaAlpha = 0x2;
+
+    /// HWND_TOP — вставить в начало Z-порядка среди детей текущего родителя.
+    /// Значение 0 совпадает с nint.Zero, который раньше передавался вместе с
+    /// SWP_NOZORDER (где он игнорируется) — здесь используется осознанно,
+    /// SWP_NOZORDER не выставляется.
+    public static readonly nint HwndTop = 0;
 
     public const uint SwpNoSize = 0x0001;
     public const uint SwpNoMove = 0x0002;
@@ -72,6 +81,12 @@ internal static class Win32
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetLayeredWindowAttributes(nint hWnd, uint crKey, byte bAlpha, uint dwFlags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool IsWindow(nint hWnd);
 
     /// Доступна с Windows 10 1607 (Anniversary Update) — минимальная
     /// поддерживаемая версия здесь и так Windows 10/11, отдельная проверка
