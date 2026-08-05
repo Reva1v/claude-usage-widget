@@ -245,17 +245,8 @@ public partial class App : System.Windows.Application
         var models = DialModel.All(snapshot, data.ModelBucket, now);
         var metrics = TrayText.Metrics(models);
 
-        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayMetricIndex(data.TrayMetricKey)].Value));
+        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value));
     }
-
-    /// <summary>SESSION/WEEK/MODEL → индекс в DialModel.All, которое всегда
-    /// возвращает ровно эти три циферблата в этом порядке.</summary>
-    private static int TrayMetricIndex(string trayMetricKey) => trayMetricKey switch
-    {
-        "seven_day" => 1,
-        "model" => 2,
-        _ => 0, // "five_hour" и любое нераспознанное значение — сессия по умолчанию
-    };
 
     /// <summary>Подтягивает в меню трея (чекбоксы, "Model limit") актуальное
     /// состояние — на старте и на каждый TrayIcon.MenuOpening/Changed

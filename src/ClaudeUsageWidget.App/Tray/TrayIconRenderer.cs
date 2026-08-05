@@ -58,14 +58,18 @@ public static class TrayIconRenderer
         return Icon.FromHandle(bitmap.GetHicon());
     }
 
-    /// <summary>"42%" → "42"; null/пусто/"—" (TrayText.Metrics для
-    /// отсутствующей доли) → null, то есть кольцо-заглушка.</summary>
+    /// <summary>"42%" → "42"; строка вообще без цифр — null/пусто, "—"
+    /// (TrayText.Metrics для отсутствующей доли) или что угодно ещё
+    /// нечисловое — → null, то есть кольцо-заглушка. Проверка на "хотя бы
+    /// одна цифра", а не точечное сравнение с "—": RefreshTrayIcon на самом
+    /// первом старте (LastSnapshot ещё null) как раз и подаёт сюда "—", и
+    /// проверять нужно именно это, а не только явные null/пусто.</summary>
     private static string? DigitsOnly(string? valueText)
     {
         if (string.IsNullOrEmpty(valueText)) return null;
 
         var digits = valueText.TrimEnd('%');
-        return digits.Length == 0 ? null : digits;
+        return digits.Any(char.IsDigit) ? digits : null;
     }
 
     private static void DrawRing(Graphics g, Size size)

@@ -125,9 +125,16 @@ public sealed class TrayIcon : IDisposable
     /// живёт в App.xaml.cs (SettingsStore/DesktopWidgetWindow), не здесь.</summary>
     public void SyncMenuState(TrayMenuState state)
     {
-        _trayShowsSessionItem.Checked = state.TrayMetricKey == "five_hour";
-        _trayShowsWeekItem.Checked = state.TrayMetricKey == "seven_day";
-        _trayShowsModelItem.Checked = state.TrayMetricKey == "model";
+        // MetricIndex, не точечное сравнение с "five_hour": та же функция,
+        // что и App.xaml.cs.RefreshTrayIcon использует для самой цифры —
+        // нераспознанный/битый TrayMetricKey (например, из вручную
+        // отредактированного settings.json) обязан читаться в меню как
+        // SESSION ровно потому же правилу, по которому иконка в этом случае
+        // рисует SESSION, а не оставлять все три чекбокса пустыми.
+        var metricIndex = MetricIndex(state.TrayMetricKey);
+        _trayShowsSessionItem.Checked = metricIndex == 0;
+        _trayShowsWeekItem.Checked = metricIndex == 1;
+        _trayShowsModelItem.Checked = metricIndex == 2;
 
         // ModelBucketPicker.swift:145-163 — видно только когда есть из чего
         // выбирать; при 0/1 бакете выбор бессмысленен (Resolve и так возьмёт
@@ -160,6 +167,18 @@ public sealed class TrayIcon : IDisposable
         // JSON-настройка, а сам реестр — источник истины уже под рукой.
         _launchAtLoginItem.Checked = Autostart.IsEnabled();
     }
+
+    /// <summary>SESSION/WEEK/MODEL → индекс в DialModel.All, которое всегда
+    /// возвращает ровно эти три циферблата в этом порядке. Публичный и общий
+    /// с App.xaml.cs.RefreshTrayIcon: обе стороны обязаны сходиться в том,
+    /// что означает нераспознанный/битый TrayMetricKey (SESSION), иначе
+    /// чекбоксы меню и цифра в иконке способны разойтись.</summary>
+    public static int MetricIndex(string trayMetricKey) => trayMetricKey switch
+    {
+        "seven_day" => 1,
+        "model" => 2,
+        _ => 0, // "five_hour" и любое нераспознанное значение — сессия по умолчанию
+    };
 
     private ContextMenuStrip BuildMenu()
     {
