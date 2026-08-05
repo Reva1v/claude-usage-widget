@@ -19,6 +19,15 @@ public sealed class LoginWindow : Window
     private readonly DispatcherTimer _cookiePollTimer;
     private bool _signedIn;
 
+    // Loaded → InitializeAsync содержит два await (EnsureCoreWebView2Async,
+    // ClearBrowsingDataAsync); если пользователь закроет окно (крестиком) в
+    // этом промежутке, Closed успевает отработать раньше, чем метод дойдёт
+    // до второй половины — Stop() там застаёт ещё не запущенный таймер (не
+    // помогает), а без этого флага InitializeAsync после awaits как ни в чём
+    // не бывало стартовал бы таймер и Navigate() на уже мёртвом окне, и
+    // таймер тикал бы вечно. Проверяется после каждого await ниже.
+    private bool _closed;
+
     /// The sessionKey cookie appeared and the window has already closed
     /// itself.
     public event Action? SignedIn;
@@ -45,12 +54,17 @@ public sealed class LoginWindow : Window
         // нужен реальный родитель, поэтому инициализация ждёт Loaded, а не
         // запускается прямо в конструкторе.
         Loaded += async (_, _) => await InitializeAsync().ConfigureAwait(true);
-        Closed += (_, _) => _cookiePollTimer.Stop();
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _cookiePollTimer.Stop();
+        };
     }
 
     private async Task InitializeAsync()
     {
         await _webView.EnsureCoreWebView2Async(_environment).ConfigureAwait(true);
+        if (_closed) return;
         var core = _webView.CoreWebView2;
 
         // Порт сброса browsing data перед логином — ClaudeWebSession.swift:200-209.
@@ -59,6 +73,7 @@ public sealed class LoginWindow : Window
         // профиля перед КАЖДЫМ показом окна логина, а не только один раз за
         // всё время жизни приложения.
         await core.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
+        if (_closed) return;
 
         core.NavigationCompleted += async (_, _) => await CheckForSessionCookieAsync().ConfigureAwait(true);
         _cookiePollTimer.Start();
@@ -77,7 +92,17 @@ public sealed class LoginWindow : Window
 
         _signedIn = true;
         _cookiePollTimer.Stop();
-        Close();
+
+        // Порядок важен: Close() синхронно поднимает Closed, чей обработчик
+        // в ClaudeWebSession.OnLoginWindowClosed первым делом отписывает
+        // SignedIn (window.SignedIn -= OnLoginWindowSignedIn) — если сначала
+        // закрыть окно, к моменту SignedIn?.Invoke() список подписчиков уже
+        // пуст, событие уходит в никуда, ClaudeWebSession.SignedIn никогда не
+        // срабатывает, и App.OnSignedIn (ClearCachedOrganization + немедленный
+        // refresh) не выполняется вовсе — циферблаты молча ждут следующего
+        // 300-секундного тика. Поднимаем событие, пока подписчики ещё на
+        // месте, и только потом закрываем окно.
         SignedIn?.Invoke();
+        Close();
     }
 }

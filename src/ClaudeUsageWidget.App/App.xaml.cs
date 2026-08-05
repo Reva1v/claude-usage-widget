@@ -34,6 +34,14 @@ public partial class App : System.Windows.Application
     // готовое значение.
     private volatile bool _hasSessionCookie;
 
+    // Отдельно от _hasSessionCookie: становится true, когда сама проверка
+    // куки (HasSessionCookieAsync) бросила исключение (например, WebView2
+    // Runtime не установлен, или профиль недоступен) — то есть когда мы даже
+    // не смогли выяснить, есть кука или нет, а не когда честно выяснили, что
+    // её нет. Читается из UpdateTrayTooltip, чтобы такой сбой не потерялся
+    // молча в FireAndForget/Debug-выводе — см. комментарий в RefreshAllAsync.
+    private bool _webViewFailing;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -96,17 +104,74 @@ public partial class App : System.Windows.Application
 
     /// Порт applicationDidFinishLaunching: если сессионной куки нет, окно
     /// логина открывается сразу, не дожидаясь клика по трею.
+    ///
+    /// Оба шага здесь обёрнуты в try — сбой WebView2 (например, не
+    /// установлен Runtime) на старте не должен помешать RefreshAllAsync()
+    /// ниже выполниться: тот сам заново попробует и корректно отрапортует об
+    /// этой же ошибке (см. его комментарий), а StatusStore обязан загрузиться
+    /// независимо от того, что случилось с веб-сессией.
     private async Task StartupAsync()
     {
-        _hasSessionCookie = await _session!.HasSessionCookieAsync();
-        if (!_hasSessionCookie) await _session.OpenLoginWindowAsync();
+        var hasSession = false;
+        try
+        {
+            hasSession = await _session!.HasSessionCookieAsync();
+        }
+        catch
+        {
+            // Ничего не делаем: RefreshAllAsync() ниже сам столкнётся с той
+            // же ошибкой и честно её покажет — здесь достаточно не пытаться
+            // открыть LoginWindow поверх заведомо сломанной среды.
+        }
+
+        if (!hasSession)
+        {
+            try
+            {
+                await _session!.OpenLoginWindowAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to open the sign-in window: {ex}");
+            }
+        }
 
         await RefreshAllAsync();
     }
 
     private async Task RefreshAllAsync()
     {
-        _hasSessionCookie = await _session!.HasSessionCookieAsync();
+        // Проверка куки — в собственном try/catch, отдельном от
+        // Task.WhenAll ниже: если она бросит (сбой WebView2, а не просто
+        // "куки нет"), это не должно помешать _statusStore.LoadAsync()
+        // выполниться — тот читает публичный, не завязанный на WebView2
+        // эндпоинт status.claude.com, и его судьба никак не связана с
+        // состоянием веб-сессии.
+        try
+        {
+            _hasSessionCookie = await _session!.HasSessionCookieAsync();
+            _webViewFailing = false;
+        }
+        catch (Exception ex)
+        {
+            // Специально НЕ false: если тут выставить _hasSessionCookie в
+            // false, UsageStore.LoadAsync ниже коротко замкнётся на
+            // Failed(NoCredentials) ещё до вызова _fetch — а это неверный,
+            // вводящий в заблуждение диагноз ("не авторизован", хотя на
+            // самом деле не работает WebView2, и кнопка Sign in ниже
+            // сломается точно так же). Оставляя true, даём LoadAsync дойти
+            // до _fetch() = session.FetchUsageAsync, который сам заново
+            // наткнётся на ту же ошибку внутри собственного
+            // HasSessionCookieAsync — и на этот раз её поймает уже
+            // UsageStore.PerformLoadAsync (внешний catch(Exception)),
+            // превратив в честный Failed(Network(ex.Message)), видимый в
+            // строке статуса на панели. UpdateTrayTooltip ниже дополнительно
+            // подсвечивает то же самое в тултипе трея, пока сбой не пройдёт.
+            _hasSessionCookie = true;
+            _webViewFailing = true;
+            System.Diagnostics.Debug.WriteLine($"WebView2 session check failed: {ex}");
+        }
+
         await Task.WhenAll(_usageStore!.LoadAsync(), _statusStore!.LoadAsync());
     }
 
@@ -164,6 +229,23 @@ public partial class App : System.Windows.Application
 
     private void UpdateTrayTooltip()
     {
+        if (_webViewFailing)
+        {
+            // Простейший честный сигнал наружу для сбоя, который иначе
+            // тонет в FireAndForget/Debug-выводе — не модальный MessageBox
+            // (тот заблокировал бы Dispatcher прямо во время старта, пока
+            // проверка куки ещё не завершилась) и не разовое сообщение
+            // (тогда его смыл бы первый же следующий Changed от стора,
+            // например когда RefreshWidget вызывается таймером) — а тултип
+            // трея, который держится именно до тех пор, пока проблема
+            // сохраняется. Панель виджета тем временем и так покажет
+            // Failed(Network(...)) через обычный путь UsageStore, как только
+            // FetchUsageAsync внутри LoadAsync наткнётся на ту же ошибку
+            // (см. комментарий в RefreshAllAsync).
+            _trayIcon!.SetTooltip("Claude Usage Widget — WebView2 error, see widget for details");
+            return;
+        }
+
         var now = DateTimeOffset.Now;
         var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
             ? okSnapshot

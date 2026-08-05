@@ -53,6 +53,15 @@ public sealed class ClaudeWebSession
 
     private LoginWindow? _loginWindow;
 
+    // Открытие окна логина само по себе асинхронное (нужна среда WebView2),
+    // а значит между проверкой `_loginWindow == null` и её присвоением есть
+    // await-разрыв. Без отдельного поля два конкурирующих вызова (автооткрытие
+    // на старте гонится с ручным кликом "Sign in" из трея) оба успевают
+    // увидеть null и создать по окну каждый. `_openLoginWindowTask`
+    // выставляется синхронно, до первого await — второй вызов видит уже
+    // запущенную задачу и просто дожидается того же самого окна.
+    private Task<LoginWindow>? _openLoginWindowTask;
+
     /// Кука появилась и окно логина закрылось — порт uses site's onSignedIn.
     public event Action? SignedIn;
 
@@ -109,25 +118,48 @@ public sealed class ClaudeWebSession
         _settings.Save(_settings.Load() with { OrganizationId = null });
     }
 
-    /// Повторный вызов, пока окно логина ещё открыто, поднимает то же самое
-    /// окно вместо создания второго — сравнение с <c>_loginWindow</c>, а не
-    /// счётчик, поскольку окно само сбрасывает поле в null при закрытии.
-    public async Task<LoginWindow> OpenLoginWindowAsync()
+    /// Повторный вызов, пока окно логина ещё открыто (или ещё только
+    /// открывается), поднимает то же самое окно вместо создания второго —
+    /// сравнение с <c>_loginWindow</c>, а не счётчик, поскольку окно само
+    /// сбрасывает поле в null при закрытии.
+    public Task<LoginWindow> OpenLoginWindowAsync()
     {
         if (_loginWindow is { } existing)
         {
             existing.Show();
             existing.Activate();
-            return existing;
+            return Task.FromResult(existing);
         }
 
-        var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
-        var window = new LoginWindow(environment);
-        window.SignedIn += OnLoginWindowSignedIn;
-        window.Closed += OnLoginWindowClosed;
-        _loginWindow = window;
-        window.Show();
-        return window;
+        // `??=` присваивает синхронно, до какого-либо await внутри
+        // CreateLoginWindowAsync — конкурирующий вызов, попавший сюда же на
+        // том же UI-потоке во время await EnsureEnvironmentAsync() ниже,
+        // увидит уже не-null _openLoginWindowTask и получит ту же задачу
+        // вместо того, чтобы начать создавать второе окно с нуля.
+        return _openLoginWindowTask ??= CreateLoginWindowAsync();
+    }
+
+    private async Task<LoginWindow> CreateLoginWindowAsync()
+    {
+        try
+        {
+            var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
+            var window = new LoginWindow(environment);
+            window.SignedIn += OnLoginWindowSignedIn;
+            window.Closed += OnLoginWindowClosed;
+            _loginWindow = window;
+            window.Show();
+            return window;
+        }
+        finally
+        {
+            // Освобождаем "замок" независимо от исхода: при успехе
+            // следующий вызов пойдёт по ветке `_loginWindow is { } existing`
+            // выше; при сбое (например, среда WebView2 не создалась) —
+            // разрешаем следующему вызову попробовать заново, а не залипнуть
+            // на однажды провалившейся задаче навсегда.
+            _openLoginWindowTask = null;
+        }
     }
 
     private void OnLoginWindowSignedIn() => SignedIn?.Invoke();
