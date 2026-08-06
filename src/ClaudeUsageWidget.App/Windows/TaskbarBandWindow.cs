@@ -668,6 +668,15 @@ public sealed class TaskbarBandWindow : Window
         // платить эту цену каждые 5 секунд бесконечно, когда почти всегда
         // ничего не изменилось (task-17-report.md round 5, live-finding #3:
         // "очень заторможено").
+        // Анти-burial — СТРОГО до геометрического короткого замыкания ниже:
+        // захоронение (шелл поднял таскбар/чужое окно над нами) происходит
+        // ровно при неизменной ни на пиксель геометрии, и детект, стоявший
+        // после этого return, в реальной жизни не вызывался вообще — лента
+        // часами лежала под таскбаром при девственно чистом fullscreen-логе.
+        // Для stale-ветки не нужен: она сама переустанавливает HWND_TOPMOST
+        // вместе с перепривязкой владельца.
+        if (!stale) EnsureNotBuried(ownHwnd, tray);
+
         if (!stale
             && x == _lastX && trayRect.Top == _lastY
             && bandWidthPx == _lastWidthPx && bandHeightPx == _lastHeightPx)
@@ -682,8 +691,6 @@ public sealed class TaskbarBandWindow : Window
         _lastY = trayRect.Top;
         _lastWidthPx = bandWidthPx;
         _lastHeightPx = bandHeightPx;
-
-        EnsureNotBuried(ownHwnd, tray);
     }
 
     /// <summary>
