@@ -260,27 +260,40 @@ public class UsageStoreTests
     // layer calls LoadAsync() from the UI thread and from
     // SystemEvents.PowerModeChanged (a worker thread), so this drives two
     // real OS threads at `_inFlight` via a Barrier to make them arrive at
-    // LoadAsync() together as often as possible. The lock makes the
-    // outcome exact regardless of how close the threads land; the barrier
-    // just maximizes how often the race window is actually exercised.
+    // LoadAsync() together as often as possible. The barrier alone does not
+    // make the assertion sound: with an instantly-completing fetch the first
+    // thread can finish the whole load — `finally { _inFlight = null; }`
+    // included — before the second thread reaches the check, and a second
+    // fetch is then correct behaviour, not a coalescing bug. So the fetch is
+    // held on a gate that is released only once both threads have returned
+    // from LoadAsync(); the two calls then provably overlap, and the count
+    // is exact no matter how the scheduler lands the threads.
     [Fact]
     public async Task CoalescesConcurrentLoadAsyncAcrossThreads()
     {
         var calls = 0;
-        var store = MakeStore(fetch: _ =>
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = MakeStore(fetch: async _ =>
         {
             Interlocked.Increment(ref calls);
-            return Task.FromResult(Snapshot(1));
+            await gate.Task;
+            return Snapshot(1);
         });
 
         var barrier = new Barrier(2);
-        Task Racer() => Task.Run(() =>
+        using var entered = new CountdownEvent(2);
+        Task Racer() => Task.Run(async () =>
         {
             barrier.SignalAndWait();
-            return store.LoadAsync();
+            var load = store.LoadAsync();
+            entered.Signal();
+            await load;
         });
 
-        await Task.WhenAll(Racer(), Racer());
+        var racers = new[] { Racer(), Racer() };
+        entered.Wait();
+        gate.SetResult();
+        await Task.WhenAll(racers);
 
         Assert.Equal(1, calls);
     }

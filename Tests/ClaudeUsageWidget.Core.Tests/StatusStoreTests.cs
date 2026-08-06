@@ -76,24 +76,37 @@ public class StatusStoreTests
     // layer can call LoadAsync() from more than one thread at once (UI thread
     // and a background wake handler), so the check-then-set on `_inFlight`
     // must be exercised across real OS threads, not just interleavings on one.
+    // The fetch is gated for the same reason as there: an instantly-completing
+    // fetch lets the first thread clear `_inFlight` before the second thread
+    // even checks it, which makes a second fetch correct and the assertion
+    // flaky. Releasing the gate only after both calls have been issued keeps
+    // the two loads genuinely overlapping.
     [Fact]
     public async Task CoalescesConcurrentLoadAsyncAcrossThreads()
     {
         var calls = 0;
-        var store = MakeStore(_ =>
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = MakeStore(async _ =>
         {
             Interlocked.Increment(ref calls);
-            return Task.FromResult(ServiceStatus.Operational);
+            await gate.Task;
+            return ServiceStatus.Operational;
         });
 
         var barrier = new Barrier(2);
-        Task Racer() => Task.Run(() =>
+        using var entered = new CountdownEvent(2);
+        Task Racer() => Task.Run(async () =>
         {
             barrier.SignalAndWait();
-            return store.LoadAsync();
+            var load = store.LoadAsync();
+            entered.Signal();
+            await load;
         });
 
-        await Task.WhenAll(Racer(), Racer());
+        var racers = new[] { Racer(), Racer() };
+        entered.Wait();
+        gate.SetResult();
+        await Task.WhenAll(racers);
 
         Assert.Equal(1, calls);
     }
