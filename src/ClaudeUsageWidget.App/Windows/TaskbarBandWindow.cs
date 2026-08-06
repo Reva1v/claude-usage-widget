@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -473,6 +474,7 @@ public sealed class TaskbarBandWindow : Window
     private void ApplyFullscreenVisibility(bool hidden)
     {
         if (hidden == _hiddenForFullscreen) return;
+        Diag($"apply: hiddenForFullscreen {_hiddenForFullscreen} -> {hidden}");
         _hiddenForFullscreen = hidden;
         if (hidden) Hide(); else Show();
     }
@@ -678,6 +680,25 @@ public sealed class TaskbarBandWindow : Window
     /// WindowFromPoint пропускает прозрачные пиксели layered-окон насквозь,
     /// так что прозрачные области нашей же ленты зонду не мешают.
     /// </summary>
+    /// Диагностический лог зонда — включается переменной окружения
+    /// CLAUDE_BAND_DIAG=1, пишет в %TEMP%\claude-band-diag.log. Оставлен
+    /// намеренно: видимость ленты уже несколько раз глючила только на живой
+    /// машине пользователя, и каждый раз главным дефицитом были факты.
+    private static readonly bool DiagEnabled =
+        Environment.GetEnvironmentVariable("CLAUDE_BAND_DIAG") == "1";
+
+    private static void Diag(string message)
+    {
+        if (!DiagEnabled) return;
+        try
+        {
+            File.AppendAllText(
+                Path.Combine(Path.GetTempPath(), "claude-band-diag.log"),
+                $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
+        }
+        catch (IOException) { /* лог не важнее работы ленты */ }
+    }
+
     private static bool IsTaskbarObscured(nint ownHwnd, nint tray)
     {
         if (!Win32.GetWindowRect(tray, out var trayRect)) return false;
@@ -694,12 +715,18 @@ public sealed class TaskbarBandWindow : Window
             };
 
             var hit = Win32.WindowFromPoint(point);
-            if (hit == nint.Zero) return false; // пустота — уж точно не окно поверх таскбара
+            if (hit == nint.Zero)
+            {
+                Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit=0 -> visible");
+                return false; // пустота — уж точно не окно поверх таскбара
+            }
 
             var root = Win32.GetAncestor(hit, Win32.GaRoot);
+            Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit={hit} root={root} cls={Win32.GetClassName(root)} tray={tray} own={ownHwnd}");
             if (root == tray || root == ownHwnd || root == nint.Zero) return false;
         }
 
+        Diag("probe verdict: OBSCURED (all points foreign)");
         return true;
     }
 

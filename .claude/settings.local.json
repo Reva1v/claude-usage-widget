@@ -1,0 +1,7 @@
+{
+  "skillOverrides": {
+    "clickup-task": "off",
+    "compress-video": "off",
+    "test-mod-versions": "off"
+  }
+}

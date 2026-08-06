@@ -43,9 +43,26 @@ public partial class App : System.Windows.Application
     // молча в FireAndForget/Debug-выводе — см. комментарий в RefreshAllAsync.
     private bool _webViewFailing;
 
+    /// Именованный мьютекс единственного экземпляра — живёт полем, чтобы GC
+    /// не отпустил его на всё время жизни процесса.
+    private System.Threading.Mutex? _singleInstanceMutex;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Один экземпляр на сессию. Живая отладка (2026-08-06) поймала ДВА
+        // одновременно работающих экземпляра (зомби от предыдущих запусков
+        // dotnet run): их ленты и виджеты дрались за позицию/видимость, и
+        // со стороны это выглядело как хаотичные пропадания. Виджету с
+        // трей-иконкой второй экземпляр не нужен никогда.
+        _singleInstanceMutex = new System.Threading.Mutex(
+            initiallyOwned: true, "ClaudeUsageWidget.SingleInstance", out var isFirstInstance);
+        if (!isFirstInstance)
+        {
+            Shutdown();
+            return;
+        }
 
         // Для трей-виджета необработанное исключение на UI-потоке (по
         // умолчанию WPF после него завершает процесс) хуже, чем одна неверная
@@ -401,7 +418,15 @@ public partial class App : System.Windows.Application
     /// новый, как при обычном первом включении.</summary>
     private void OnTaskbarBandLost()
     {
+        // Закрываем WPF-оболочку мёртвого экземпляра: его нативный HWND уже
+        // недействителен, но сам Window-объект без Close() остаётся жить в
+        // списке окон приложения — живая отладка (2026-08-06) находила по
+        // несколько таких осиротевших скрытых окон за один запуск.
+        var dead = _bandWindow;
         _bandWindow = null;
+        try { dead?.Close(); }
+        catch (InvalidOperationException) { /* уже закрыт самим WPF — и хорошо */ }
+
         if (_settings!.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
     }
 
