@@ -15,14 +15,18 @@ flow, refresh cycle and settings persistence are all reimplemented for
 Windows.
 
 <p align="center">
-  <img src="assets/widget2.png" width="234" alt="Claude Usage Widget on the Windows desktop">
+  <img src="assets/widget3.png" width="202" alt="Claude Usage Widget on the Windows desktop">
 </p>
 
 The optional taskbar band — transparent, just the figures, docked to the
-taskbar's left corner:
+taskbar's left corner or next to the tray icons:
 
 <p align="center">
   <img src="assets/taskbar-band2.png" alt="Taskbar band showing 5H, 7D and per-model usage">
+</p>
+
+<p align="center">
+  <img src="assets/taskbar-band3.png" alt="Taskbar band docked next to the tray icons">
 </p>
 
 
