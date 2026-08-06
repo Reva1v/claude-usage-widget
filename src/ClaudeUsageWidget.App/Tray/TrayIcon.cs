@@ -281,7 +281,30 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit Claude Usage Widget", null, (_, _) => QuitRequested?.Invoke());
 
+        // Меню не закрывается после клика по пункту — только явно (клик мимо
+        // меню, Esc, потеря фокуса): почти все пункты здесь — переключатели,
+        // и пользователь щёлкает несколько за одно открытие, а WinForms по
+        // умолчанию схлопывает меню на первом же. Подписка нужна и корню, и
+        // каждому подменю: клик по вложенному пункту закрывает всю цепочку
+        // DropDown'ов, и каждое звено спрашивает о закрытии отдельно. Один
+        // общий цикл в конце, а не строка у каждого подменю — новое подменю
+        // подхватится само, без риска забыть подписку.
+        menu.Closing += CancelCloseOnItemClick;
+        foreach (var submenu in menu.Items.OfType<ToolStripMenuItem>())
+        {
+            if (submenu.HasDropDownItems || submenu == _modelLimitMenu)
+                submenu.DropDown.Closing += CancelCloseOnItemClick;
+        }
+
         return menu;
+    }
+
+    /// ItemClicked — единственная причина закрытия, которую гасим; Quit это
+    /// не задерживает (приложение гасит меню целиком через Dispose), а
+    /// клавиатура и клик за пределами меню продолжают закрывать как обычно.
+    private static void CancelCloseOnItemClick(object? sender, ToolStripDropDownClosingEventArgs e)
+    {
+        if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked) e.Cancel = true;
     }
 
     private void OnLaunchAtLoginClicked(object? sender, EventArgs e)
