@@ -716,7 +716,22 @@ public sealed class TaskbarBandWindow : Window
         // запасом, и гарантия отсутствия вечного цикла на битой цепочке.
         for (var i = 0; above != nint.Zero && i < 64; i++, above = Win32.GetWindow(above, Win32.GwHwndPrev))
         {
-            if (above == tray || !Win32.IsWindowVisible(above)) continue;
+            if (above == tray)
+            {
+                // Владелец ВЫШЕ owned-окна — инвариант owned-порядка сломан:
+                // шелл поднял таскбар с SWP_NOOWNERZORDER, и непрозрачный
+                // Shell_TrayWnd теперь рисуется поверх ленты — для глаза она
+                // «пропала», хотя формально видима и не Hide()-нута (именно
+                // так лента гасла при открытии/скрытии окон из трея —
+                // fullscreen-путь в логе при этом девственно чист). Это то же
+                // захоронение, что и под окном приложения, просто хоронит
+                // сам владелец — и лечится тем же одиночным re-assert.
+                Diag("buried under the taskbar itself — re-asserting topmost");
+                Win32.SetWindowPos(ownHwnd, Win32.HwndTopMost, 0, 0, 0, 0,
+                    Win32.SwpNoMove | Win32.SwpNoSize | Win32.SwpNoActivate);
+                return;
+            }
+            if (!Win32.IsWindowVisible(above)) continue;
             if (!Win32.GetWindowRect(above, out var r)) continue;
 
             var overlaps = r.Left < own.Right && r.Right > own.Left
