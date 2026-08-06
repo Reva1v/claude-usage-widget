@@ -110,6 +110,11 @@ public sealed class TaskbarBandWindow : Window
     /// кнопке «Свернуть»).
     private nint _minimizeHook;
 
+    /// EVENT_OBJECT_REORDER — момент перетасовки z-порядка: единственный
+    /// сигнал, приходящий ДО того, как глаз увидит ленту под поднятым
+    /// таскбаром (foreground-событие приходит уже после).
+    private nint _reorderHook;
+
     /// Дребезг для EVENT_OBJECT_LOCATIONCHANGE — тот сыплется пачками во
     /// время обычного перетаскивания/анимации окна, а не только при входе/
     /// выходе из fullscreen; реально перепроверяем полноэкранность только
@@ -137,6 +142,12 @@ public sealed class TaskbarBandWindow : Window
     /// цена за полное отсутствие миганий.
     private const int ShowStabilityMs = 300;
     private const int HideStabilityMs = 1200;
+
+    /// Скрытие, когда таскбар накрыт АКТИВНЫМ окном (см. TaskbarCover
+    /// .ObscuredByForeground): вердикт достоверен — пользователь сам вошёл
+    /// в fullscreen, — карантин нужен лишь символический, против дребезга
+    /// в кадрах самого перехода.
+    private const int FastHideStabilityMs = 350;
 
     /// Состояние, которое сейчас ожидает применения через
     /// _visibilityStabilityTimer — null, если ничего не отложено (последнее
@@ -246,7 +257,7 @@ public sealed class TaskbarBandWindow : Window
                 var ownHwnd = new WindowInteropHelper(this).Handle;
                 var tray = Win32.FindWindow(TrayClassName, null);
                 if (ownHwnd == nint.Zero || tray == nint.Zero) return;
-                var fresh = IsTaskbarObscured(ownHwnd, tray);
+                var fresh = ProbeTaskbarCover(ownHwnd, tray) != TaskbarCover.Visible;
                 if (fresh != hidden)
                 {
                     Diag($"stability expired: verdict flipped ({hidden} -> {fresh}), transition cancelled");
@@ -426,6 +437,9 @@ public sealed class TaskbarBandWindow : Window
         _minimizeHook = Win32.SetWinEventHook(
             Win32.EventSystemMinimizeStart, Win32.EventSystemMinimizeEnd,
             nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
+        _reorderHook = Win32.SetWinEventHook(
+            Win32.EventObjectReorder, Win32.EventObjectReorder,
+            nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
     }
 
     /// <summary>Снимает оба хука (если стоят) и гасит оба вспомогательных
@@ -451,6 +465,11 @@ public sealed class TaskbarBandWindow : Window
             Win32.UnhookWinEvent(_minimizeHook);
             _minimizeHook = nint.Zero;
         }
+        if (_reorderHook != nint.Zero)
+        {
+            Win32.UnhookWinEvent(_reorderHook);
+            _reorderHook = nint.Zero;
+        }
         _locationDebounceTimer.Stop();
         _visibilityStabilityTimer.Stop();
         _pendingHiddenForFullscreen = null;
@@ -475,7 +494,7 @@ public sealed class TaskbarBandWindow : Window
     ///   от мигания между двумя состояниями, а не единственную, ещё никому
     ///   не видимую установку начального состояния.
     /// </summary>
-    private void RequestFullscreenVisibility(bool hidden)
+    private void RequestFullscreenVisibility(bool hidden, bool coveredByForeground = false)
     {
         if (!_fullscreenStateEstablished)
         {
@@ -495,11 +514,17 @@ public sealed class TaskbarBandWindow : Window
 
         _pendingHiddenForFullscreen = hidden;
         _visibilityStabilityTimer.Stop();
-        // Асимметрия направлений: скрытие — редкое и «дорогое» решение
-        // (пользователь теряет ленту из виду), мимолётные оверлеи должны
-        // отфильтровываться целиком, поэтому ждём дольше; показ обратно —
-        // безобиден, задерживать его дольше 300мс незачем.
-        _visibilityStabilityTimer.Interval = TimeSpan.FromMilliseconds(hidden ? HideStabilityMs : ShowStabilityMs);
+        // Асимметрия направлений: скрытие — «дорогое» решение (пользователь
+        // теряет ленту из виду), мимолётные служебные оверлеи должны
+        // отфильтровываться целиком — долгая выдержка; но если таскбар
+        // накрыло АКТИВНОЕ окно, это пользователь сам вошёл в fullscreen
+        // (плеер YouTube, игра) — прятаться нужно почти сразу, длинная
+        // задержка тут читается как тормоза. Показ обратно — безобиден,
+        // держим быстрым всегда.
+        var delay = !hidden ? ShowStabilityMs
+            : coveredByForeground ? FastHideStabilityMs
+            : HideStabilityMs;
+        _visibilityStabilityTimer.Interval = TimeSpan.FromMilliseconds(delay);
         _visibilityStabilityTimer.Start();
     }
 
@@ -528,6 +553,18 @@ public sealed class TaskbarBandWindow : Window
             or Win32.EventSystemMinimizeEnd)
         {
             Dispatcher.BeginInvoke(Reposition);
+            return;
+        }
+
+        if (eventType == Win32.EventObjectReorder)
+        {
+            // Не полный Reposition: перетасовка z-порядка не меняет
+            // геометрию, а REORDER-события идут заметно чаще прочих —
+            // достаточно дешёвой проверки захоронения (десяток GetWindow
+            // на вызов). Именно этот путь убирает последний видимый кадр
+            // ленты под таскбаром: foreground-событие приходит уже после
+            // перетасовки, а это — в её момент.
+            Dispatcher.BeginInvoke(CheckBuriedNow);
             return;
         }
 
@@ -606,11 +643,13 @@ public sealed class TaskbarBandWindow : Window
         // vs rcMonitor, SW_SHOWMAXIMIZED, сравнение мониторов — round 6-8)
         // раз за разом ловили ложные срабатывания на реальных приложениях
         // (maximized JetBrains, Toggle Full Screen Mode, кнопка «Свернуть»).
-        // Зонд IsTaskbarObscured спрашивает у самой ОС, чьи окна реально
+        // Зонд ProbeTaskbarCover спрашивает у самой ОС, чьи окна реально
         // лежат в точках полосы таскбара — определение видимости, а не её
         // предсказание. Применение — через RequestFullscreenVisibility
-        // (round 7: 300мс гистерезис против мигания на мимолётных сменах).
-        RequestFullscreenVisibility(IsTaskbarObscured(ownHwnd, tray));
+        // (гистерезис против мигания на мимолётных сменах; накрытие
+        // активным окном — достоверный fullscreen, прячемся быстро).
+        var cover = ProbeTaskbarCover(ownHwnd, tray);
+        RequestFullscreenVisibility(cover != TaskbarCover.Visible, cover == TaskbarCover.ObscuredByForeground);
         if (_hiddenForFullscreen) return; // репозиционировать спрятанное (в т.ч. ещё не отпущенное гистерезисом обратно) окно незачем
 
         // Дешёвая проверка "устарели ли мы" — вместо кэширования хэндла
@@ -714,6 +753,19 @@ public sealed class TaskbarBandWindow : Window
     /// всплывашки — легитимные временные окна, re-assert поверх них — это
     /// ровно баг #200, их пропускаем (они закроются сами).
     /// </summary>
+    /// <summary>Лёгкий вход в EnsureNotBuried для EVENT_OBJECT_REORDER:
+    /// только резолв хэндлов и сама проверка, без геометрии/зонда — их
+    /// перетасовка z-порядка не затрагивает, а событий этих много.</summary>
+    private void CheckBuriedNow()
+    {
+        if (_hiddenForFullscreen) return;
+        var ownHwnd = new WindowInteropHelper(this).Handle;
+        if (ownHwnd == nint.Zero || !Win32.IsWindow(ownHwnd)) return;
+        var tray = Win32.FindWindow(TrayClassName, null);
+        if (tray == nint.Zero) return;
+        EnsureNotBuried(ownHwnd, tray);
+    }
+
     private void EnsureNotBuried(nint ownHwnd, nint tray)
     {
         if (!Win32.GetWindowRect(ownHwnd, out var own)) return;
@@ -806,12 +858,20 @@ public sealed class TaskbarBandWindow : Window
         catch (IOException) { /* лог не важнее работы ленты */ }
     }
 
-    private static bool IsTaskbarObscured(nint ownHwnd, nint tray)
+    /// Итог зонда: таскбар видим; накрыт активным (foreground) окном —
+    /// это честный fullscreen, прятаться можно быстро; накрыт чем-то
+    /// НЕактивным — подозрительно на мимолётный служебный оверлей
+    /// (ShareX и подобные), убеждаемся долгой выдержкой.
+    private enum TaskbarCover { Visible, ObscuredByForeground, Obscured }
+
+    private static TaskbarCover ProbeTaskbarCover(nint ownHwnd, nint tray)
     {
-        if (!Win32.GetWindowRect(tray, out var trayRect)) return false;
+        if (!Win32.GetWindowRect(tray, out var trayRect)) return TaskbarCover.Visible;
 
         var width = trayRect.Right - trayRect.Left;
         var midY = (trayRect.Top + trayRect.Bottom) / 2;
+        nint firstRoot = 0;
+        var allSameRoot = true;
 
         foreach (var fraction in ProbeFractions)
         {
@@ -825,12 +885,12 @@ public sealed class TaskbarBandWindow : Window
             if (hit == nint.Zero)
             {
                 Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit=0 -> visible");
-                return false; // пустота — уж точно не окно поверх таскбара
+                return TaskbarCover.Visible; // пустота — уж точно не окно поверх таскбара
             }
 
             var root = Win32.GetAncestor(hit, Win32.GaRoot);
             Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit={hit} root={root} cls={Win32.GetClassName(root)} tray={tray} own={ownHwnd}");
-            if (root == tray || root == ownHwnd || root == nint.Zero) return false;
+            if (root == tray || root == ownHwnd || root == nint.Zero) return TaskbarCover.Visible;
 
             // Закловленное окно — призрак: DWM его не рисует, пользователь
             // видит таскбар, но WindowFromPoint всё равно возвращает его.
@@ -843,12 +903,25 @@ public sealed class TaskbarBandWindow : Window
             if (Win32.IsCloaked(root))
             {
                 Diag($"probe f={fraction}: root {root} is DWM-cloaked ghost -> visible");
-                return false;
+                return TaskbarCover.Visible;
             }
+
+            if (firstRoot == 0) firstRoot = root;
+            else if (root != firstRoot) allSameRoot = false;
+        }
+
+        // Одно и то же АКТИВНОЕ окно во всех точках — пользователь сам
+        // развернул что-то на весь экран (плеер YouTube, игра): решение
+        // «прятать» здесь достоверно, долгий карантин не нужен. Служебные
+        // оверлеи (ShareX) активными не бывают.
+        if (allSameRoot && firstRoot == Win32.GetForegroundWindow())
+        {
+            Diag("probe verdict: OBSCURED by foreground window (real fullscreen)");
+            return TaskbarCover.ObscuredByForeground;
         }
 
         Diag("probe verdict: OBSCURED (all points foreign)");
-        return true;
+        return TaskbarCover.Obscured;
     }
 
     private static int ToPhysical(double dip, uint dpi) => (int)Math.Round(dip * dpi / 96.0);
