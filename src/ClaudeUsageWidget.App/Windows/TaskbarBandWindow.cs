@@ -127,6 +127,17 @@ public sealed class TaskbarBandWindow : Window
     /// RequestFullscreenVisibility.
     private readonly DispatcherTimer _visibilityStabilityTimer;
 
+    /// Гистерезис видимости, по направлениям. Показ — быстрый: лента и так
+    /// не видна, вернуть её пользователю надо как можно раньше. Скрытие —
+    /// намеренно медленное: короткоживущие полноэкранные оверлеи (ShareX
+    /// на каждое разворачивание чужого окна перекрывает таскбар невидимым
+    /// окном на ~0.3-1с) живут заметно меньше этого порога и не должны
+    /// доживать до реального Hide() вовсе; настоящий fullscreen (игра)
+    /// держится минутами, и лишняя секунда ленты поверх него — приемлемая
+    /// цена за полное отсутствие миганий.
+    private const int ShowStabilityMs = 300;
+    private const int HideStabilityMs = 1200;
+
     /// Состояние, которое сейчас ожидает применения через
     /// _visibilityStabilityTimer — null, если ничего не отложено (последнее
     /// запрошенное состояние уже совпадает с применённым).
@@ -214,7 +225,7 @@ public sealed class TaskbarBandWindow : Window
             Reposition();
         };
 
-        _visibilityStabilityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _visibilityStabilityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ShowStabilityMs) };
         _visibilityStabilityTimer.Tick += (_, _) =>
         {
             _visibilityStabilityTimer.Stop();
@@ -222,6 +233,25 @@ public sealed class TaskbarBandWindow : Window
             _pendingHiddenForFullscreen = null;
             try
             {
+                // Свежий зонд В МОМЕНТ истечения таймера, а не вердикт на
+                // момент его старта. Живой пример с этой машины: ShareX при
+                // разворачивании чужих окон кладёт невидимое WinForms-окно на
+                // всю полосу таскбара на доли секунды — вердикт «накрыто»
+                // честен в момент снятия, но к истечению таймера оверлей уже
+                // исчез, а событий, которые перезапустили бы зонд в этом
+                // промежутке, нет (уничтожение окна не приходит как
+                // LOCATIONCHANGE). Применять устаревший вердикт — мигать
+                // лентой на ровном месте; не подтвердился — переход просто
+                // отменяется, и следующий начнётся с чистого листа.
+                var ownHwnd = new WindowInteropHelper(this).Handle;
+                var tray = Win32.FindWindow(TrayClassName, null);
+                if (ownHwnd == nint.Zero || tray == nint.Zero) return;
+                var fresh = IsTaskbarObscured(ownHwnd, tray);
+                if (fresh != hidden)
+                {
+                    Diag($"stability expired: verdict flipped ({hidden} -> {fresh}), transition cancelled");
+                    return;
+                }
                 ApplyFullscreenVisibility(hidden);
             }
             catch (InvalidOperationException)
@@ -433,11 +463,12 @@ public sealed class TaskbarBandWindow : Window
     ///   незавершённый переход и ничего не делает — "immediate application
     ///   is fine when desired == current".
     /// - если это НОВЫЙ переход (не тот, что уже ожидает применения),
-    ///   (пере)запускает 300мс таймер стабильности — реальный Hide()/Show()
-    ///   произойдёт только если это желаемое состояние продержится все
-    ///   300 мс без изменений. Мимолётная смена foreground-окна (случайный
-    ///   alt-tab, всплывающее окно поверх игры на долю секунды) поэтому
-    ///   гасится здесь и никогда не доходит до реального мигания ленты.
+    ///   (пере)запускает таймер стабильности (ShowStabilityMs/HideStabilityMs
+    ///   — см. их комментарий про асимметрию) — реальный Hide()/Show()
+    ///   произойдёт только если СВЕЖИЙ зонд в момент истечения таймера
+    ///   подтвердит всё то же желаемое состояние (см. Tick в конструкторе).
+    ///   Мимолётная смена foreground-окна или короткоживущий оверлей поверх
+    ///   таскбара поэтому гасятся здесь и не доходят до мигания ленты.
     /// - самое первое определение состояния для этого Dock()
     ///   (<see cref="_fullscreenStateEstablished"/> ещё false) применяется
     ///   немедленно, в обход гистерезиса: тот защищает уже показанную ленту
@@ -464,6 +495,11 @@ public sealed class TaskbarBandWindow : Window
 
         _pendingHiddenForFullscreen = hidden;
         _visibilityStabilityTimer.Stop();
+        // Асимметрия направлений: скрытие — редкое и «дорогое» решение
+        // (пользователь теряет ленту из виду), мимолётные оверлеи должны
+        // отфильтровываться целиком, поэтому ждём дольше; показ обратно —
+        // безобиден, задерживать его дольше 300мс незачем.
+        _visibilityStabilityTimer.Interval = TimeSpan.FromMilliseconds(hidden ? HideStabilityMs : ShowStabilityMs);
         _visibilityStabilityTimer.Start();
     }
 
