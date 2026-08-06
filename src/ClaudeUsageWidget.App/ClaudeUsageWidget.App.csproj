@@ -17,7 +17,7 @@
     <!-- NotifyIcon и ContextMenuStrip живут в WinForms; WPF своего трея не имеет. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <AssemblyTitle>Claude Usage Widget</AssemblyTitle>
     <!-- WFAC010 предлагает ApplicationHighDpiMode/SetHighDpiMode — API из мира
          WinForms-приложений. Здесь процесс хозяйский WPF, WinForms используется
