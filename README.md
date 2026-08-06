@@ -1,7 +1,8 @@
 # Claude Usage Widget (Windows)
 
 [![CI](https://github.com/Reva1v/claude-usage-widget/actions/workflows/ci.yml/badge.svg)](https://github.com/Reva1v/claude-usage-widget/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Reva1v/claude-usage-widget?label=release&color=orange)](https://github.com/Reva1v/claude-usage-widget/releases/latest)
+[![License](https://img.shields.io/github/license/Reva1v/claude-usage-widget?color=yellow)](LICENSE)
 
 A Windows desktop widget showing Claude Code subscription limits and Claude's
 own service status, as four dials in a square panel pinned to the bottom of
