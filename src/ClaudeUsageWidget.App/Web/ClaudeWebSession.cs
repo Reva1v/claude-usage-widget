@@ -45,6 +45,15 @@ public sealed class ClaudeWebSession
     private Task<CoreWebView2>? _fetchWebViewTask;
     private Window? _hiddenHost;
 
+    // КРИТИЧНО держать сильную ссылку на контроллер, а не только на его
+    // CoreWebView2: .NET-обёртка CoreWebView2Controller при сборке мусора
+    // закрывает нативный контроллер (финализатор → Close()), после чего
+    // любой вызов кэшированного CoreWebView2 навсегда падает с "CoreWebView2
+    // members cannot be accessed after the WebView2 control is disposed".
+    // Именно так и проявлялось: данные шли, пока не случилась Gen2-сборка,
+    // а дальше каждый рефреш — одна и та же ошибка до перезапуска.
+    private CoreWebView2Controller? _fetchController;
+
     // Один разделяемый webview не может обслуживать две навигации одновременно
     // — вторая Navigate() перезапишет страницу раньше, чем обработчик первой
     // успеет прочитать HttpStatusCode/тело. UsageStore и так не допускает
@@ -75,12 +84,12 @@ public sealed class ClaudeWebSession
 
     /// Порт <c>hasSessionCookie()</c> — sessionKey на домене claude.ai с
     /// непустым значением.
-    public async Task<bool> HasSessionCookieAsync()
-    {
-        var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
-        var cookies = await webView.CookieManager.GetCookiesAsync("https://claude.ai").ConfigureAwait(true);
-        return SessionCookie.IsPresent(cookies);
-    }
+    public Task<bool> HasSessionCookieAsync() =>
+        RunWithFetchWebViewAsync(async webView =>
+        {
+            var cookies = await webView.CookieManager.GetCookiesAsync("https://claude.ai").ConfigureAwait(true);
+            return SessionCookie.IsPresent(cookies);
+        });
 
     /// Порт <c>fetchUsage()</c>.
     public async Task<UsageSnapshot> FetchUsageAsync(CancellationToken ct)
@@ -183,13 +192,64 @@ public sealed class ClaudeWebSession
         await _fetchGate.WaitAsync(ct).ConfigureAwait(true);
         try
         {
-            var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
-            return await NavigateAndReadAsync(webView, url, ct).ConfigureAwait(true);
+            return await RunWithFetchWebViewAsync(
+                webView => NavigateAndReadAsync(webView, url, ct)).ConfigureAwait(true);
         }
         finally
         {
             _fetchGate.Release();
         }
+    }
+
+    /// Все обращения к разделяемому fetch-webview идут через эту обёртку:
+    /// если движок умер (процесс браузера завершился/упал — например, после
+    /// сна — или контроллер оказался закрыт), кэш сбрасывается и попытка
+    /// повторяется один раз на свежесозданном webview вместо того, чтобы
+    /// возвращать одну и ту же ошибку до перезапуска приложения.
+    private async Task<T> RunWithFetchWebViewAsync<T>(Func<CoreWebView2, Task<T>> action)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
+            try
+            {
+                return await action(webView).ConfigureAwait(true);
+            }
+            catch (Exception ex) when (attempt == 0 && IsWebViewDead(ex))
+            {
+                ResetFetchWebView();
+            }
+        }
+    }
+
+    /// Формы смерти WebView2, после которых кэшированный CoreWebView2
+    /// бесполезен: ObjectDisposedException — обёртка закрыта ("...cannot be
+    /// accessed after the WebView2 control is disposed"); COMException
+    /// 0x8007139F (ERROR_INVALID_STATE) и 0x80010108 (RPC_E_DISCONNECTED) —
+    /// процесс браузера завершился, нативный объект отвалился.
+    private static bool IsWebViewDead(Exception ex) => ex switch
+    {
+        ObjectDisposedException => true,
+        System.Runtime.InteropServices.COMException com =>
+            (uint)com.HResult is 0x8007139F or 0x80010108,
+        _ => false,
+    };
+
+    private void ResetFetchWebView()
+    {
+        _fetchWebViewTask = null;
+        try
+        {
+            _fetchController?.Close();
+        }
+        catch
+        {
+            // Контроллер и так мёртв — Close() поверх умершего процесса
+            // браузера может бросить, терять из-за этого пересоздание нельзя.
+        }
+        _fetchController = null;
+        _hiddenHost?.Close();
+        _hiddenHost = null;
     }
 
     private static async Task<string> NavigateAndReadAsync(CoreWebView2 webView, string url, CancellationToken ct)
@@ -247,7 +307,12 @@ public sealed class ClaudeWebSession
             }
             catch (Exception ex)
             {
-                tcs.TrySetException(new UsageException(UsageError.Network(ex.Message)));
+                // Смерть webview пробрасываем как есть — по ней
+                // RunWithFetchWebViewAsync пересоздаёт движок и повторяет
+                // запрос; завёрнутая в UsageException.Network она выглядела
+                // бы обычной сетевой ошибкой и уходила пользователю на дисплей
+                // ("cannot be accessed after the WebView2...") до перезапуска.
+                tcs.TrySetException(IsWebViewDead(ex) ? ex : new UsageException(UsageError.Network(ex.Message)));
             }
         }
 
@@ -304,8 +369,16 @@ public sealed class ClaudeWebSession
         return await CoreWebView2Environment.CreateAsync(userDataFolder: _profileFolder).ConfigureAwait(true);
     }
 
-    private Task<CoreWebView2> EnsureFetchWebViewAsync() =>
-        _fetchWebViewTask ??= CreateFetchWebViewAsync();
+    private Task<CoreWebView2> EnsureFetchWebViewAsync()
+    {
+        // Тот же сброс FAULTED/CANCELED-кеша, что и в EnsureEnvironmentAsync
+        // ниже: провал самого создания webview (а не его последующая смерть)
+        // не должен залипать до перезапуска приложения.
+        if (_fetchWebViewTask is { IsFaulted: true } or { IsCanceled: true })
+            _fetchWebViewTask = null;
+
+        return _fetchWebViewTask ??= CreateFetchWebViewAsync();
+    }
 
     private async Task<CoreWebView2> CreateFetchWebViewAsync()
     {
@@ -356,6 +429,29 @@ public sealed class ClaudeWebSession
 
         var controller = await environment.CreateCoreWebView2ControllerAsync(hwnd).ConfigureAwait(true);
         controller.IsVisible = false;
+        // В поле, не в локальную переменную — см. doc-comment у
+        // _fetchController: без сильной ссылки GC финализирует обёртку
+        // контроллера и тем самым закрывает CoreWebView2 под нами.
+        _fetchController = controller;
+
+        // Проактивный сброс при смерти процесса браузера (крэш рантайма,
+        // завершение после сна): следующий фетч сразу начнёт с создания
+        // нового движка, а не с гарантированно провальной попытки на мёртвом.
+        // Событие приходит на UI-поток (тот, где создан webview) — гонок с
+        // ResetFetchWebView из RunWithFetchWebViewAsync нет.
+        controller.CoreWebView2.ProcessFailed += (_, args) =>
+        {
+            // Сравнение с _fetchController отсекает запоздавшее событие от
+            // УЖЕ заменённого движка (ретрай успел пересоздать) — иначе оно
+            // снесло бы свежий контроллер и скрытый хост под ним.
+            if (!ReferenceEquals(_fetchController, controller)) return;
+            if (args.ProcessFailedKind is CoreWebView2ProcessFailedKind.BrowserProcessExited
+                or CoreWebView2ProcessFailedKind.RenderProcessExited
+                or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+            {
+                ResetFetchWebView();
+            }
+        };
         return controller.CoreWebView2;
     }
 }
