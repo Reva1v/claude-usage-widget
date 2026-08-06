@@ -195,6 +195,23 @@ internal static class Win32
         return buffer.ToString();
     }
 
+    /// DWMWA_CLOAKED — окно «закловлено»: DWM его не отрисовывает, хотя по
+    /// Win32 оно остаётся WS_VISIBLE и попадает в WindowFromPoint. Так живут
+    /// приостановленные UWP-приложения и, что важно для зонда таскбара,
+    /// окна exclusive-fullscreen игр после потери фокуса: Deadlock (SDL_app)
+    /// после сворачивания часами висит призраком ПОВЕРХ таскбара в
+    /// z-порядке, не отрисовываясь.
+    public const uint DwmwaCloaked = 14;
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out uint pvAttribute, int cbAttribute);
+
+    /// true, если DWM реально не рисует это окно. Ошибка запроса читается
+    /// как «не закловлено»: лучше лишний раз поверить, что окно настоящее,
+    /// чем проигнорировать реальную полноэкранную игру.
+    public static bool IsCloaked(nint hwnd) =>
+        DwmGetWindowAttribute(hwnd, DwmwaCloaked, out var cloaked, sizeof(uint)) == 0 && cloaked != 0;
+
     [DllImport("user32.dll")]
     public static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
 

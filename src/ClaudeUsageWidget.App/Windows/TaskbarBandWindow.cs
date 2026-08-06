@@ -809,6 +809,20 @@ public sealed class TaskbarBandWindow : Window
             var root = Win32.GetAncestor(hit, Win32.GaRoot);
             Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit={hit} root={root} cls={Win32.GetClassName(root)} tray={tray} own={ownHwnd}");
             if (root == tray || root == ownHwnd || root == nint.Zero) return false;
+
+            // Закловленное окно — призрак: DWM его не рисует, пользователь
+            // видит таскбар, но WindowFromPoint всё равно возвращает его.
+            // Живой пример: окно Deadlock (SDL_app) после выхода из
+            // exclusive-fullscreen часами висит закловленным ПОВЕРХ таскбара
+            // в z-порядке, и любая перетасовка фокуса (открыть Telegram)
+            // снова поднимает его над Shell_TrayWnd — без этой проверки
+            // лента пряталась бы при видимом глазу таскбаре. Призрак ничего
+            // не заслоняет — точка читается как «таскбар видим».
+            if (Win32.IsCloaked(root))
+            {
+                Diag($"probe f={fraction}: root {root} is DWM-cloaked ghost -> visible");
+                return false;
+            }
         }
 
         Diag("probe verdict: OBSCURED (all points foreign)");
