@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -79,19 +78,12 @@ public sealed class TaskbarBandWindow : Window
     /// видимым, так что реальный размер обычно подставляется ещё до показа).
     private const double DefaultHeightDip = 40;
 
-    /// Допуск для "окно покрывает монитор целиком" в
-    /// <see cref="IsForegroundFullscreen"/> — round 8: живая проверка
-    /// (task-17-report.md) показала, что на тестовой машине агента (два
-    /// одинаковых монитора 1920×1080 бок о бок) окно, покрывающее ЧУЖОЙ
-    /// монитор, геометрически не может удовлетворить сравнение с rcMonitor
-    /// СВОЕГО монитора — но у пользователя могли быть другой масштаб или
-    /// раскладка, так что полагаться на одну лишь геометрию было бы
-    /// хрупко (см. также инвариант (a) — явное сравнение ID монитора).
-    /// ≤4px — заметно туже, чем высота полосы таскбара (обычно ≥32px), так
-    /// что maximized-окно (останавливается на rcWork) НИКОГДА не может
-    /// пройти эту проверку случайно, а окно, реально покрывающее весь
-    /// монитор (включая то место, где сидит таскбар), — всегда проходит.
-    private const int FullscreenTolerancePx = 4;
+    /// Доли ширины таскбара, в которых зонд видимости
+    /// (<see cref="IsTaskbarObscured"/>) берёт пробы. Разнесены по полосе:
+    /// одна точка может быть законно накрыта (флайаут громкости над часами,
+    /// наша собственная лента слева или у трея) — все три разом накрывает
+    /// только окно, реально лежащее ПОВЕРХ всей полосы таскбара.
+    private static readonly double[] ProbeFractions = [0.35, 0.55, 0.8];
 
     private readonly TaskbarBandContent _content;
     private readonly DispatcherTimer _repositionTimer;
@@ -110,6 +102,12 @@ public sealed class TaskbarBandWindow : Window
     /// EVENT_OBJECT_LOCATIONCHANGE — перемещение/ресайз foreground-окна
     /// (ловит F11/безрамочный fullscreen без смены активного окна).
     private nint _locationHook;
+
+    /// EVENT_SYSTEM_MINIMIZESTART..MINIMIZEEND — сворачивание/разворачивание
+    /// окон: после «Свернуть» смена foreground приходит не всегда и не сразу,
+    /// а зонд должен пересчитаться немедленно (живой баг: мигание ленты на
+    /// кнопке «Свернуть»).
+    private nint _minimizeHook;
 
     /// Дребезг для EVENT_OBJECT_LOCATIONCHANGE — тот сыплется пачками во
     /// время обычного перетаскивания/анимации окна, а не только при входе/
@@ -145,7 +143,7 @@ public sealed class TaskbarBandWindow : Window
     private string _position = "tray";
 
     /// Лента спрятана из-за полноэкранного приложения поверх её монитора —
-    /// см. IsForegroundFullscreen()/RepositionCore(). Отдельно от обычной
+    /// см. IsTaskbarObscured()/RepositionCore(). Отдельно от обычной
     /// Visibility: не хотим, чтобы обычная логика показа/скрытия путала это
     /// состояние с "лента выключена пользователем" — здесь просто временная
     /// приостановка показа.
@@ -394,6 +392,9 @@ public sealed class TaskbarBandWindow : Window
         _locationHook = Win32.SetWinEventHook(
             Win32.EventObjectLocationChange, Win32.EventObjectLocationChange,
             nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
+        _minimizeHook = Win32.SetWinEventHook(
+            Win32.EventSystemMinimizeStart, Win32.EventSystemMinimizeEnd,
+            nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
     }
 
     /// <summary>Снимает оба хука (если стоят) и гасит оба вспомогательных
@@ -413,6 +414,11 @@ public sealed class TaskbarBandWindow : Window
         {
             Win32.UnhookWinEvent(_locationHook);
             _locationHook = nint.Zero;
+        }
+        if (_minimizeHook != nint.Zero)
+        {
+            Win32.UnhookWinEvent(_minimizeHook);
+            _minimizeHook = nint.Zero;
         }
         _locationDebounceTimer.Stop();
         _visibilityStabilityTimer.Stop();
@@ -479,7 +485,9 @@ public sealed class TaskbarBandWindow : Window
     /// колбэк должен вернуть управление ОС максимально быстро.</summary>
     private void OnWinEvent(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint idEventThread, uint idEventTime)
     {
-        if (eventType == Win32.EventSystemForeground)
+        if (eventType is Win32.EventSystemForeground
+            or Win32.EventSystemMinimizeStart
+            or Win32.EventSystemMinimizeEnd)
         {
             Dispatcher.BeginInvoke(Reposition);
             return;
@@ -552,21 +560,20 @@ public sealed class TaskbarBandWindow : Window
             return;
         }
 
-        // Всегда-поверх-оверлей над полноэкранной игрой — то, чего
-        // пользователи явно не хотят (играют в игры, а лента ловит
-        // курсор/перекрывает HUD своим Topmost-слоем). RepositionCore()
-        // вызывается не только по 5-секундному таймеру, но и мгновенно из
-        // HookFullscreenEvents()'s OnWinEvent (round 6: тик-based детект
-        // давал задержку до 5 с в обе стороны) — таймер остался как
-        // дешёвый бэкстоп на случай пропущенного события, а не основной
-        // механизм. Само применение видимости — не здесь, а в
-        // RequestFullscreenVisibility (round 7: 300мс гистерезис против
-        // мигания на мимолётной смене foreground-окна).
-        RequestFullscreenVisibility(IsForegroundFullscreen(ownHwnd));
-        if (_hiddenForFullscreen) return; // репозиционировать спрятанное (в т.ч. ещё не отпущенное гистерезисом обратно) окно незачем
-
         var tray = Win32.FindWindow(TrayClassName, null);
-        if (tray == nint.Zero) return; // таскбар временно недоступен (explorer между завершением и стартом) — оставляем прежнюю геометрию до следующего тика
+        if (tray == nint.Zero) return; // таскбар временно недоступен (explorer между завершением и стартом) — оставляем прежнюю геометрию и видимость до следующего тика
+
+        // Видимость ленты = фактическая видимость таскбара, и ничего больше.
+        // Три поколения эвристик «а не fullscreen ли foreground-окно» (rect
+        // vs rcMonitor, SW_SHOWMAXIMIZED, сравнение мониторов — round 6-8)
+        // раз за разом ловили ложные срабатывания на реальных приложениях
+        // (maximized JetBrains, Toggle Full Screen Mode, кнопка «Свернуть»).
+        // Зонд IsTaskbarObscured спрашивает у самой ОС, чьи окна реально
+        // лежат в точках полосы таскбара — определение видимости, а не её
+        // предсказание. Применение — через RequestFullscreenVisibility
+        // (round 7: 300мс гистерезис против мигания на мимолётных сменах).
+        RequestFullscreenVisibility(IsTaskbarObscured(ownHwnd, tray));
+        if (_hiddenForFullscreen) return; // репозиционировать спрятанное (в т.ч. ещё не отпущенное гистерезисом обратно) окно незачем
 
         // Дешёвая проверка "устарели ли мы" — вместо кэширования хэндла
         // таскбара как раньше, читаем ТЕКУЩЕГО владельца прямо из окна:
@@ -651,74 +658,49 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>
-    /// Занимает ли foreground-окно целиком монитор, на котором сидит наша
-    /// лента, — типичный признак полноэкранной игры (эксклюзивной или
-    /// безрамочной). Тот же приём, которым другие always-on-top оверлеи
-    /// (Discord-оверлей, Xbox Game Bar) избегают зависать поверх геймплея:
-    /// GetForegroundWindow + сравнение его прямоугольника с прямоугольником
-    /// монитора, без более тяжёлых способов (Desktop Window Manager
-    /// composition API, детект конкретных игровых движков и т.п.), которые
-    /// для 5-секундного тика избыточны.
+    /// Перекрыт ли таскбар чужим окном — ground truth вместо предсказаний:
+    /// зонд берёт три точки внутри полосы таскбара (см.
+    /// <see cref="ProbeFractions"/>) и спрашивает у ОС, чьё top-level окно
+    /// реально лежит в каждой (WindowFromPoint → GetAncestor(GA_ROOT)).
+    /// Правила:
+    /// - точка «за» таскбаром (корень — Shell_TrayWnd) или за нашей же
+    ///   лентой (она легитимно висит над полосой) → таскбар в этой точке
+    ///   видим;
+    /// - перекрытым таскбар считается, только когда ВСЕ точки накрыты
+    ///   чужими окнами: одиночную точку законно накрывает флайаут
+    ///   громкости/календаря над часами — прятать ленту из-за него нельзя,
+    ///   а настоящее полноэкранное приложение накрывает полосу целиком.
+    /// Этим определением автоматически решаются все случаи, на которых
+    /// ломались эвристики: maximized-окно (любого приложения) не трогает
+    /// полосу → лента видна; fullscreen на ДРУГОМ мониторе не трогает НАШ
+    /// таскбар → видна; «Свернуть»/Win+D → таскбар сверху → видна;
+    /// настоящий fullscreen на нашем мониторе накрывает полосу → прячемся.
+    /// WindowFromPoint пропускает прозрачные пиксели layered-окон насквозь,
+    /// так что прозрачные области нашей же ленты зонду не мешают.
     /// </summary>
-    private static bool IsForegroundFullscreen(nint ownHwnd)
+    private static bool IsTaskbarObscured(nint ownHwnd, nint tray)
     {
-        var fg = Win32.GetForegroundWindow();
-        if (fg == nint.Zero || fg == ownHwnd) return false;
+        if (!Win32.GetWindowRect(tray, out var trayRect)) return false;
 
-        // Program Manager / WorkerW — сам рабочий стол (иконки, обои), не
-        // приложение поверх него; становится foreground, когда пользователь
-        // свернул всё (Win+D) — прятать ленту в этом случае не нужно.
-        var className = Win32.GetClassName(fg);
-        if (className is "Progman" or "WorkerW") return false;
+        var width = trayRect.Right - trayRect.Left;
+        var midY = (trayRect.Top + trayRect.Bottom) / 2;
 
-        // Развёрнутое (maximized) окно — дополнительная защита, НЕ
-        // единственная (см. два инварианта ниже, которые делают ложное
-        // срабатывание невозможным независимо от неё): round 7 добавил эту
-        // проверку после ложного срабатывания на JetBrains IDE, но round 8
-        // (живая проверка у пользователя, два монитора) показала, что она
-        // одна не помогла — реальный кейс был не "maximized", а IntelliJ
-        // Toggle Full Screen Mode (AWT-фуллскрин на ДРУГОМ мониторе,
-        // showCmd остаётся SW_SHOWNORMAL, никакой maximized-флаг тут в
-        // принципе не участвует). Оставлено как дешёвый быстрый путь для
-        // настоящего maximized-случая — не единственная линия обороны.
-        var placement = new Win32.WINDOWPLACEMENT { Length = (uint)Marshal.SizeOf<Win32.WINDOWPLACEMENT>() };
-        if (Win32.GetWindowPlacement(fg, ref placement) && placement.ShowCmd == Win32.SwShowMaximized)
-            return false;
+        foreach (var fraction in ProbeFractions)
+        {
+            var point = new Win32.POINT
+            {
+                X = trayRect.Left + (int)(width * fraction),
+                Y = midY,
+            };
 
-        // Инвариант (a) — ДРУГОЙ монитор никогда не fullscreen для нашей
-        // ленты, точка. round 8: у пользователя два монитора, лента сидит
-        // на таскбаре ОДНОГО из них; IDE в полноэкранном режиме на ДРУГОМ
-        // (например, IntelliJ Toggle Full Screen Mode — не maximized,
-        // AWT-фуллскрин конкретно на том мониторе) не должна прятать ленту.
-        // Сравнение прямоугольников ниже (инвариант (b)) в большинстве
-        // раскладок и само по себе не совпало бы для чужого монитора, но
-        // полагаться на арифметическое совпадение прямоугольников —
-        // ненадёжно (разные размеры/расположение мониторов, DPI на разных
-        // экранах, будущие 3+ мониторные раскладки): монитор-ID сравнение
-        // здесь — явный, не зависящий от конкретной геометрии guard,
-        // проверяемый в первую очередь, а не побочный эффект чего-то ещё.
-        var fgMonitor = Win32.MonitorFromWindow(fg, Win32.MonitorDefaultToNearest);
-        var bandMonitor = Win32.MonitorFromWindow(ownHwnd, Win32.MonitorDefaultToNearest);
-        if (bandMonitor == nint.Zero) return false;
-        if (fgMonitor != bandMonitor) return false;
+            var hit = Win32.WindowFromPoint(point);
+            if (hit == nint.Zero) return false; // пустота — уж точно не окно поверх таскбара
 
-        if (!Win32.GetWindowRect(fg, out var winRect)) return false;
+            var root = Win32.GetAncestor(hit, Win32.GaRoot);
+            if (root == tray || root == ownHwnd || root == nint.Zero) return false;
+        }
 
-        var info = new Win32.MONITORINFO { cbSize = (uint)Marshal.SizeOf<Win32.MONITORINFO>() };
-        if (!Win32.GetMonitorInfo(bandMonitor, ref info)) return false;
-
-        // Инвариант (b) — "занимает монитор целиком" значит буквально ВЕСЬ
-        // физический монитор (rcMonitor), включая полосу, где сидит
-        // таскбар, — а не рабочую область (rcWork, та таскбар уже
-        // исключает). Maximized-окно (даже то, что не поймал short-circuit
-        // выше) по определению вписывается в rcWork и никогда не пройдёт
-        // это сравнение с допуском в единицы пикселей — единицы, а не
-        // десятки: высота таскбара обычно ≥32px, так что FullscreenTolerancePx
-        // (4px) не может случайно "проглотить" её.
-        return winRect.Left <= info.rcMonitor.Left + FullscreenTolerancePx
-            && winRect.Top <= info.rcMonitor.Top + FullscreenTolerancePx
-            && winRect.Right >= info.rcMonitor.Right - FullscreenTolerancePx
-            && winRect.Bottom >= info.rcMonitor.Bottom - FullscreenTolerancePx;
+        return true;
     }
 
     private static int ToPhysical(double dip, uint dpi) => (int)Math.Round(dip * dpi / 96.0);

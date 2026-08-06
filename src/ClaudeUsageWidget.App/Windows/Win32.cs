@@ -56,6 +56,19 @@ internal static class Win32
     /// foreground-окна (F11, безрамочный режим той же игры).
     public const uint EventObjectLocationChange = 0x800B;
 
+    /// EVENT_SYSTEM_MINIMIZESTART/END — окно свернулось/развернулось из
+    /// свёрнутого состояния. Смежная пара значений — один SetWinEventHook
+    /// с диапазоном покрывает обе. Нужны зонду видимости таскбара: после
+    /// «Свернуть» foreground меняется не всегда мгновенно, а вот сам факт
+    /// сворачивания приходит сразу.
+    public const uint EventSystemMinimizeStart = 0x0016;
+    public const uint EventSystemMinimizeEnd = 0x0017;
+
+    /// GA_ROOT — верхнее (top-level) окно в цепочке родителей: WindowFromPoint
+    /// возвращает самый глубокий дочерний элемент под точкой, а для ответа
+    /// «чьё это окно» нужен его корень.
+    public const uint GaRoot = 2;
+
     /// OBJID_WINDOW/CHILDID_SELF — фильтр "событие про само окно целиком",
     /// а не про один из его внутренних UI-элементов (кнопку, скроллбар и
     /// т.п.) — тех IDOBJECT/IDCHILD событий system-wide хук получает
@@ -74,6 +87,12 @@ internal static class Win32
 
     [DllImport("user32.dll")]
     public static extern bool UnhookWinEvent(nint hWinEventHook);
+
+    [DllImport("user32.dll")]
+    public static extern nint WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetAncestor(nint hwnd, uint gaFlags);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
