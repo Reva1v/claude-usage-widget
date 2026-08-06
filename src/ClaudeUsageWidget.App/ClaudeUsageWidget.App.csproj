@@ -20,7 +20,7 @@
     <!-- Иконка exe (Пуск/проводник/панель задач). Трей-иконку она не задаёт —
          та рисуется динамически с живой цифрой (TrayIconRenderer). -->
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <AssemblyTitle>Claude Usage Widget</AssemblyTitle>
     <!-- WFAC010 предлагает ApplicationHighDpiMode/SetHighDpiMode — API из мира
          WinForms-приложений. Здесь процесс хозяйский WPF, WinForms используется
