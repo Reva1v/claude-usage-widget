@@ -140,14 +140,16 @@ public sealed class TaskbarBandWindow : Window
     /// доживать до реального Hide() вовсе; настоящий fullscreen (игра)
     /// держится минутами, и лишняя секунда ленты поверх него — приемлемая
     /// цена за полное отсутствие миганий.
-    private const int ShowStabilityMs = 300;
+    private const int ShowStabilityMs = 150;
     private const int HideStabilityMs = 1200;
 
     /// Скрытие, когда таскбар накрыт АКТИВНЫМ окном (см. TaskbarCover
     /// .ObscuredByForeground): вердикт достоверен — пользователь сам вошёл
     /// в fullscreen, — карантин нужен лишь символический, против дребезга
-    /// в кадрах самого перехода.
-    private const int FastHideStabilityMs = 350;
+    /// в кадрах самого перехода. 150, а не 0: мгновенное применение по
+    /// первому же вердикту ловило бы промежуточные кадры анимации
+    /// разворота.
+    private const int FastHideStabilityMs = 150;
 
     /// Состояние, которое сейчас ожидает применения через
     /// _visibilityStabilityTimer — null, если ничего не отложено (последнее
@@ -229,7 +231,12 @@ public sealed class TaskbarBandWindow : Window
         _repositionTimer.Tick += (_, _) => Reposition();
 
         _winEventProc = OnWinEvent;
-        _locationDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        // 100мс: дребезг LOCATIONCHANGE надо гасить (события сыплются на
+        // каждый кадр перетаскивания окна), но вход/выход из fullscreen
+        // одного и того же окна (плеер YouTube) детектится ИМЕННО этим
+        // путём — каждые лишние 100мс здесь напрямую удлиняют видимую
+        // задержку исчезновения/появления ленты.
+        _locationDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _locationDebounceTimer.Tick += (_, _) =>
         {
             _locationDebounceTimer.Stop();
@@ -563,8 +570,12 @@ public sealed class TaskbarBandWindow : Window
             // достаточно дешёвой проверки захоронения (десяток GetWindow
             // на вызов). Именно этот путь убирает последний видимый кадр
             // ленты под таскбаром: foreground-событие приходит уже после
-            // перетасовки, а это — в её момент.
-            Dispatcher.BeginInvoke(CheckBuriedNow);
+            // перетасовки, а это — в её момент. СИНХРОННО, когда мы и так
+            // на UI-потоке (штатный случай для OUTOFCONTEXT-хука): очередь
+            // BeginInvoke добавляла лаг в кадр-другой, и ровно этот кадр
+            // пользователь ещё успевал заметить.
+            if (Dispatcher.CheckAccess()) CheckBuriedNow();
+            else Dispatcher.BeginInvoke(CheckBuriedNow);
             return;
         }
 
