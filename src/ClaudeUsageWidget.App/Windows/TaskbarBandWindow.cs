@@ -646,6 +646,55 @@ public sealed class TaskbarBandWindow : Window
         _lastY = trayRect.Top;
         _lastWidthPx = bandWidthPx;
         _lastHeightPx = bandHeightPx;
+
+        EnsureNotBuried(ownHwnd, tray);
+    }
+
+    /// <summary>
+    /// Возвращает ленту наверх, если её похоронили по Z-порядку — и ТОЛЬКО
+    /// тогда (не периодически: см. doc-comment класса про NetSpeedTray #200).
+    ///
+    /// Живой сценарий (2026-08-06): пользователь разворачивает приложение
+    /// (maximized или AWT-фуллскрин с видимым таскбаром) — шелл гасит
+    /// topmost-слой на время «rude»-состояния, затем поднимает таскбар
+    /// SetWindowPos'ом c SWP_NOOWNERZORDER, то есть БЕЗ owned-окон. Инвариант
+    /// «owned всегда выше владельца» действует при обычном поднятии владельца,
+    /// но не при NOOWNERZORDER — лента остаётся под окном приложения при
+    /// видимом таскбаре. Симптом-подтверждение: клик по таскбару (обычное
+    /// поднятие, уже С owned-окнами) возвращал ленту на глазах пользователя.
+    ///
+    /// Детект без хит-теста: WindowFromPoint не годится — лента прозрачная,
+    /// и в прозрачном пикселе он честно вернёт то, что под ней, даже когда
+    /// лента сверху. Вместо этого идём по цепочке GW_HWNDPREV (окна СТРОГО
+    /// выше нас): любое видимое чужое окно, пересекающее наш прямоугольник,
+    /// значит «нас перекрыли». Исключения: контекстные меню (#32768) и
+    /// всплывашки — легитимные временные окна, re-assert поверх них — это
+    /// ровно баг #200, их пропускаем (они закроются сами).
+    /// </summary>
+    private void EnsureNotBuried(nint ownHwnd, nint tray)
+    {
+        if (!Win32.GetWindowRect(ownHwnd, out var own)) return;
+
+        var above = Win32.GetWindow(ownHwnd, Win32.GwHwndPrev);
+        // Ограничитель обхода: topmost-слой обычно из единиц окон; 64 — с
+        // запасом, и гарантия отсутствия вечного цикла на битой цепочке.
+        for (var i = 0; above != nint.Zero && i < 64; i++, above = Win32.GetWindow(above, Win32.GwHwndPrev))
+        {
+            if (above == tray || !Win32.IsWindowVisible(above)) continue;
+            if (!Win32.GetWindowRect(above, out var r)) continue;
+
+            var overlaps = r.Left < own.Right && r.Right > own.Left
+                && r.Top < own.Bottom && r.Bottom > own.Top;
+            if (!overlaps) continue;
+
+            var cls = Win32.GetClassName(above);
+            if (cls is "#32768" or "Xaml_WindowedPopupClass") continue; // меню/флайауты — временные, не наш случай
+
+            Diag($"buried under {above} cls={cls} — re-asserting topmost");
+            Win32.SetWindowPos(ownHwnd, Win32.HwndTopMost, 0, 0, 0, 0,
+                Win32.SwpNoMove | Win32.SwpNoSize | Win32.SwpNoActivate);
+            return;
+        }
     }
 
     private static int ComputeTrayPositionX(Win32.RECT trayRect, nint notify, int bandWidthPx, int gapPx)
