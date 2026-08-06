@@ -103,6 +103,30 @@ public sealed class TaskbarBandWindow : Window
     /// спустя ~200 мс тишины после последнего такого события.
     private readonly DispatcherTimer _locationDebounceTimer;
 
+    /// Гистерезис применения самой видимости — отдельно от дребезга
+    /// LOCATIONCHANGE выше (тот решает КОГДА перепроверить, этот — стоит ли
+    /// уже ДЕЙСТВОВАТЬ на результат проверки). Живая проверка (round 7)
+    /// показала, что мимолётная смена foreground-окна (случайный alt-tab,
+    /// всплывающее окно поверх игры на долю секунды) иначе заставляла
+    /// ленту мигать туда-обратно — цель "мигать по минимуму" требует не
+    /// применять Hide()/Show() немедленно на каждое сырое определение, а
+    /// только когда желаемое состояние продержалось стабильным ~300 мс. См.
+    /// RequestFullscreenVisibility.
+    private readonly DispatcherTimer _visibilityStabilityTimer;
+
+    /// Состояние, которое сейчас ожидает применения через
+    /// _visibilityStabilityTimer — null, если ничего не отложено (последнее
+    /// запрошенное состояние уже совпадает с применённым).
+    private bool? _pendingHiddenForFullscreen;
+
+    /// Ещё ни разу не определяли fullscreen-состояние для этого Dock() —
+    /// см. why-comment в RequestFullscreenVisibility: самое первое
+    /// определение применяется немедленно, в обход 300мс гистерезиса (тот
+    /// защищает УЖЕ показанную ленту от мигания, а не откладывает
+    /// единственную, ещё никому не видимую установку начального
+    /// состояния).
+    private bool _fullscreenStateEstablished;
+
     /// "tray" (по умолчанию) или "left" — см. <see cref="SetPosition"/>.
     private string _position = "tray";
 
@@ -176,6 +200,30 @@ public sealed class TaskbarBandWindow : Window
             _locationDebounceTimer.Stop();
             Reposition();
         };
+
+        _visibilityStabilityTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _visibilityStabilityTimer.Tick += (_, _) =>
+        {
+            _visibilityStabilityTimer.Stop();
+            if (_pendingHiddenForFullscreen is not { } hidden) return;
+            _pendingHiddenForFullscreen = null;
+            try
+            {
+                ApplyFullscreenVisibility(hidden);
+            }
+            catch (InvalidOperationException)
+            {
+                // Тот же зомби-сценарий, что и в Reposition()/Detach() (см.
+                // их комментарии): в отличие от вызова из RepositionCore(),
+                // этот Tick не проходит через try/catch Reposition() — окно
+                // могло быть закрыто, пока переход ждал 300мс гистерезиса,
+                // и необработанный InvalidOperationException здесь уронил
+                // бы весь процесс.
+                _repositionTimer.Stop();
+                UnhookFullscreenEvents();
+                Lost?.Invoke();
+            }
+        };
     }
 
     /// <summary>
@@ -190,10 +238,18 @@ public sealed class TaskbarBandWindow : Window
     {
         new WindowInteropHelper(this).EnsureHandle();
         _hiddenForFullscreen = false;
+        _fullscreenStateEstablished = false;
 
         HookFullscreenEvents();
         Reposition();
-        Show();
+
+        // Условно, а не всегда: Reposition() выше уже могла синхронно
+        // спрятать окно (самое первое определение fullscreen-состояния
+        // применяется немедленно — см. RequestFullscreenVisibility), и
+        // безусловный Show() здесь до раунда 7 сводил на нет как раз этот
+        // случай — окно, только что спрятанное как fullscreen, тут же
+        // показывалось бы обратно.
+        if (!_hiddenForFullscreen) Show();
         _repositionTimer.Start();
     }
 
@@ -326,10 +382,12 @@ public sealed class TaskbarBandWindow : Window
             nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
     }
 
-    /// <summary>Снимает оба хука (если стоят) и гасит дребезг-таймер —
-    /// вызывается из Detach() и из всех мест, где экземпляр объявляется
-    /// мёртвым (см. Lost), чтобы не оставлять хук, доставляющий события
-    /// делегату, который больше никому не нужен.</summary>
+    /// <summary>Снимает оба хука (если стоят) и гасит оба вспомогательных
+    /// таймера (дребезг LOCATIONCHANGE и гистерезис видимости) — вызывается
+    /// из Detach() и из всех мест, где экземпляр объявляется мёртвым (см.
+    /// Lost), чтобы не оставлять хук, доставляющий события делегату,
+    /// который больше никому не нужен, и не применить отложенную видимость
+    /// на уже неактуальном экземпляре.</summary>
     private void UnhookFullscreenEvents()
     {
         if (_foregroundHook != nint.Zero)
@@ -343,6 +401,60 @@ public sealed class TaskbarBandWindow : Window
             _locationHook = nint.Zero;
         }
         _locationDebounceTimer.Stop();
+        _visibilityStabilityTimer.Stop();
+        _pendingHiddenForFullscreen = null;
+    }
+
+    /// <summary>Запрашивает желаемую видимость по свежему fullscreen-детекту
+    /// — не применяет её напрямую (кроме самого первого раза, см. ниже):
+    /// - если <paramref name="hidden"/> уже совпадает с применённым
+    ///   состоянием (<see cref="_hiddenForFullscreen"/>), отменяет любой
+    ///   незавершённый переход и ничего не делает — "immediate application
+    ///   is fine when desired == current".
+    /// - если это НОВЫЙ переход (не тот, что уже ожидает применения),
+    ///   (пере)запускает 300мс таймер стабильности — реальный Hide()/Show()
+    ///   произойдёт только если это желаемое состояние продержится все
+    ///   300 мс без изменений. Мимолётная смена foreground-окна (случайный
+    ///   alt-tab, всплывающее окно поверх игры на долю секунды) поэтому
+    ///   гасится здесь и никогда не доходит до реального мигания ленты.
+    /// - самое первое определение состояния для этого Dock()
+    ///   (<see cref="_fullscreenStateEstablished"/> ещё false) применяется
+    ///   немедленно, в обход гистерезиса: тот защищает уже показанную ленту
+    ///   от мигания между двумя состояниями, а не единственную, ещё никому
+    ///   не видимую установку начального состояния.
+    /// </summary>
+    private void RequestFullscreenVisibility(bool hidden)
+    {
+        if (!_fullscreenStateEstablished)
+        {
+            _fullscreenStateEstablished = true;
+            ApplyFullscreenVisibility(hidden);
+            return;
+        }
+
+        if (hidden == _hiddenForFullscreen)
+        {
+            _pendingHiddenForFullscreen = null;
+            _visibilityStabilityTimer.Stop();
+            return;
+        }
+
+        if (_pendingHiddenForFullscreen == hidden) return; // уже ждём именно этого перехода
+
+        _pendingHiddenForFullscreen = hidden;
+        _visibilityStabilityTimer.Stop();
+        _visibilityStabilityTimer.Start();
+    }
+
+    /// <summary>Собственно Hide()/Show() — единственное место, которое их
+    /// вызывает по fullscreen-причине (см. вызовы из
+    /// RequestFullscreenVisibility и из таймера гистерезиса в
+    /// конструкторе).</summary>
+    private void ApplyFullscreenVisibility(bool hidden)
+    {
+        if (hidden == _hiddenForFullscreen) return;
+        _hiddenForFullscreen = hidden;
+        if (hidden) Hide(); else Show();
     }
 
     /// <summary>Колбэк системного WinEvent-хука — вызывается нативным кодом
@@ -426,29 +538,18 @@ public sealed class TaskbarBandWindow : Window
             return;
         }
 
-        if (IsForegroundFullscreen(ownHwnd))
-        {
-            // Всегда-поверх-оверлей над полноэкранной игрой — то, чего
-            // пользователи явно не хотят (играют в игры, а лента ловит
-            // курсор/перекрывает HUD своим Topmost-слоем). RepositionCore()
-            // вызывается не только по 5-секундному таймеру, но и мгновенно
-            // из HookFullscreenEvents()'s OnWinEvent (round 6: тик-based
-            // детект давал задержку до 5 с в обе стороны, живая проверка
-            // это заметила) — таймер остался как дешёвый бэкстоп на случай
-            // пропущенного события, а не основной механизм.
-            if (!_hiddenForFullscreen)
-            {
-                _hiddenForFullscreen = true;
-                Hide();
-            }
-            return; // репозиционировать спрятанное окно незачем — доделаем на первом тике после выхода из fullscreen
-        }
-
-        if (_hiddenForFullscreen)
-        {
-            _hiddenForFullscreen = false;
-            Show();
-        }
+        // Всегда-поверх-оверлей над полноэкранной игрой — то, чего
+        // пользователи явно не хотят (играют в игры, а лента ловит
+        // курсор/перекрывает HUD своим Topmost-слоем). RepositionCore()
+        // вызывается не только по 5-секундному таймеру, но и мгновенно из
+        // HookFullscreenEvents()'s OnWinEvent (round 6: тик-based детект
+        // давал задержку до 5 с в обе стороны) — таймер остался как
+        // дешёвый бэкстоп на случай пропущенного события, а не основной
+        // механизм. Само применение видимости — не здесь, а в
+        // RequestFullscreenVisibility (round 7: 300мс гистерезис против
+        // мигания на мимолётной смене foreground-окна).
+        RequestFullscreenVisibility(IsForegroundFullscreen(ownHwnd));
+        if (_hiddenForFullscreen) return; // репозиционировать спрятанное (в т.ч. ещё не отпущенное гистерезисом обратно) окно незачем
 
         var tray = Win32.FindWindow(TrayClassName, null);
         if (tray == nint.Zero) return; // таскбар временно недоступен (explorer между завершением и стартом) — оставляем прежнюю геометрию до следующего тика
@@ -555,6 +656,24 @@ public sealed class TaskbarBandWindow : Window
         // свернул всё (Win+D) — прятать ленту в этом случае не нужно.
         var className = Win32.GetClassName(fg);
         if (className is "Progman" or "WorkerW") return false;
+
+        // Развёрнутое (maximized) окно — НЕ fullscreen по определению:
+        // maximized-окно вписывается в рабочую область (rcWork), которая
+        // уже исключает таскбар, так что оно физически не может его
+        // перекрыть. Проверяем это ПЕРВЫМ, до какого-либо сравнения
+        // прямоугольников: живая проверка (task-17-report.md, round 7)
+        // поймала ложное срабатывание на развёрнутом окне IntelliJ IDEA —
+        // у JetBrains-приложений кастомный chrome (собственная рамка/тень
+        // вместо системной), и GetWindowRect для такого maximized-окна
+        // возвращает прямоугольник, почти совпадающий со ВСЕМ монитором
+        // (не с rcWork) — старая проверка ("прямоугольник ⊇ монитор ± 1px")
+        // ошибочно принимала это за полноэкранную игру и прятала ленту,
+        // хотя таскбар в реальности оставался на экране. Настоящий
+        // безрамочный fullscreen (игры) никогда не репортит себя как
+        // SW_SHOWMAXIMIZED — детект по-прежнему работает для него.
+        var placement = new Win32.WINDOWPLACEMENT { Length = (uint)Marshal.SizeOf<Win32.WINDOWPLACEMENT>() };
+        if (Win32.GetWindowPlacement(fg, ref placement) && placement.ShowCmd == Win32.SwShowMaximized)
+            return false;
 
         if (!Win32.GetWindowRect(fg, out var winRect)) return false;
 

@@ -93,6 +93,31 @@ internal static class Win32
         public uint dwFlags;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT
+    {
+        public uint Length;
+        public uint Flags;
+        public uint ShowCmd;
+        public POINT MinPosition;
+        public POINT MaxPosition;
+        public RECT NormalPosition;
+    }
+
+    /// SW_SHOWMAXIMIZED — значение WINDOWPLACEMENT.ShowCmd для развёрнутого
+    /// (maximized) окна.
+    public const uint SwShowMaximized = 3;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowPlacement(nint hWnd, ref WINDOWPLACEMENT lpwndpl);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern nint FindWindow(string? lpClassName, string? lpWindowName);
 
