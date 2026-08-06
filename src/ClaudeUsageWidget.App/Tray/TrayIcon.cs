@@ -222,7 +222,15 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add($"Claude Usage Widget v{CoreInfo.Version} — GitHub", null, (_, _) => OpenUrl(RepoUrl));
         menu.Items.Add("Report an Issue", null, (_, _) => OpenUrl(IssuesUrl));
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Refresh now", null, (_, _) => RefreshRequested?.Invoke());
+        // Refresh now — исключение из «меню не закрывается по клику» ниже:
+        // это действие, а не переключатель, держать меню открытым после него
+        // незачем. Явный Close() приходит с причиной CloseCalled, которую
+        // CancelCloseOnItemClick пропускает.
+        menu.Items.Add("Refresh now", null, (_, _) =>
+        {
+            RefreshRequested?.Invoke();
+            menu.Close();
+        });
         menu.Items.Add("Sign in to Claude.ai…", null, (_, _) => SignInRequested?.Invoke());
         menu.Items.Add(new ToolStripSeparator());
 
