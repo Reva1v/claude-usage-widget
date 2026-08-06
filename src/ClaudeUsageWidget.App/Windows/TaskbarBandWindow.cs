@@ -79,6 +79,20 @@ public sealed class TaskbarBandWindow : Window
     /// видимым, так что реальный размер обычно подставляется ещё до показа).
     private const double DefaultHeightDip = 40;
 
+    /// Допуск для "окно покрывает монитор целиком" в
+    /// <see cref="IsForegroundFullscreen"/> — round 8: живая проверка
+    /// (task-17-report.md) показала, что на тестовой машине агента (два
+    /// одинаковых монитора 1920×1080 бок о бок) окно, покрывающее ЧУЖОЙ
+    /// монитор, геометрически не может удовлетворить сравнение с rcMonitor
+    /// СВОЕГО монитора — но у пользователя могли быть другой масштаб или
+    /// раскладка, так что полагаться на одну лишь геометрию было бы
+    /// хрупко (см. также инвариант (a) — явное сравнение ID монитора).
+    /// ≤4px — заметно туже, чем высота полосы таскбара (обычно ≥32px), так
+    /// что maximized-окно (останавливается на rcWork) НИКОГДА не может
+    /// пройти эту проверку случайно, а окно, реально покрывающее весь
+    /// монитор (включая то место, где сидит таскбар), — всегда проходит.
+    private const int FullscreenTolerancePx = 4;
+
     private readonly TaskbarBandContent _content;
     private readonly DispatcherTimer _repositionTimer;
 
@@ -657,46 +671,54 @@ public sealed class TaskbarBandWindow : Window
         var className = Win32.GetClassName(fg);
         if (className is "Progman" or "WorkerW") return false;
 
-        // Развёрнутое (maximized) окно — НЕ fullscreen по определению:
-        // maximized-окно вписывается в рабочую область (rcWork), которая
-        // уже исключает таскбар, так что оно физически не может его
-        // перекрыть. Проверяем это ПЕРВЫМ, до какого-либо сравнения
-        // прямоугольников: живая проверка (task-17-report.md, round 7)
-        // поймала ложное срабатывание на развёрнутом окне IntelliJ IDEA —
-        // у JetBrains-приложений кастомный chrome (собственная рамка/тень
-        // вместо системной), и GetWindowRect для такого maximized-окна
-        // возвращает прямоугольник, почти совпадающий со ВСЕМ монитором
-        // (не с rcWork) — старая проверка ("прямоугольник ⊇ монитор ± 1px")
-        // ошибочно принимала это за полноэкранную игру и прятала ленту,
-        // хотя таскбар в реальности оставался на экране. Настоящий
-        // безрамочный fullscreen (игры) никогда не репортит себя как
-        // SW_SHOWMAXIMIZED — детект по-прежнему работает для него.
+        // Развёрнутое (maximized) окно — дополнительная защита, НЕ
+        // единственная (см. два инварианта ниже, которые делают ложное
+        // срабатывание невозможным независимо от неё): round 7 добавил эту
+        // проверку после ложного срабатывания на JetBrains IDE, но round 8
+        // (живая проверка у пользователя, два монитора) показала, что она
+        // одна не помогла — реальный кейс был не "maximized", а IntelliJ
+        // Toggle Full Screen Mode (AWT-фуллскрин на ДРУГОМ мониторе,
+        // showCmd остаётся SW_SHOWNORMAL, никакой maximized-флаг тут в
+        // принципе не участвует). Оставлено как дешёвый быстрый путь для
+        // настоящего maximized-случая — не единственная линия обороны.
         var placement = new Win32.WINDOWPLACEMENT { Length = (uint)Marshal.SizeOf<Win32.WINDOWPLACEMENT>() };
         if (Win32.GetWindowPlacement(fg, ref placement) && placement.ShowCmd == Win32.SwShowMaximized)
             return false;
 
+        // Инвариант (a) — ДРУГОЙ монитор никогда не fullscreen для нашей
+        // ленты, точка. round 8: у пользователя два монитора, лента сидит
+        // на таскбаре ОДНОГО из них; IDE в полноэкранном режиме на ДРУГОМ
+        // (например, IntelliJ Toggle Full Screen Mode — не maximized,
+        // AWT-фуллскрин конкретно на том мониторе) не должна прятать ленту.
+        // Сравнение прямоугольников ниже (инвариант (b)) в большинстве
+        // раскладок и само по себе не совпало бы для чужого монитора, но
+        // полагаться на арифметическое совпадение прямоугольников —
+        // ненадёжно (разные размеры/расположение мониторов, DPI на разных
+        // экранах, будущие 3+ мониторные раскладки): монитор-ID сравнение
+        // здесь — явный, не зависящий от конкретной геометрии guard,
+        // проверяемый в первую очередь, а не побочный эффект чего-то ещё.
+        var fgMonitor = Win32.MonitorFromWindow(fg, Win32.MonitorDefaultToNearest);
+        var bandMonitor = Win32.MonitorFromWindow(ownHwnd, Win32.MonitorDefaultToNearest);
+        if (bandMonitor == nint.Zero) return false;
+        if (fgMonitor != bandMonitor) return false;
+
         if (!Win32.GetWindowRect(fg, out var winRect)) return false;
 
-        // Монитор ЛЕНТЫ, а не монитор foreground-окна: на мультимониторной
-        // конфигурации игра в фуллскрине на другом мониторе не должна
-        // прятать ленту на этом. MONITOR_DEFAULTTONEAREST гарантирует
-        // ненулевой результат даже если наше окно сейчас нигде не
-        // отображается (например, пока мы сами спрятаны).
-        var monitor = Win32.MonitorFromWindow(ownHwnd, Win32.MonitorDefaultToNearest);
-        if (monitor == nint.Zero) return false;
-
         var info = new Win32.MONITORINFO { cbSize = (uint)Marshal.SizeOf<Win32.MONITORINFO>() };
-        if (!Win32.GetMonitorInfo(monitor, ref info)) return false;
+        if (!Win32.GetMonitorInfo(bandMonitor, ref info)) return false;
 
-        // "Занимает целиком" — сравниваем с rcMonitor (весь физический
-        // монитор), а не с rcWork (тот уже исключает таскбар): нас как раз
-        // интересует случай, когда окно НАМЕРЕННО легло поверх таскбара —
-        // это и есть полноэкранный режим. Допуск в 1 px — некоторые игры
-        // из-за округления DPI дают монитору на пиксель больше/меньше.
-        return winRect.Left <= info.rcMonitor.Left + 1
-            && winRect.Top <= info.rcMonitor.Top + 1
-            && winRect.Right >= info.rcMonitor.Right - 1
-            && winRect.Bottom >= info.rcMonitor.Bottom - 1;
+        // Инвариант (b) — "занимает монитор целиком" значит буквально ВЕСЬ
+        // физический монитор (rcMonitor), включая полосу, где сидит
+        // таскбар, — а не рабочую область (rcWork, та таскбар уже
+        // исключает). Maximized-окно (даже то, что не поймал short-circuit
+        // выше) по определению вписывается в rcWork и никогда не пройдёт
+        // это сравнение с допуском в единицы пикселей — единицы, а не
+        // десятки: высота таскбара обычно ≥32px, так что FullscreenTolerancePx
+        // (4px) не может случайно "проглотить" её.
+        return winRect.Left <= info.rcMonitor.Left + FullscreenTolerancePx
+            && winRect.Top <= info.rcMonitor.Top + FullscreenTolerancePx
+            && winRect.Right >= info.rcMonitor.Right - FullscreenTolerancePx
+            && winRect.Bottom >= info.rcMonitor.Bottom - FullscreenTolerancePx;
     }
 
     private static int ToPhysical(double dip, uint dpi) => (int)Math.Round(dip * dpi / 96.0);
