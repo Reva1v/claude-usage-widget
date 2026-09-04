@@ -2,8 +2,8 @@ using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
-// UseWindowsForms делает System.Drawing глобально видимым — Point/Brush
-// существуют и там под тем же именем.
+// UseWindowsForms makes System.Drawing globally visible — Point/Brush
+// also exist there under the same name.
 using Point = System.Windows.Point;
 using Brush = System.Windows.Media.Brush;
 using FlowDirection = System.Windows.FlowDirection;
@@ -11,10 +11,10 @@ using FlowDirection = System.Windows.FlowDirection;
 namespace ClaudeUsageWidget.App.Views;
 
 /// <summary>
-/// Общая для <see cref="DialControl"/> и <see cref="StatusDialControl"/>
-/// разметка стопки центрированных строк (заголовок/значение/остаток).
-/// Вынесено отдельно, чтобы оба циферблата не дублировали одну и ту же
-/// возню с <see cref="FormattedText"/>.
+/// Shared between <see cref="DialControl"/> and <see cref="StatusDialControl"/>
+/// layout of a stack of centered lines (title/value/remaining).
+/// Factored out separately so both dials don't duplicate the same
+/// fiddling with <see cref="FormattedText"/>.
 /// </summary>
 internal static class DialText
 {
@@ -30,9 +30,9 @@ internal static class DialText
             brush,
             pixelsPerDip);
 
-    /// Сжимает шрифт, пока строка не влезет в <paramref name="maxWidth"/>, но
-    /// не более чем на <paramref name="minScale"/> — порт
-    /// .minimumScaleFactor(0.6) из StatusDialView.swift:44.
+    /// Shrinks the font until the line fits into <paramref name="maxWidth"/>, but
+    /// by no more than <paramref name="minScale"/> — port of
+    /// .minimumScaleFactor(0.6) from StatusDialView.swift:44.
     public static FormattedText FormatFitted(
         string text, double fontSize, FontWeight weight, Brush brush, double maxWidth, double minScale, double pixelsPerDip)
     {
@@ -43,8 +43,8 @@ internal static class DialText
         return Format(text, fontSize * factor, weight, brush, pixelsPerDip);
     }
 
-    /// Рисует строки, уложенные в стопку по центру X с зазором <paramref name="spacing"/>
-    /// между ними, начиная с середины по вертикали (порт VStack(spacing:) в
+    /// Draws lines stacked centered on X with a gap of <paramref name="spacing"/>
+    /// between them, starting from the vertical middle (port of VStack(spacing:) in
     /// DialView.swift / StatusDialView.swift).
     public static void DrawStackCentered(DrawingContext dc, Point center, double spacing, params FormattedText[] lines)
     {

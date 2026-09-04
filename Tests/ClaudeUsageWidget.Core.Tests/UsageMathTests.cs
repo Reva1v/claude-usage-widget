@@ -26,7 +26,7 @@ public class UsageMathTests
         Assert.Equal(expected, UsageMath.Fraction(utilization), 10);
 
     [Theory]
-    [InlineData(0.575, "58%")]   // 0.575*100 = 57.4999... в double — эпсилон обязателен
+    [InlineData(0.575, "58%")]   // 0.575*100 = 57.4999... in double — the epsilon is mandatory
     [InlineData(0.574, "57%")]
     [InlineData(0, "0%")] [InlineData(1, "100%")]
     public void PercentTextRoundsAtBoundary(double fraction, string expected) =>

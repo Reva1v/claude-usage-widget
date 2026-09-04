@@ -27,9 +27,9 @@ public sealed class LoginWindow : Window
 {
     private readonly CoreWebView2Environment _environment;
 
-    // Профиль того аккаунта, в который входим. Обязан совпадать с профилем
-    // фетч-контроллера этой же сессии, иначе кука ляжет не туда, откуда её
-    // потом читают, — молча.
+    // The profile of the account being signed into. Must match the profile
+    // of this same session's fetch controller, or the cookie will silently
+    // land somewhere other than where it is later read from.
     private readonly string? _profileName;
 
     // Named in the title and the hint: with several accounts the sign-in page
@@ -42,13 +42,14 @@ public sealed class LoginWindow : Window
     private readonly DispatcherTimer _cookiePollTimer;
     private bool _signedIn;
 
-    // Loaded → InitializeAsync содержит два await (EnsureCoreWebView2Async,
-    // ClearBrowsingDataAsync); если пользователь закроет окно (крестиком) в
-    // этом промежутке, Closed успевает отработать раньше, чем метод дойдёт
-    // до второй половины — Stop() там застаёт ещё не запущенный таймер (не
-    // помогает), а без этого флага InitializeAsync после awaits как ни в чём
-    // не бывало стартовал бы таймер и Navigate() на уже мёртвом окне, и
-    // таймер тикал бы вечно. Проверяется после каждого await ниже.
+    // Loaded → InitializeAsync contains two awaits (EnsureCoreWebView2Async,
+    // ClearBrowsingDataAsync); if the user closes the window (via the X) in
+    // that gap, Closed manages to run before the method reaches the second
+    // half — Stop() there catches a timer that has not started yet (which
+    // doesn't help), and without this flag InitializeAsync, after the awaits,
+    // would go ahead as if nothing happened and start the timer and
+    // Navigate() on an already-dead window, with the timer ticking forever.
+    // Checked after every await below.
     private bool _closed;
 
     /// The sessionKey cookie appeared and the window has already closed
@@ -72,19 +73,21 @@ public sealed class LoginWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Content = BuildLayout();
 
-        // Опрос, а не событие: у CoreWebView2CookieManager, в отличие от
-        // WKHTTPCookieStoreObserver в оригинале, нет колбэка на изменение
-        // кук — task-15-brief.md, шаг 3 явно просит опрос по двум триггерам:
-        // после каждой навигации и раз в 2 с (на случай, если кука появится
-        // без новой навигации, например через редирект внутри SPA).
+        // Polling, not an event: unlike WKHTTPCookieStoreObserver in the
+        // original, CoreWebView2CookieManager has no callback for cookie
+        // changes — task-15-brief.md, step 3 explicitly asks for polling on
+        // two triggers: after every navigation and once every 2 s (in case
+        // the cookie appears without a new navigation, for example through a
+        // redirect inside the SPA).
         _cookiePollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _cookiePollTimer.Tick += async (_, _) =>
         {
-            // async void: необработанное исключение здесь ушло бы прямо в
-            // Dispatcher и уронило бы весь процесс. Тик мог уже стоять в
-            // очереди Dispatcher'а в момент, когда контроллер WebView2 был
-            // разрушен (например, окно закрылось) — CookieManager тогда
-            // бросает, и это не должно быть фатальным для трей-виджета.
+            // async void: an unhandled exception here would go straight into
+            // the Dispatcher and bring down the whole process. The tick could
+            // already be sitting in the Dispatcher's queue at the moment the
+            // WebView2 controller was destroyed (for example, the window
+            // closed) — CookieManager then throws, and that must not be fatal
+            // for the tray widget.
             try
             {
                 await CheckForSessionCookieAsync().ConfigureAwait(true);
@@ -95,15 +98,16 @@ public sealed class LoginWindow : Window
             }
         };
 
-        // EnsureCoreWebView2Async создаёт дочерний HWND контрола — тому
-        // нужен реальный родитель, поэтому инициализация ждёт Loaded, а не
-        // запускается прямо в конструкторе.
+        // EnsureCoreWebView2Async creates the control's child HWND — that
+        // needs a real parent, so initialization waits for Loaded instead of
+        // running straight in the constructor.
         Loaded += async (_, _) =>
         {
-            // Тот же риск, что и у Tick выше: EnsureCoreWebView2Async может
-            // бросить (например, процесс браузера WebView2 не поднялся, или
-            // папка профиля занята другим процессом) — async void на
-            // Dispatcher'е не должен ронять приложение из-за этого.
+            // The same risk as Tick above: EnsureCoreWebView2Async may throw
+            // (for example, the WebView2 browser process failed to start, or
+            // the profile folder is locked by another process) — async void
+            // on the Dispatcher must not bring down the application because
+            // of that.
             try
             {
                 await InitializeAsync().ConfigureAwait(true);
@@ -200,22 +204,22 @@ public sealed class LoginWindow : Window
         var core = _webView.CoreWebView2;
         WebViewEnvironment.VerifyProfile(core, _profileName, _accountLabel);
 
-        // Порт сброса browsing data перед логином — ClaudeWebSession.swift:200-209.
-        // Отклонённый Turnstile-челлендж переживает пересоздание окна и
-        // немедленно повторяет тот же луп, если не стирать состояние
-        // профиля перед КАЖДЫМ показом окна логина, а не только один раз за
-        // всё время жизни приложения.
+        // Port of clearing browsing data before login — ClaudeWebSession.swift:200-209.
+        // A rejected Turnstile challenge survives the window being recreated
+        // and immediately repeats the same loop, unless the profile's state
+        // is wiped before EVERY showing of the login window, not just once
+        // over the whole lifetime of the application.
         await core.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
         if (_closed) return;
 
         core.NavigationCompleted += async (_, _) =>
         {
-            // Как и Tick/Loaded выше: async void на событии WebView2 не
-            // должен ронять процесс, если CheckForSessionCookieAsync бросит
-            // (например, CookieManager обратился к уже разрушенному
-            // контроллеру между навигацией и обработкой её события) —
-            // порт того же принципа, что и в ClaudeWebSession.OnNavigationCompleted
-            // (ClaudeWebSession.cs:207-250).
+            // Same as Tick/Loaded above: async void on a WebView2 event must
+            // not bring down the process if CheckForSessionCookieAsync throws
+            // (for example, CookieManager reached an already-destroyed
+            // controller between the navigation and the handling of its
+            // event) — port of the same principle as in
+            // ClaudeWebSession.OnNavigationCompleted (ClaudeWebSession.cs:207-250).
             try
             {
                 await CheckForSessionCookieAsync().ConfigureAwait(true);
@@ -234,11 +238,12 @@ public sealed class LoginWindow : Window
     {
         if (_signedIn) return;
 
-        // И таймер, и NavigationCompleted могут сработать уже после Close():
-        // тик — если успел встать в очередь Dispatcher'а до Stop(),
-        // NavigationCompleted — если событие поднялось до того, как
-        // InitializeAsync дошёл до отписки. Без этой проверки метод обратился
-        // бы к CoreWebView2/CookieManager на уже закрытом окне.
+        // Both the timer and NavigationCompleted can fire after Close()
+        // already happened: the tick — if it managed to get into the
+        // Dispatcher's queue before Stop(), NavigationCompleted — if the
+        // event was raised before InitializeAsync got to unsubscribing.
+        // Without this check the method would reach CoreWebView2/CookieManager
+        // on an already-closed window.
         if (_closed) return;
 
         var core = _webView.CoreWebView2;
@@ -250,15 +255,15 @@ public sealed class LoginWindow : Window
         _signedIn = true;
         _cookiePollTimer.Stop();
 
-        // Порядок важен: Close() синхронно поднимает Closed, чей обработчик
-        // в ClaudeWebSession.OnLoginWindowClosed первым делом отписывает
-        // SignedIn (window.SignedIn -= OnLoginWindowSignedIn) — если сначала
-        // закрыть окно, к моменту SignedIn?.Invoke() список подписчиков уже
-        // пуст, событие уходит в никуда, ClaudeWebSession.SignedIn никогда не
-        // срабатывает, и App.OnSignedIn (ClearCachedOrganization + немедленный
-        // refresh) не выполняется вовсе — циферблаты молча ждут следующего
-        // 300-секундного тика. Поднимаем событие, пока подписчики ещё на
-        // месте, и только потом закрываем окно.
+        // Order matters: Close() synchronously raises Closed, whose handler
+        // in ClaudeWebSession.OnLoginWindowClosed unsubscribes SignedIn first
+        // thing (window.SignedIn -= OnLoginWindowSignedIn) — if the window is
+        // closed first, by the time SignedIn?.Invoke() runs the subscriber
+        // list is already empty, the event goes nowhere, ClaudeWebSession.SignedIn
+        // never fires, and App.OnSignedIn (ClearCachedOrganization + an
+        // immediate refresh) does not run at all — the dials silently wait
+        // for the next 300-second tick. Raise the event while the subscribers
+        // are still in place, and only then close the window.
         SignedIn?.Invoke();
         Close();
     }

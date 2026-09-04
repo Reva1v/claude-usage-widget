@@ -1,11 +1,11 @@
 namespace ClaudeUsageWidget.Core;
 
-/// Чистая арифметика за циферблатами. Никакого I/O, никаких чтений часов —
-/// `now` всегда передаётся снаружи, так что каждый случай воспроизводим в тесте.
+/// Pure arithmetic behind the dials. No I/O, no clock reads — `now` is
+/// always passed in from outside, so every case is reproducible in a test.
 public static class UsageMath
 {
-    /// Оставшееся время до окна: "45s", "10m", "1h 0m", "1d 1h".
-    /// Null, если времени сброса нет или оно уже прошло.
+    /// Time remaining until the window resets: "45s", "10m", "1h 0m", "1d 1h".
+    /// Null if there's no reset time or it has already passed.
     public static string? RemainingText(DateTimeOffset? resetsAt, DateTimeOffset now)
     {
         if (resetsAt is not { } resets) return null;
@@ -22,18 +22,18 @@ public static class UsageMath
         return $"{seconds}s";
     }
 
-    /// Сервер сообщает utilization в шкале 0...100; внутри виджета всё работает
-    /// в шкале 0...1.
+    /// The server reports utilization on a 0...100 scale; inside the widget
+    /// everything works on a 0...1 scale.
     public static double Fraction(double utilization) =>
         Math.Min(Math.Max(utilization / 100, 0), 1);
 
-    /// Доля 0...1 в виде строки с целым процентом, например "57%".
+    /// A 0...1 fraction as a string with a whole-number percent, e.g. "57%".
     ///
-    /// Сдвигается на крошечный эпсилон перед округлением: доля, полученная
-    /// делением точного серверного процента на 100, может оказаться чуть
-    /// меньше границы .5 из-за двоичного представления — 0.575 * 100 равно
-    /// 57.49999999999999 — и округлилась бы вниз вопреки всем ожиданиям.
-    /// Сдвиг намного меньше любой реальной разницы в данных.
+    /// Shifted by a tiny epsilon before rounding: a fraction obtained by
+    /// dividing the exact server percentage by 100 can end up slightly below
+    /// the .5 boundary due to binary representation — 0.575 * 100 equals
+    /// 57.49999999999999 — and would round down against all expectations.
+    /// The shift is far smaller than any real difference in the data.
     public static string PercentText(double fraction) =>
         $"{(int)Math.Round(fraction * 100 + 1e-9, MidpointRounding.AwayFromZero)}%";
 }

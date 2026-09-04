@@ -6,10 +6,10 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using ClaudeUsageWidget.App.Views;
 using ClaudeUsageWidget.Core;
-// UseWindowsForms делает System.Drawing глобально видимым (см.
+// UseWindowsForms makes System.Drawing globally visible (see
 // ClaudeUsageWidget.App.GlobalUsings.g.cs) — Point/Color/Brushes/Size
-// существуют и там под тем же именем (тот же приём, что и в
-// Windows/DesktopWidgetWindow.cs и Views/*.cs).
+// exist there too under the same name (the same trick as in
+// Windows/DesktopWidgetWindow.cs and Views/*.cs).
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
 using Brushes = System.Windows.Media.Brushes;
@@ -18,184 +18,187 @@ using Size = System.Windows.Size;
 namespace ClaudeUsageWidget.App.Windows;
 
 /// <summary>
-/// Полоска в панели задач: маленькое окно слева от области переполнения
-/// трея (или у левого края таскбара — см. <see cref="SetPosition"/>),
-/// рисующее колонки «метка над значением» как в меню-баре macOS.
+/// The taskbar band: a small window to the left of the tray overflow area
+/// (or at the left edge of the taskbar — see <see cref="SetPosition"/>),
+/// drawing "label above value" columns like the macOS menu bar.
 ///
-/// Техника — top-level окно-владелец (owned window) таскбара, НЕ дочернее
-/// (WS_CHILD) окно и не голый Topmost. Первая версия этой задачи пробовала
-/// оба других варианта:
-/// - SetParent-встраивание как WS_CHILD в Shell_TrayWnd (техника
-///   TrafficMonitor) технически удаётся (ненулевой возврат, точное
-///   позиционирование), но живая проверка на Windows 11 показала, что
-///   Mica-композитинг таскбара делает содержимое такого дочернего окна
-///   нечитаемым — пиксельные замеры (round 2, task-17-report.md) показали,
-///   что ни смена порядка WS_CHILD/SetParent, ни WS_EX_LAYERED, ни
-///   Z-порядок этого не чинят.
-/// - Голый Topmost-оверлей без владельца рендерится чётко (тот же
-///   WS_EX_LAYERED там работал), но периодически проваливался обратно за
-///   Mica-слой шелла без видимой причины (round 4) и не имел механизма
-///   держаться выше таскбара при активности шелла (контекстные меню,
-///   переключение фокуса).
+/// The technique is a top-level owner window (owned window) of the taskbar,
+/// NOT a child (WS_CHILD) window and not a bare Topmost. The first version
+/// of this task tried both other options:
+/// - SetParent-embedding as WS_CHILD into Shell_TrayWnd (the TrafficMonitor
+///   technique) technically succeeds (non-zero return, exact positioning),
+///   but live testing on Windows 11 showed that the taskbar's Mica
+///   compositing makes the content of such a child window unreadable —
+///   pixel measurements (round 2, task-17-report.md) showed that neither
+///   reordering WS_CHILD/SetParent, nor WS_EX_LAYERED, nor Z-order fix
+///   this.
+/// - A bare Topmost overlay without an owner renders sharply (the same
+///   WS_EX_LAYERED worked there), but periodically fell back behind the
+///   shell's Mica layer for no visible reason (round 4) and had no
+///   mechanism to stay above the taskbar during shell activity (context
+///   menus, focus switching).
 /// Owned window (SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, Shell_TrayWnd))
-/// решает оба: окно остаётся обычным top-level (никакого child-композитинга
-/// — можно использовать честную WPF-прозрачность, AllowsTransparency=true,
-/// без чёрных прямоугольников и без проваливания), а Windows сама
-/// поддерживает инвариант "owned-окно всегда выше своего владельца".
-/// HWND_TOPMOST поверх этого нужен только чтобы встать выше ВООБЩЕ всех
-/// обычных окон (не только выше конкретно таскбара) — и выставляется РОВНО
-/// ОДИН РАЗ, при (пере)стыковке, а не на каждый тик перепозиционирования:
-/// периодическая переустановка HWND_TOPMOST утаскивает наверх весь кластер
-/// "владелец+owned" (то есть сам таскбар) поверх любого открытого в этот
-/// момент контекстного меню шелла и обрезает его — задокументированное
-/// поведение, независимо переоткрытое NetSpeedTray (их issue #200:
-/// 23 попытки из 23 с периодическим SetWindowPos(HWND_TOPMOST, ...) обрезали
-/// меню, 0 из 23 без него).
+/// solves both: the window stays a normal top-level window (no child
+/// compositing — real WPF transparency, AllowsTransparency=true, can be
+/// used, with no black rectangles and no falling behind), and Windows
+/// itself maintains the invariant "an owned window is always above its
+/// owner". HWND_TOPMOST on top of that is needed only to rise above ALL
+/// regular windows in general (not just specifically above the taskbar) —
+/// and it is set EXACTLY ONCE, on (re)docking, not on every repositioning
+/// tick: periodically re-applying HWND_TOPMOST drags the whole
+/// "owner+owned" cluster (i.e. the taskbar itself) above any shell context
+/// menu open at that moment and clips it — documented behavior,
+/// independently rediscovered by NetSpeedTray (their issue #200: 23 out of
+/// 23 attempts with periodic SetWindowPos(HWND_TOPMOST, ...) clipped the
+/// menu, 0 out of 23 without it).
 /// </summary>
 public sealed class TaskbarBandWindow : Window
 {
     private const string TrayClassName = "Shell_TrayWnd";
     private const string TrayNotifyClassName = "TrayNotifyWnd";
 
-    /// Отступ ленты от области переполнения трея — task-17-brief.md: «встать
-    /// левее её на ширину окна с отступом 8 px».
+    /// The band's gap from the tray overflow area — task-17-brief.md: "sit to
+    /// the left of it, offset by the window's width plus an 8 px gap".
     private const double GapDip = 8;
 
     private const double OuterPaddingDip = 8;
 
-    /// Отступ от левого края таскбара для BandPosition="left" — живая
-    /// проверка (task-17-report.md, round 5) показала лишний отступ ~130px
-    /// вместо ожидаемого «впритык к краю»: было 160 DIP, унаследованные из
-    /// более ранней идеи встать сразу после Start/Search/Task View/Widgets
-    /// при выравнивании таскбара "Слева". Пользователь имел в виду буквально
-    /// левый край — тот же зазор, что и GapDip у позиции "tray" (там 8 px от
-    /// TrayNotifyWnd), просто с другой стороны экрана, а не отступ вслед за
-    /// скрытыми системными кнопками.
+    /// The offset from the taskbar's left edge for BandPosition="left" — live
+    /// testing (task-17-report.md, round 5) showed an extra ~130px offset
+    /// instead of the expected "flush against the edge": it used to be 160
+    /// DIP, inherited from an earlier idea of sitting right after
+    /// Start/Search/Task View/Widgets when the taskbar alignment is "Left".
+    /// The user meant literally the left edge — the same gap as GapDip for
+    /// the "tray" position (8 px from TrayNotifyWnd there), just on the other
+    /// side of the screen, not an offset trailing the hidden system buttons.
     private const double LeftPositionOffsetDip = GapDip;
 
-    /// Высота таскбара Windows 10/11 по умолчанию при масштабе 100% —
-    /// используется только как временное значение до первого вызова
-    /// <see cref="Reposition"/> (тот вызывается раньше, чем окно становится
-    /// видимым, так что реальный размер обычно подставляется ещё до показа).
+    /// The default Windows 10/11 taskbar height at 100% scale — used only as
+    /// a placeholder value until the first call to <see cref="Reposition"/>
+    /// (which is called earlier than the window becomes visible, so the real
+    /// size is usually substituted in before it is even shown).
     private const double DefaultHeightDip = 40;
 
-    /// Доли ширины таскбара, в которых зонд видимости
-    /// (<see cref="IsTaskbarObscured"/>) берёт пробы. Разнесены по полосе:
-    /// одна точка может быть законно накрыта (флайаут громкости над часами,
-    /// наша собственная лента слева или у трея) — все три разом накрывает
-    /// только окно, реально лежащее ПОВЕРХ всей полосы таскбара.
+    /// Fractions of the taskbar's width at which the visibility probe
+    /// (<see cref="IsTaskbarObscured"/>) samples. Spread out along the band:
+    /// one point may be legitimately covered (the volume flyout above the
+    /// clock, our own band on the left or by the tray) — only a window that
+    /// truly lies OVER the entire taskbar strip covers all three at once.
     private static readonly double[] ProbeFractions = [0.35, 0.55, 0.8];
 
     private readonly TaskbarBandContent _content;
     private readonly DispatcherTimer _repositionTimer;
 
-    /// Делегат для SetWinEventHook — ОБЯЗАН жить в поле, а не быть временным
-    /// значением на вызове: нативный код держит только указатель на функцию,
-    /// без managed-ссылки, так что без этого поля GC вправе собрать делегат
-    /// в любой момент между установкой хука и первым же событием —
-    /// классическая тихая P/Invoke-ловушка (колбэк вызывается через уже
-    /// освобождённую память → падение либо тихая нерабочая доставка событий).
+    /// The delegate for SetWinEventHook — MUST live in a field, not be a
+    /// temporary value at the call site: native code holds only a function
+    /// pointer, with no managed reference, so without this field the GC is
+    /// free to collect the delegate at any moment between installing the hook
+    /// and the first event — the classic silent P/Invoke trap (the callback
+    /// is invoked through already-freed memory → a crash, or silently broken
+    /// event delivery).
     private readonly Win32.WinEventDelegate _winEventProc;
 
-    /// EVENT_SYSTEM_FOREGROUND — смена активного окна.
+    /// EVENT_SYSTEM_FOREGROUND — the active window changed.
     private nint _foregroundHook;
 
-    /// EVENT_OBJECT_LOCATIONCHANGE — перемещение/ресайз foreground-окна
-    /// (ловит F11/безрамочный fullscreen без смены активного окна).
+    /// EVENT_OBJECT_LOCATIONCHANGE — the foreground window moved/resized
+    /// (catches F11/borderless fullscreen without the active window changing).
     private nint _locationHook;
 
-    /// EVENT_SYSTEM_MINIMIZESTART..MINIMIZEEND — сворачивание/разворачивание
-    /// окон: после «Свернуть» смена foreground приходит не всегда и не сразу,
-    /// а зонд должен пересчитаться немедленно (живой баг: мигание ленты на
-    /// кнопке «Свернуть»).
+    /// EVENT_SYSTEM_MINIMIZESTART..MINIMIZEEND — windows being
+    /// minimized/restored: after "Minimize" the foreground change does not
+    /// always arrive, or not right away, and the probe must recompute
+    /// immediately (a live bug: the band flickering on the "Minimize"
+    /// button).
     private nint _minimizeHook;
 
-    /// EVENT_OBJECT_REORDER — момент перетасовки z-порядка: единственный
-    /// сигнал, приходящий ДО того, как глаз увидит ленту под поднятым
-    /// таскбаром (foreground-событие приходит уже после).
+    /// EVENT_OBJECT_REORDER — the moment the z-order gets reshuffled: the
+    /// only signal that arrives BEFORE the eye would see the band under the
+    /// raised taskbar (the foreground event arrives only afterward).
     private nint _reorderHook;
 
-    /// Дребезг для EVENT_OBJECT_LOCATIONCHANGE — тот сыплется пачками во
-    /// время обычного перетаскивания/анимации окна, а не только при входе/
-    /// выходе из fullscreen; реально перепроверяем полноэкранность только
-    /// спустя ~200 мс тишины после последнего такого события.
+    /// Debounce for EVENT_OBJECT_LOCATIONCHANGE — it fires in bursts during
+    /// ordinary window dragging/animation, not only when entering/leaving
+    /// fullscreen; we actually re-check fullscreen state only after ~200 ms
+    /// of silence since the last such event.
     private readonly DispatcherTimer _locationDebounceTimer;
 
-    /// Гистерезис применения самой видимости — отдельно от дребезга
-    /// LOCATIONCHANGE выше (тот решает КОГДА перепроверить, этот — стоит ли
-    /// уже ДЕЙСТВОВАТЬ на результат проверки). Живая проверка (round 7)
-    /// показала, что мимолётная смена foreground-окна (случайный alt-tab,
-    /// всплывающее окно поверх игры на долю секунды) иначе заставляла
-    /// ленту мигать туда-обратно — цель "мигать по минимуму" требует не
-    /// применять Hide()/Show() немедленно на каждое сырое определение, а
-    /// только когда желаемое состояние продержалось стабильным ~300 мс. См.
-    /// RequestFullscreenVisibility.
+    /// The hysteresis for applying visibility itself — separate from the
+    /// LOCATIONCHANGE debounce above (that one decides WHEN to re-check, this
+    /// one decides whether to already ACT on the check's result). Live testing
+    /// (round 7) showed that a fleeting foreground-window change (a random
+    /// alt-tab, a popup over a game for a fraction of a second) would
+    /// otherwise make the band flicker back and forth — the "flicker as
+    /// little as possible" goal requires not applying Hide()/Show()
+    /// immediately on every raw determination, but only once the desired
+    /// state has held stable for ~300 ms. See RequestFullscreenVisibility.
     private readonly DispatcherTimer _visibilityStabilityTimer;
 
-    /// Гистерезис видимости, по направлениям. Показ — быстрый: лента и так
-    /// не видна, вернуть её пользователю надо как можно раньше. Скрытие —
-    /// намеренно медленное: короткоживущие полноэкранные оверлеи (ShareX
-    /// на каждое разворачивание чужого окна перекрывает таскбар невидимым
-    /// окном на ~0.3-1с) живут заметно меньше этого порога и не должны
-    /// доживать до реального Hide() вовсе; настоящий fullscreen (игра)
-    /// держится минутами, и лишняя секунда ленты поверх него — приемлемая
-    /// цена за полное отсутствие миганий.
+    /// The visibility hysteresis, per direction. Showing is fast: the band is
+    /// already invisible, so it should be returned to the user as early as
+    /// possible. Hiding is deliberately slow: short-lived fullscreen overlays
+    /// (ShareX covers the taskbar with an invisible window for ~0.3-1s on
+    /// every other window's maximize/restore) live noticeably shorter than
+    /// this threshold and should never live long enough to trigger a real
+    /// Hide() at all; genuine fullscreen (a game) lasts minutes, and one extra
+    /// second of the band on top of it is an acceptable price for a complete
+    /// absence of flicker.
     private const int ShowStabilityMs = 150;
     private const int HideStabilityMs = 1200;
 
-    /// Скрытие, когда таскбар накрыт АКТИВНЫМ окном (см. TaskbarCover
-    /// .ObscuredByForeground): вердикт достоверен — пользователь сам вошёл
-    /// в fullscreen, — карантин нужен лишь символический, против дребезга
-    /// в кадрах самого перехода. 150, а не 0: мгновенное применение по
-    /// первому же вердикту ловило бы промежуточные кадры анимации
-    /// разворота.
+    /// Hiding when the taskbar is covered by the ACTIVE window (see
+    /// TaskbarCover.ObscuredByForeground): the verdict is reliable — the user
+    /// entered fullscreen themselves — so only a token quarantine is needed,
+    /// against debounce in the frames of the transition itself. 150, not 0:
+    /// immediate application on the very first verdict would catch
+    /// intermediate frames of the maximize animation.
     private const int FastHideStabilityMs = 150;
 
-    /// Состояние, которое сейчас ожидает применения через
-    /// _visibilityStabilityTimer — null, если ничего не отложено (последнее
-    /// запрошенное состояние уже совпадает с применённым).
+    /// The state currently awaiting application via
+    /// _visibilityStabilityTimer — null if nothing is pending (the last
+    /// requested state already matches the applied one).
     private bool? _pendingHiddenForFullscreen;
 
-    /// Ещё ни разу не определяли fullscreen-состояние для этого Dock() —
-    /// см. why-comment в RequestFullscreenVisibility: самое первое
-    /// определение применяется немедленно, в обход 300мс гистерезиса (тот
-    /// защищает УЖЕ показанную ленту от мигания, а не откладывает
-    /// единственную, ещё никому не видимую установку начального
-    /// состояния).
+    /// The fullscreen state has not been determined even once yet for this
+    /// Dock() — see the why-comment in RequestFullscreenVisibility: the very
+    /// first determination is applied immediately, bypassing the 300ms
+    /// hysteresis (which protects an ALREADY shown band from flicker, rather
+    /// than delaying the single, not-yet-visible-to-anyone initial state
+    /// setup).
     private bool _fullscreenStateEstablished;
 
-    /// "tray" (по умолчанию) или "left" — см. <see cref="SetPosition"/>.
+    /// "tray" (the default) or "left" — see <see cref="SetPosition"/>.
     private string _position = "tray";
 
-    /// Лента спрятана из-за полноэкранного приложения поверх её монитора —
-    /// см. IsTaskbarObscured()/RepositionCore(). Отдельно от обычной
-    /// Visibility: не хотим, чтобы обычная логика показа/скрытия путала это
-    /// состояние с "лента выключена пользователем" — здесь просто временная
-    /// приостановка показа.
+    /// The band is hidden because of a fullscreen application over its
+    /// monitor — see IsTaskbarObscured()/RepositionCore(). Separate from
+    /// regular Visibility: we don't want the ordinary show/hide logic to
+    /// confuse this state with "the band was turned off by the user" — this
+    /// is just a temporary suspension of display.
     private bool _hiddenForFullscreen;
 
-    /// Последняя геометрия, реально применённая через SetWindowPos в
-    /// RepositionCore() — см. why-comment там: используется, чтобы пропускать
-    /// SetWindowPos на тиках, где ничего не изменилось (перф). int.MinValue —
-    /// заведомо непохоже ни на один настоящий x/y/размер, поэтому самый
-    /// первый вызов всегда проходит без специальной ветки на "ещё не было".
+    /// The last geometry actually applied via SetWindowPos in
+    /// RepositionCore() — see the why-comment there: used to skip SetWindowPos
+    /// on ticks where nothing changed (perf). int.MinValue — deliberately
+    /// unlike any real x/y/size, so the very first call always goes through
+    /// without a special branch for "there was none yet".
     private int _lastX = int.MinValue;
     private int _lastY = int.MinValue;
     private int _lastWidthPx = int.MinValue;
     private int _lastHeightPx = int.MinValue;
 
     /// <summary>
-    /// Нативный HWND этого окна уничтожен не через наш собственный Detach()/
-    /// Close(). Owned window (в отличие от прежнего WS_CHILD-варианта) не
-    /// уничтожается автоматически вместе с владельцем — Windows каскадно
-    /// рушит только настоящих ДЕТЕЙ (WS_CHILD), а не owned-окна, так что этот
-    /// сценарий стал заметно менее вероятным, чем в первых раундах задачи, но
-    /// не невозможным (WPF способна закрыть Window и по другим причинам) —
-    /// оставлено как защитный бэкстоп. WPF не поддерживает повторный
-    /// Show()/EnsureHandle() у Window, чей HWND пропал таким образом —
-    /// единственный рабочий путь восстановления это новый экземпляр
-    /// TaskbarBandWindow, поэтому здесь только сигнал, пересоздание — на
-    /// стороне владельца (App.xaml.cs).
+    /// This window's native HWND was destroyed other than through our own
+    /// Detach()/Close(). An owned window (unlike the previous WS_CHILD
+    /// variant) is not destroyed automatically together with its owner —
+    /// Windows cascades destruction only to actual CHILDREN (WS_CHILD), not
+    /// owned windows, so this scenario became noticeably less likely than in
+    /// the task's first rounds, but not impossible (WPF is capable of closing
+    /// a Window for other reasons too) — left in as a defensive backstop. WPF
+    /// does not support calling Show()/EnsureHandle() again on a Window whose
+    /// HWND disappeared this way — the only working recovery path is a new
+    /// TaskbarBandWindow instance, so this is just a signal here; recreation
+    /// is the owner's responsibility (App.xaml.cs).
     /// </summary>
     public event Action? Lost;
 
@@ -206,13 +209,13 @@ public sealed class TaskbarBandWindow : Window
         ShowInTaskbar = false;
         ShowActivated = false;
 
-        // Честная WPF-прозрачность: окно больше не переезжает в чужой
-        // процесс (ни SetParent, ни WS_CHILD), так что кросс-процессный
-        // layered-window баг ("рисует чёрный прямоугольник"), из-за которого
-        // первая версия задачи держала окно непрозрачным, здесь не
-        // применяется — это обычное top-level окно, просто с владельцем.
-        // AllowsTransparency обязан быть выставлен до создания HWND (то есть
-        // здесь, в конструкторе, а не позже).
+        // Real WPF transparency: the window no longer moves into a foreign
+        // process (neither SetParent nor WS_CHILD), so the cross-process
+        // layered-window bug ("draws a black rectangle") that made the task's
+        // first version keep the window opaque does not apply here — this is
+        // an ordinary top-level window, just with an owner.
+        // AllowsTransparency must be set before the HWND is created (i.e.
+        // here, in the constructor, not later).
         AllowsTransparency = true;
         Background = Brushes.Transparent;
 
@@ -231,11 +234,11 @@ public sealed class TaskbarBandWindow : Window
         _repositionTimer.Tick += (_, _) => Reposition();
 
         _winEventProc = OnWinEvent;
-        // 100мс: дребезг LOCATIONCHANGE надо гасить (события сыплются на
-        // каждый кадр перетаскивания окна), но вход/выход из fullscreen
-        // одного и того же окна (плеер YouTube) детектится ИМЕННО этим
-        // путём — каждые лишние 100мс здесь напрямую удлиняют видимую
-        // задержку исчезновения/появления ленты.
+        // 100ms: LOCATIONCHANGE debounce needs to be smoothed out (events pour
+        // in on every frame of window dragging), but entering/leaving
+        // fullscreen for the same window (a YouTube player) is detected
+        // PRECISELY through this path — every extra 100ms here directly
+        // lengthens the visible delay before the band disappears/appears.
         _locationDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _locationDebounceTimer.Tick += (_, _) =>
         {
@@ -251,16 +254,17 @@ public sealed class TaskbarBandWindow : Window
             _pendingHiddenForFullscreen = null;
             try
             {
-                // Свежий зонд В МОМЕНТ истечения таймера, а не вердикт на
-                // момент его старта. Живой пример с этой машины: ShareX при
-                // разворачивании чужих окон кладёт невидимое WinForms-окно на
-                // всю полосу таскбара на доли секунды — вердикт «накрыто»
-                // честен в момент снятия, но к истечению таймера оверлей уже
-                // исчез, а событий, которые перезапустили бы зонд в этом
-                // промежутке, нет (уничтожение окна не приходит как
-                // LOCATIONCHANGE). Применять устаревший вердикт — мигать
-                // лентой на ровном месте; не подтвердился — переход просто
-                // отменяется, и следующий начнётся с чистого листа.
+                // A fresh probe AT THE MOMENT the timer expires, not the verdict at
+                // the moment it started. A live example from this machine: ShareX, on
+                // every restore/maximize of some other window, lays an invisible
+                // WinForms window over the whole taskbar strip for a fraction of a
+                // second — the "covered" verdict is honest at the moment it is taken,
+                // but by the time the timer expires the overlay has already
+                // disappeared, and there are no events that would restart the probe in
+                // that interval (a window being destroyed does not arrive as
+                // LOCATIONCHANGE). Applying a stale verdict would make the band
+                // flicker for no reason; if it isn't confirmed, the transition is
+                // simply cancelled, and the next one starts with a clean slate.
                 var ownHwnd = new WindowInteropHelper(this).Handle;
                 var tray = Win32.FindWindow(TrayClassName, null);
                 if (ownHwnd == nint.Zero || tray == nint.Zero) return;
@@ -274,12 +278,12 @@ public sealed class TaskbarBandWindow : Window
             }
             catch (InvalidOperationException)
             {
-                // Тот же зомби-сценарий, что и в Reposition()/Detach() (см.
-                // их комментарии): в отличие от вызова из RepositionCore(),
-                // этот Tick не проходит через try/catch Reposition() — окно
-                // могло быть закрыто, пока переход ждал 300мс гистерезиса,
-                // и необработанный InvalidOperationException здесь уронил
-                // бы весь процесс.
+                // The same zombie scenario as in Reposition()/Detach() (see
+                // their comments): unlike a call from RepositionCore(), this Tick
+                // doesn't go through Reposition()'s try/catch — the window could
+                // have been closed while the transition was waiting out the 300ms
+                // hysteresis, and an unhandled InvalidOperationException here would
+                // bring down the whole process.
                 _repositionTimer.Stop();
                 UnhookFullscreenEvents();
                 Lost?.Invoke();
@@ -288,12 +292,11 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>
-    /// Показывает ленту и (пере)стыкует её с таскбаром — владелец
-    /// (GWLP_HWNDPARENT) выставляется внутри Reposition()/RepositionCore(),
-    /// который сам обнаруживает "владелец не тот/не выставлен" как частный
-    /// случай устаревшего состояния (см. её комментарий) — здесь достаточно
-    /// создать HWND и вызвать её один раз. Единственная точка входа для
-    /// App.xaml.cs.
+    /// Shows the band and (re)docks it to the taskbar — the owner
+    /// (GWLP_HWNDPARENT) is set inside Reposition()/RepositionCore(), which
+    /// itself detects "owner is wrong/not set" as a special case of a stale
+    /// state (see its comment) — here it is enough to create the HWND and
+    /// call it once. The only entry point for App.xaml.cs.
     /// </summary>
     public void Dock()
     {
@@ -304,21 +307,22 @@ public sealed class TaskbarBandWindow : Window
         HookFullscreenEvents();
         Reposition();
 
-        // Условно, а не всегда: Reposition() выше уже могла синхронно
-        // спрятать окно (самое первое определение fullscreen-состояния
-        // применяется немедленно — см. RequestFullscreenVisibility), и
-        // безусловный Show() здесь до раунда 7 сводил на нет как раз этот
-        // случай — окно, только что спрятанное как fullscreen, тут же
-        // показывалось бы обратно.
+        // Conditionally, not unconditionally: the Reposition() call above
+        // could already have synchronously hidden the window (the very first
+        // fullscreen-state determination is applied immediately — see
+        // RequestFullscreenVisibility), and an unconditional Show() here,
+        // before round 7, defeated exactly this case — a window just hidden as
+        // fullscreen would immediately be shown again.
         if (!_hiddenForFullscreen) Show();
         _repositionTimer.Start();
     }
 
     /// <summary>
-    /// Меняет "tray"/"left" и сразу перепозиционируется, не дожидаясь
-    /// следующего тика — заметная задержка при живом переключении из меню
-    /// трея выглядела бы как баг. Не трогает владельца/HWND_TOPMOST: это
-    /// только смена X, обычный (не "устаревший") путь в RepositionCore().
+    /// Changes "tray"/"left" and repositions immediately, without waiting
+    /// for the next tick — a noticeable delay when switching live from the
+    /// tray menu would look like a bug. Does not touch the owner/HWND_TOPMOST:
+    /// this is only a change of X, the ordinary (not "stale") path in
+    /// RepositionCore().
     /// </summary>
     public void SetPosition(string position)
     {
@@ -328,8 +332,8 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>
-    /// Снимает владельца и прячет окно. Идемпотентно: безопасно вызывать
-    /// даже если окно ещё ни разу не показывалось.
+    /// Clears the owner and hides the window. Idempotent: safe to call
+    /// even if the window has never been shown yet.
     /// </summary>
     public void Detach()
     {
@@ -339,12 +343,13 @@ public sealed class TaskbarBandWindow : Window
         var hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd == nint.Zero || !Win32.IsWindow(hwnd))
         {
-            // Зомби — тот же случай, что и в RepositionCore(): дальше
-            // трогать Visibility/Hide() на закрытом WPF Window значило бы
-            // поймать InvalidOperationException. Таймер уже остановлен
-            // строкой выше, значит Reposition() больше не поднимет Lost сам
-            // — сигналим отсюда, иначе владелец (App.xaml.cs) останется с
-            // мёртвым экземпляром, который упадёт на следующем Dock().
+            // Zombie — the same case as in RepositionCore(): touching
+            // Visibility/Hide() further on a closed WPF Window would mean
+            // catching an InvalidOperationException. The timer was already
+            // stopped on the line above, so Reposition() will no longer raise
+            // Lost by itself — we signal from here, otherwise the owner
+            // (App.xaml.cs) would be left with a dead instance that would crash
+            // on the next Dock().
             Lost?.Invoke();
             return;
         }
@@ -357,9 +362,10 @@ public sealed class TaskbarBandWindow : Window
         }
         catch (InvalidOperationException)
         {
-            // Защитный бэкстоп на гонку между проверкой IsWindow выше и
-            // вызовом Hide() ниже (WPF успела пометить Window закрытым
-            // именно в этом промежутке) — тот же вывод: экземпляр мёртв.
+            // A defensive backstop for the race between the IsWindow check
+            // above and the Hide() call below (WPF managed to mark the Window
+            // closed in exactly that interval) — same conclusion: the instance is
+            // dead.
             Lost?.Invoke();
         }
     }
@@ -375,25 +381,25 @@ public sealed class TaskbarBandWindow : Window
         // which until now ran on the 5-second timer alone. Between the data
         // arriving and the next tick the band sat with content wider than its
         // own window, and the rightmost column was cut (the user, 2026-08-26,
-        // «low обрезан»). Only ask for it once the HWND exists: before
+        // «low cut off»). Only ask for it once the HWND exists: before
         // EnsureHandle() there is nothing to measure in and nowhere to place
         // (see the comment below). RepositionCore recomputes DesiredSize
         // itself and short-circuits when the geometry has not moved a pixel,
         // so calling it per render costs nothing.
         if (new WindowInteropHelper(this).Handle != nint.Zero) Reposition();
 
-        // Измерение контента НЕ делается здесь (раньше — делалось, сразу
-        // после SetMetrics) — оно намеренно перенесено целиком в
-        // RepositionCore() (см. её комментарий про "F"/"5"-баг): App.
-        // SetTaskbarBandVisible вызывает Render() ДО Dock()/EnsureHandle(),
-        // то есть в момент, когда у окна ещё может не быть HWND и
-        // PresentationSource — DialText.PixelsPerDip(_content) в этот
-        // момент не знает реальный DPI монитора, на котором окно окажется, и
-        // намеренный синхронный Measure() тут посчитал бы ширину по
-        // неверному DPI. RepositionCore() всегда выполняется уже после
-        // EnsureHandle() и сама заново измеряет контент непосредственно
-        // перед тем, как прочитать DesiredSize — единственное место, где
-        // измерение действительно нужно.
+        // Content measurement is NOT done here (it used to be — right after
+        // SetMetrics) — it has been deliberately moved entirely into
+        // RepositionCore() (see its comment about the "F"/"5" bug): App.
+        // SetTaskbarBandVisible calls Render() BEFORE Dock()/EnsureHandle(),
+        // i.e. at a moment when the window may still have no HWND and no
+        // PresentationSource — DialText.PixelsPerDip(_content) at that
+        // moment does not know the real DPI of the monitor the window will
+        // end up on, and a deliberate synchronous Measure() here would
+        // compute the width using the wrong DPI. RepositionCore() always
+        // runs after EnsureHandle() and re-measures the content itself right
+        // before reading DesiredSize — the only place where measurement is
+        // actually needed.
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -402,13 +408,13 @@ public sealed class TaskbarBandWindow : Window
 
         var hwnd = new WindowInteropHelper(this).Handle;
 
-        // Не активируется и не появляется в alt-tab. НЕ выставляем
-        // WS_EX_LAYERED вручную и НЕ зовём SetLayeredWindowAttributes:
-        // AllowsTransparency=true уже сделала окно layered сама (это ровно
-        // то, как WPF реализует поканальную прозрачность на Win32), и его
-        // собственный UpdateLayeredWindow-конвейер ломается, если поверх
-        // него дополнительно вызвать LWA_ALPHA — два независимых механизма
-        // управления одной и той же layered-поверхностью конфликтуют.
+        // Not activated and does not show up in alt-tab. We do NOT set
+        // WS_EX_LAYERED manually and do NOT call SetLayeredWindowAttributes:
+        // AllowsTransparency=true already made the window layered by itself
+        // (this is exactly how WPF implements per-pixel transparency on
+        // Win32), and its own UpdateLayeredWindow pipeline breaks if
+        // LWA_ALPHA is additionally called on top of it — two independent
+        // mechanisms for managing the same layered surface conflict.
         var exStyle = (long)Win32.GetWindowLongPtr(hwnd, Win32.GwlExStyle);
         exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow;
         Win32.SetWindowLongPtr(hwnd, Win32.GwlExStyle, (nint)exStyle);
@@ -418,8 +424,8 @@ public sealed class TaskbarBandWindow : Window
         source.AddHook(WndProc);
     }
 
-    /// <summary>WM_DPICHANGED — перепозиционируемся сразу, не дожидаясь
-    /// следующего тика таймера.</summary>
+    /// <summary>WM_DPICHANGED — reposition immediately, without waiting
+    /// for the next timer tick.</summary>
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
         if (msg == Win32.WmDpiChanged) Reposition();
@@ -427,21 +433,21 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>
-    /// Устанавливает системные (idProcess=0/idThread=0 — весь компьютер, не
-    /// только наш процесс) WinEvent-хуки, чтобы реагировать на вход/выход из
-    /// fullscreen мгновенно, а не ждать следующего 5-секундного тика —
-    /// живая проверка (task-17-report.md, round 6) показала заметную
-    /// задержку до 5 с в обе стороны при чисто тик-based детекте.
-    /// EVENT_SYSTEM_FOREGROUND — сменилось активное окно (обычный Alt-Tab/
-    /// запуск игры). EVENT_OBJECT_LOCATIONCHANGE — окно поменяло размер/
-    /// положение БЕЗ смены активного окна (F11 в том же окне, переключение
-    /// эксклюзивный/безрамочный fullscreen той же игры) — единственный
-    /// способ поймать этот случай, раз foreground-окно не меняется.
-    /// WINEVENT_OUTOFCONTEXT — без инжекции DLL в чужие процессы, события
-    /// доставляются в поток-установщик хука (наш UI-поток) через тот же
-    /// насос сообщений, что качает WPF Dispatcher. Идемпотентно: Dock()
-    /// может вызываться повторно (редок после Detach), хук устанавливается
-    /// только если ещё не установлен.
+    /// Installs system-wide (idProcess=0/idThread=0 — the whole machine, not
+    /// just our process) WinEvent hooks so we react to entering/leaving
+    /// fullscreen instantly, instead of waiting for the next 5-second tick —
+    /// live testing (task-17-report.md, round 6) showed a noticeable delay of
+    /// up to 5 s in both directions with pure tick-based detection.
+    /// EVENT_SYSTEM_FOREGROUND — the active window changed (a regular
+    /// Alt-Tab/launching a game). EVENT_OBJECT_LOCATIONCHANGE — a window
+    /// changed size/position WITHOUT the active window changing (F11 in the
+    /// same window, switching exclusive/borderless fullscreen for the same
+    /// game) — the only way to catch this case, since the foreground window
+    /// does not change. WINEVENT_OUTOFCONTEXT — without injecting a DLL into
+    /// other processes, events are delivered to the thread that installed the
+    /// hook (our UI thread) through the same message pump that drives the WPF
+    /// Dispatcher. Idempotent: Dock() can be called again (rare, after
+    /// Detach) — the hook is installed only if it isn't already installed.
     /// </summary>
     private void HookFullscreenEvents()
     {
@@ -461,12 +467,12 @@ public sealed class TaskbarBandWindow : Window
             nint.Zero, _winEventProc, 0, 0, Win32.WinEventOutOfContext);
     }
 
-    /// <summary>Снимает оба хука (если стоят) и гасит оба вспомогательных
-    /// таймера (дребезг LOCATIONCHANGE и гистерезис видимости) — вызывается
-    /// из Detach() и из всех мест, где экземпляр объявляется мёртвым (см.
-    /// Lost), чтобы не оставлять хук, доставляющий события делегату,
-    /// который больше никому не нужен, и не применить отложенную видимость
-    /// на уже неактуальном экземпляре.</summary>
+    /// <summary>Removes both hooks (if installed) and stops both auxiliary
+    /// timers (the LOCATIONCHANGE debounce and the visibility hysteresis) —
+    /// called from Detach() and from every place where the instance is
+    /// declared dead (see Lost), so as not to leave behind a hook delivering
+    /// events to a delegate that nobody needs any more, and not to apply
+    /// deferred visibility on an instance that is no longer current.</summary>
     private void UnhookFullscreenEvents()
     {
         if (_foregroundHook != nint.Zero)
@@ -494,24 +500,27 @@ public sealed class TaskbarBandWindow : Window
         _pendingHiddenForFullscreen = null;
     }
 
-    /// <summary>Запрашивает желаемую видимость по свежему fullscreen-детекту
-    /// — не применяет её напрямую (кроме самого первого раза, см. ниже):
-    /// - если <paramref name="hidden"/> уже совпадает с применённым
-    ///   состоянием (<see cref="_hiddenForFullscreen"/>), отменяет любой
-    ///   незавершённый переход и ничего не делает — "immediate application
-    ///   is fine when desired == current".
-    /// - если это НОВЫЙ переход (не тот, что уже ожидает применения),
-    ///   (пере)запускает таймер стабильности (ShowStabilityMs/HideStabilityMs
-    ///   — см. их комментарий про асимметрию) — реальный Hide()/Show()
-    ///   произойдёт только если СВЕЖИЙ зонд в момент истечения таймера
-    ///   подтвердит всё то же желаемое состояние (см. Tick в конструкторе).
-    ///   Мимолётная смена foreground-окна или короткоживущий оверлей поверх
-    ///   таскбара поэтому гасятся здесь и не доходят до мигания ленты.
-    /// - самое первое определение состояния для этого Dock()
-    ///   (<see cref="_fullscreenStateEstablished"/> ещё false) применяется
-    ///   немедленно, в обход гистерезиса: тот защищает уже показанную ленту
-    ///   от мигания между двумя состояниями, а не единственную, ещё никому
-    ///   не видимую установку начального состояния.
+    /// <summary>Requests the desired visibility based on a fresh fullscreen
+    /// detection — does not apply it directly (except the very first time,
+    /// see below):
+    /// - if <paramref name="hidden"/> already matches the applied state
+    ///   (<see cref="_hiddenForFullscreen"/>), cancels any pending transition
+    ///   and does nothing — "immediate application is fine when desired ==
+    ///   current".
+    /// - if this is a NEW transition (not the one already pending
+    ///   application), (re)starts the stability timer
+    ///   (ShowStabilityMs/HideStabilityMs — see their comment about the
+    ///   asymmetry) — the actual Hide()/Show() will happen only if a FRESH
+    ///   probe at the moment the timer expires confirms the same desired
+    ///   state (see the Tick in the constructor). A fleeting foreground-window
+    ///   change or a short-lived overlay over the taskbar are therefore
+    ///   filtered out here and never reach the point of making the band
+    ///   flicker.
+    /// - the very first state determination for this Dock()
+    ///   (<see cref="_fullscreenStateEstablished"/> still false) is applied
+    ///   immediately, bypassing the hysteresis: that protects an already
+    ///   shown band from flickering between two states, not the single,
+    ///   not-yet-visible-to-anyone setting of the initial state.
     /// </summary>
     private void RequestFullscreenVisibility(bool hidden, bool coveredByForeground = false)
     {
@@ -529,17 +538,17 @@ public sealed class TaskbarBandWindow : Window
             return;
         }
 
-        if (_pendingHiddenForFullscreen == hidden) return; // уже ждём именно этого перехода
+        if (_pendingHiddenForFullscreen == hidden) return; // already waiting for exactly this transition
 
         _pendingHiddenForFullscreen = hidden;
         _visibilityStabilityTimer.Stop();
-        // Асимметрия направлений: скрытие — «дорогое» решение (пользователь
-        // теряет ленту из виду), мимолётные служебные оверлеи должны
-        // отфильтровываться целиком — долгая выдержка; но если таскбар
-        // накрыло АКТИВНОЕ окно, это пользователь сам вошёл в fullscreen
-        // (плеер YouTube, игра) — прятаться нужно почти сразу, длинная
-        // задержка тут читается как тормоза. Показ обратно — безобиден,
-        // держим быстрым всегда.
+        // Asymmetry of directions: hiding is an "expensive" decision (the
+        // user loses sight of the band), fleeting service overlays must be
+        // filtered out entirely — a long hold-off; but if the taskbar was
+        // covered by the ACTIVE window, the user entered fullscreen
+        // themselves (a YouTube player, a game) — hiding needs to happen
+        // almost immediately, a long delay here reads as lag. Showing it back
+        // is harmless — we keep that fast always.
         var delay = !hidden ? ShowStabilityMs
             : coveredByForeground ? FastHideStabilityMs
             : HideStabilityMs;
@@ -547,10 +556,10 @@ public sealed class TaskbarBandWindow : Window
         _visibilityStabilityTimer.Start();
     }
 
-    /// <summary>Собственно Hide()/Show() — единственное место, которое их
-    /// вызывает по fullscreen-причине (см. вызовы из
-    /// RequestFullscreenVisibility и из таймера гистерезиса в
-    /// конструкторе).</summary>
+    /// <summary>The actual Hide()/Show() — the only place that calls them
+    /// for a fullscreen-related reason (see the calls from
+    /// RequestFullscreenVisibility and from the hysteresis timer in the
+    /// constructor).</summary>
     private void ApplyFullscreenVisibility(bool hidden)
     {
         if (hidden == _hiddenForFullscreen) return;
@@ -559,12 +568,13 @@ public sealed class TaskbarBandWindow : Window
         if (hidden) Hide(); else Show();
     }
 
-    /// <summary>Колбэк системного WinEvent-хука — вызывается нативным кодом
-    /// изнутри насоса сообщений нашего же UI-потока, но не полагаемся на
-    /// это как на документированную гарантию: маршалим через
-    /// Dispatcher.BeginInvoke, а не делаем что-либо содержательное прямо в
-    /// кадре низкоуровневого системного колбэка. BeginInvoke, а не Invoke —
-    /// колбэк должен вернуть управление ОС максимально быстро.</summary>
+    /// <summary>The system WinEvent hook callback — invoked by native code
+    /// from inside our own UI thread's message pump, but we don't rely on
+    /// this as a documented guarantee: we marshal through
+    /// Dispatcher.BeginInvoke, rather than doing anything substantial right
+    /// in the frame of a low-level system callback. BeginInvoke, not Invoke —
+    /// the callback must return control to the OS as fast as
+    /// possible.</summary>
     private void OnWinEvent(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint idEventThread, uint idEventTime)
     {
         if (eventType is Win32.EventSystemForeground
@@ -577,15 +587,16 @@ public sealed class TaskbarBandWindow : Window
 
         if (eventType == Win32.EventObjectReorder)
         {
-            // Не полный Reposition: перетасовка z-порядка не меняет
-            // геометрию, а REORDER-события идут заметно чаще прочих —
-            // достаточно дешёвой проверки захоронения (десяток GetWindow
-            // на вызов). Именно этот путь убирает последний видимый кадр
-            // ленты под таскбаром: foreground-событие приходит уже после
-            // перетасовки, а это — в её момент. СИНХРОННО, когда мы и так
-            // на UI-потоке (штатный случай для OUTOFCONTEXT-хука): очередь
-            // BeginInvoke добавляла лаг в кадр-другой, и ровно этот кадр
-            // пользователь ещё успевал заметить.
+            // Not a full Reposition: a z-order reshuffle does not change the
+            // geometry, and REORDER events fire noticeably more often than the
+            // others — a cheap burial check is enough (a dozen or so GetWindow
+            // calls per invocation). This is exactly the path that removes the
+            // last visible frame of the band under the taskbar: the foreground
+            // event arrives only after the reshuffle, while this one arrives at
+            // the very moment of it. SYNCHRONOUSLY, since we are already on the
+            // UI thread anyway (the normal case for an OUTOFCONTEXT hook): a
+            // BeginInvoke queue added a lag of a frame or two, and it was exactly
+            // that frame the user still had time to notice.
             if (Dispatcher.CheckAccess()) CheckBuriedNow();
             else Dispatcher.BeginInvoke(CheckBuriedNow);
             return;
@@ -593,37 +604,37 @@ public sealed class TaskbarBandWindow : Window
 
         if (eventType != Win32.EventObjectLocationChange) return;
 
-        // OBJID_WINDOW/CHILDID_SELF — событие про само окно целиком, не про
-        // один из его внутренних элементов управления (хук системный, шлёт
-        // события по всем окнам всех процессов — без этого фильтра здесь
-        // тонуло бы в шуме).
+        // OBJID_WINDOW/CHILDID_SELF — the event is about the window as a
+        // whole, not about one of its internal controls (the hook is
+        // system-wide and fires events for all windows in all processes —
+        // without this filter this would drown in noise).
         if (idObject != Win32.ObjIdWindow || idChild != Win32.ChildIdSelf) return;
 
         Dispatcher.BeginInvoke(() =>
         {
-            // Интересует только СЕЙЧАС активное окно — хук системный,
-            // событие могло прилететь про любое окно где угодно.
+            // We only care about the CURRENTLY active window — the hook is
+            // system-wide, the event could have arrived about any window
+            // anywhere.
             if (hwnd != Win32.GetForegroundWindow()) return;
 
-            // Дребезг: во время обычного перетаскивания/анимации окна таких
-            // событий летят десятки — переоткладываем таймер на 200 мс от
-            // каждого нового, реально проверяем полноэкранность только
-            // когда окно ~200 мс не двигалось.
+            // Debounce: during ordinary window dragging/animation, dozens of
+            // such events fire — we push the timer out to 200 ms from each new
+            // one, and actually check fullscreen state only once the window has
+            // been still for ~200 ms.
             _locationDebounceTimer.Stop();
             _locationDebounceTimer.Start();
         });
     }
 
-    /// <summary>Пересчитывает позицию/размер и (при необходимости)
-    /// перепристыковывает к таскбару — ищет таскбар и область трея заново
-    /// при каждом вызове (не кэширует хэндлы для самого поиска):
-    /// explorer.exe может пересоздать Shell_TrayWnd, а простои/добавление
-    /// иконок в трее двигают TrayNotifyWnd — task-17-brief.md: «таскбар
-    /// перестраивается». Первым делом — самопроверка на уничтожение
-    /// собственного HWND, затем — гвард на полноэкранное приложение поверх
-    /// нашего монитора, затем — дешёвая проверка "наш владелец всё ещё
-    /// текущий Shell_TrayWnd" (см. комментарий у RepositionCore
-    /// ниже).</summary>
+    /// <summary>Recomputes position/size and (if needed) re-docks to the
+    /// taskbar — looks up the taskbar and the tray area freshly on every
+    /// call (does not cache handles for the lookup itself): explorer.exe can
+    /// recreate Shell_TrayWnd, and idle time/adding tray icons move
+    /// TrayNotifyWnd — task-17-brief.md: "the taskbar rebuilds itself".
+    /// First — a self-check for our own HWND being destroyed, then — a
+    /// guard for a fullscreen application over our monitor, then — a cheap
+    /// check of "is our owner still the current Shell_TrayWnd" (see the
+    /// comment on RepositionCore below).</summary>
     private void Reposition()
     {
         try
@@ -632,10 +643,11 @@ public sealed class TaskbarBandWindow : Window
         }
         catch (InvalidOperationException)
         {
-            // WPF сама уже считает это Window закрытым — какая-то операция
-            // ниже (например Show() после выхода из fullscreen) упала с
-            // InvalidOperationException("...после закрытия окна"). Экземпляр
-            // необратимо мёртв — сигналим наружу вместо попытки продолжить.
+            // WPF itself already considers this Window closed — some operation
+            // below (for example Show() after leaving fullscreen) threw an
+            // InvalidOperationException("...after the window was closed"). The
+            // instance is irreversibly dead — we signal outward instead of
+            // trying to continue.
             _repositionTimer.Stop();
             UnhookFullscreenEvents();
             Lost?.Invoke();
@@ -647,11 +659,12 @@ public sealed class TaskbarBandWindow : Window
         var ownHwnd = new WindowInteropHelper(this).Handle;
         if (ownHwnd == nint.Zero || !Win32.IsWindow(ownHwnd))
         {
-            // Наш собственный HWND уничтожен извне — см. doc-comment у Lost.
-            // ownHwnd == Zero тоже сюда: EnsureHandle() ещё не вызывался
-            // вовсе (не должно происходить, раз таймер уже тикает — но
-            // безопаснее считать это тем же "нечем восстанавливать", чем
-            // упасть чуть ниже на SetWindowPos с нулевым hwnd).
+            // Our own HWND was destroyed externally — see the doc-comment on
+            // Lost. ownHwnd == Zero also lands here: EnsureHandle() was never
+            // called at all (shouldn't happen once the timer is already ticking
+            // — but it's safer to treat this the same as "nothing to recover"
+            // than to crash a bit further down on SetWindowPos with a null
+            // hwnd).
             _repositionTimer.Stop();
             UnhookFullscreenEvents();
             Lost?.Invoke();
@@ -659,39 +672,39 @@ public sealed class TaskbarBandWindow : Window
         }
 
         var tray = Win32.FindWindow(TrayClassName, null);
-        if (tray == nint.Zero) return; // таскбар временно недоступен (explorer между завершением и стартом) — оставляем прежнюю геометрию и видимость до следующего тика
+        if (tray == nint.Zero) return; // the taskbar is temporarily unavailable (explorer between exiting and starting) — keep the previous geometry and visibility until the next tick
 
-        // Видимость ленты = фактическая видимость таскбара, и ничего больше.
-        // Три поколения эвристик «а не fullscreen ли foreground-окно» (rect
-        // vs rcMonitor, SW_SHOWMAXIMIZED, сравнение мониторов — round 6-8)
-        // раз за разом ловили ложные срабатывания на реальных приложениях
-        // (maximized JetBrains, Toggle Full Screen Mode, кнопка «Свернуть»).
-        // Зонд ProbeTaskbarCover спрашивает у самой ОС, чьи окна реально
-        // лежат в точках полосы таскбара — определение видимости, а не её
-        // предсказание. Применение — через RequestFullscreenVisibility
-        // (гистерезис против мигания на мимолётных сменах; накрытие
-        // активным окном — достоверный fullscreen, прячемся быстро).
+        // The band's visibility = the taskbar's actual visibility, and
+        // nothing more. Three generations of "is the foreground window
+        // fullscreen?" heuristics (rect vs rcMonitor, SW_SHOWMAXIMIZED,
+        // comparing monitors — round 6-8) kept catching false positives on
+        // real applications (maximized JetBrains, Toggle Full Screen Mode,
+        // the "Minimize" button) over and over again. The ProbeTaskbarCover
+        // probe asks the OS itself which windows really lie at points along
+        // the taskbar strip — a determination of visibility, not a
+        // prediction of it. Applied via RequestFullscreenVisibility
+        // (hysteresis against flicker on fleeting changes; being covered by
+        // the active window is a reliable fullscreen, so we hide fast).
         var cover = ProbeTaskbarCover(ownHwnd, tray);
         RequestFullscreenVisibility(cover != TaskbarCover.Visible, cover == TaskbarCover.ObscuredByForeground);
-        if (_hiddenForFullscreen) return; // репозиционировать спрятанное (в т.ч. ещё не отпущенное гистерезисом обратно) окно незачем
+        if (_hiddenForFullscreen) return; // no point repositioning a hidden window (including one not yet released back by hysteresis)
 
-        // Дешёвая проверка "устарели ли мы" — вместо кэширования хэндла
-        // таскбара как раньше, читаем ТЕКУЩЕГО владельца прямо из окна:
-        // явно свежий источник истины, и заодно правильно ловит самый
-        // первый вызов (свежесозданный HWND ещё не имеет владельца, то есть
-        // GWLP_HWNDPARENT=0 != tray — естественно читается как "устарело",
-        // без отдельной ветки на "самый первый раз").
+        // A cheap check of "are we stale" — instead of caching the
+        // taskbar's handle as before, we read the CURRENT owner directly
+        // from the window: an obviously fresh source of truth, and it also
+        // correctly catches the very first call (a freshly created HWND has
+        // no owner yet, i.e. GWLP_HWNDPARENT=0 != tray — naturally read as
+        // "stale", with no separate branch for "the very first time").
         var currentOwner = Win32.GetWindowLongPtr(ownHwnd, Win32.GwlpHwndParent);
         var stale = currentOwner != tray;
 
         if (stale)
         {
-            // explorer.exe пересоздал Shell_TrayWnd (перезапуск) — или это
-            // самый первый Dock(). Перепривязываем владельца. HWND_TOPMOST
-            // переустанавливается ниже, вместе с позиционированием, ОДИН РАЗ
-            // — не на каждый последующий тик (см. doc-comment класса про то,
-            // почему периодическая переустановка ломает контекстные меню
-            // шелла).
+            // explorer.exe recreated Shell_TrayWnd (a restart) — or this is
+            // the very first Dock(). We re-bind the owner. HWND_TOPMOST is
+            // re-applied below, together with the positioning, EXACTLY ONCE —
+            // not on every subsequent tick (see the class doc-comment about why
+            // periodic re-application breaks the shell's context menus).
             Win32.SetWindowLongPtr(ownHwnd, Win32.GwlpHwndParent, tray);
         }
 
@@ -702,16 +715,17 @@ public sealed class TaskbarBandWindow : Window
         if (!Win32.GetWindowRect(tray, out var trayRect)) return;
         var bandHeightPx = trayRect.Bottom - trayRect.Top;
 
-        // Измеряем контент ЗДЕСЬ, а не полагаемся на Render() (которая может
-        // выполниться до EnsureHandle() — см. её комментарий): это гарантирует,
-        // что DesiredSize всегда посчитан в том же DPI-контексте, в котором
-        // OnRender затем реально рисует текст. Без этого при первом Dock()
-        // ширина окна считалась по DPI "до присоединения" (возможен fallback
-        // на системный DPI), а рисовался текст уже по настоящему DPI монитора
-        // — на масштабе, отличном от 100%, они расходились, и третья колонка
-        // обрезалась почти до одного символа ("FAB"/"53%" → "F"/"5",
-        // task-17-report.md round 5, live-finding #2). Дёшево — пересчёт
-        // ширины трёх FormattedText-колонок, а не перерисовка.
+        // We measure the content HERE, rather than relying on Render()
+        // (which may run before EnsureHandle() — see its comment): this
+        // guarantees that DesiredSize is always computed in the same DPI
+        // context that OnRender then actually uses to draw the text. Without
+        // this, on the first Dock() the window's width was computed using
+        // the "before docking" DPI (a fallback to the system DPI was
+        // possible), while the text was drawn using the monitor's real DPI —
+        // at a scale other than 100% these diverged, and the third column
+        // was truncated down to almost one character ("FAB"/"53%" → "F"/"5",
+        // task-17-report.md round 5, live-finding #2). Cheap — recomputing
+        // the width of three FormattedText columns, not a repaint.
         _content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         var contentWidthDip = _content.DesiredSize.Width + OuterPaddingDip * 2;
         var bandWidthPx = ToPhysical(contentWidthDip, dpi);
@@ -721,22 +735,23 @@ public sealed class TaskbarBandWindow : Window
             ? trayRect.Left + ToPhysical(LeftPositionOffsetDip, dpi)
             : ComputeTrayPositionX(trayRect, notify, bandWidthPx, gapPx);
 
-        // Пропускаем SetWindowPos целиком, если геометрия не поменялась ни на
-        // пиксель (кроме "устаревшего" случая — там необходимо заново
-        // перепривязать владельца/Z-order через SetWindowPos, даже если сами
-        // x/y/размер совпали с прошлым разом): каждый вызов SetWindowPos — это
-        // WM_WINDOWPOSCHANGED/WM_SIZE и, для layered-окна (AllowsTransparency
-        // =true), повторная композиция DWM — недорого один раз, но незачем
-        // платить эту цену каждые 5 секунд бесконечно, когда почти всегда
-        // ничего не изменилось (task-17-report.md round 5, live-finding #3:
-        // "очень заторможено").
-        // Анти-burial — СТРОГО до геометрического короткого замыкания ниже:
-        // захоронение (шелл поднял таскбар/чужое окно над нами) происходит
-        // ровно при неизменной ни на пиксель геометрии, и детект, стоявший
-        // после этого return, в реальной жизни не вызывался вообще — лента
-        // часами лежала под таскбаром при девственно чистом fullscreen-логе.
-        // Для stale-ветки не нужен: она сама переустанавливает HWND_TOPMOST
-        // вместе с перепривязкой владельца.
+        // We skip SetWindowPos entirely if the geometry hasn't changed by
+        // even a pixel (except for the "stale" case — there the owner/Z-order
+        // must be re-bound via SetWindowPos regardless, even if x/y/size
+        // themselves match the previous time): every SetWindowPos call is a
+        // WM_WINDOWPOSCHANGED/WM_SIZE and, for a layered window
+        // (AllowsTransparency=true), another DWM composition — cheap once,
+        // but no reason to pay that cost every 5 seconds forever when almost
+        // always nothing has changed (task-17-report.md round 5,
+        // live-finding #3: "very sluggish").
+        // Anti-burial — STRICTLY before the geometric short-circuit below:
+        // burial (the shell raised the taskbar/some other window above us)
+        // happens precisely when the geometry hasn't changed by a pixel, and
+        // the detection that used to sit after this return was, in real
+        // life, never invoked at all — the band lay under the taskbar for
+        // hours with a pristine, empty fullscreen log. Not needed for the
+        // stale branch: it re-applies HWND_TOPMOST itself, together with
+        // re-binding the owner.
         if (!stale) EnsureNotBuried(ownHwnd, tray);
 
         if (!stale
@@ -756,29 +771,34 @@ public sealed class TaskbarBandWindow : Window
     }
 
     /// <summary>
-    /// Возвращает ленту наверх, если её похоронили по Z-порядку — и ТОЛЬКО
-    /// тогда (не периодически: см. doc-comment класса про NetSpeedTray #200).
+    /// Brings the band back to the top if it got buried in the Z-order —
+    /// and ONLY then (not periodically: see the class doc-comment about
+    /// NetSpeedTray #200).
     ///
-    /// Живой сценарий (2026-08-06): пользователь разворачивает приложение
-    /// (maximized или AWT-фуллскрин с видимым таскбаром) — шелл гасит
-    /// topmost-слой на время «rude»-состояния, затем поднимает таскбар
-    /// SetWindowPos'ом c SWP_NOOWNERZORDER, то есть БЕЗ owned-окон. Инвариант
-    /// «owned всегда выше владельца» действует при обычном поднятии владельца,
-    /// но не при NOOWNERZORDER — лента остаётся под окном приложения при
-    /// видимом таскбаре. Симптом-подтверждение: клик по таскбару (обычное
-    /// поднятие, уже С owned-окнами) возвращал ленту на глазах пользователя.
+    /// Live scenario (2026-08-06): the user maximizes an application
+    /// (maximized, or AWT fullscreen with the taskbar visible) — the shell
+    /// drops the topmost layer during the "rude" state, then raises the
+    /// taskbar with a SetWindowPos using SWP_NOOWNERZORDER, i.e. WITHOUT
+    /// owned windows. The invariant "owned is always above its owner" holds
+    /// when the owner is raised normally, but not with NOOWNERZORDER — the
+    /// band stays under the application window while the taskbar is
+    /// visible. Confirming symptom: clicking the taskbar (a normal raise,
+    /// this time WITH owned windows) brought the band back before the
+    /// user's eyes.
     ///
-    /// Детект без хит-теста: WindowFromPoint не годится — лента прозрачная,
-    /// и в прозрачном пикселе он честно вернёт то, что под ней, даже когда
-    /// лента сверху. Вместо этого идём по цепочке GW_HWNDPREV (окна СТРОГО
-    /// выше нас): любое видимое чужое окно, пересекающее наш прямоугольник,
-    /// значит «нас перекрыли». Исключения: контекстные меню (#32768) и
-    /// всплывашки — легитимные временные окна, re-assert поверх них — это
-    /// ровно баг #200, их пропускаем (они закроются сами).
+    /// Detection without a hit-test: WindowFromPoint won't do — the band is
+    /// transparent, and on a transparent pixel it honestly returns whatever
+    /// is underneath, even when the band is on top. Instead we walk the
+    /// GW_HWNDPREV chain (windows STRICTLY above us): any visible foreign
+    /// window that intersects our rectangle means "we've been covered".
+    /// Exceptions: context menus (#32768) and flyouts — legitimate
+    /// temporary windows; re-asserting over them is precisely bug #200, so
+    /// we skip them (they will close on their own).
     /// </summary>
-    /// <summary>Лёгкий вход в EnsureNotBuried для EVENT_OBJECT_REORDER:
-    /// только резолв хэндлов и сама проверка, без геометрии/зонда — их
-    /// перетасовка z-порядка не затрагивает, а событий этих много.</summary>
+    /// <summary>A lightweight entry point into EnsureNotBuried for
+    /// EVENT_OBJECT_REORDER: only handle resolution and the check itself,
+    /// without the geometry/probe — a z-order reshuffle doesn't touch those,
+    /// and there are a lot of these events.</summary>
     private void CheckBuriedNow()
     {
         if (_hiddenForFullscreen) return;
@@ -794,20 +814,22 @@ public sealed class TaskbarBandWindow : Window
         if (!Win32.GetWindowRect(ownHwnd, out var own)) return;
 
         var above = Win32.GetWindow(ownHwnd, Win32.GwHwndPrev);
-        // Ограничитель обхода: topmost-слой обычно из единиц окон; 64 — с
-        // запасом, и гарантия отсутствия вечного цикла на битой цепочке.
+        // A traversal limiter: the topmost layer is usually only a handful
+        // of windows; 64 is generous, and guarantees against an infinite loop
+        // on a broken chain.
         for (var i = 0; above != nint.Zero && i < 64; i++, above = Win32.GetWindow(above, Win32.GwHwndPrev))
         {
             if (above == tray)
             {
-                // Владелец ВЫШЕ owned-окна — инвариант owned-порядка сломан:
-                // шелл поднял таскбар с SWP_NOOWNERZORDER, и непрозрачный
-                // Shell_TrayWnd теперь рисуется поверх ленты — для глаза она
-                // «пропала», хотя формально видима и не Hide()-нута (именно
-                // так лента гасла при открытии/скрытии окон из трея —
-                // fullscreen-путь в логе при этом девственно чист). Это то же
-                // захоронение, что и под окном приложения, просто хоронит
-                // сам владелец — и лечится тем же одиночным re-assert.
+                // The owner is ABOVE the owned window — the owned-order invariant
+                // is broken: the shell raised the taskbar with SWP_NOOWNERZORDER, and
+                // the opaque Shell_TrayWnd is now drawn on top of the band — to the
+                // eye it "disappeared", although it is formally visible and not
+                // Hide()-d (this is exactly how the band went dark when
+                // opening/closing windows from the tray — the fullscreen path in the
+                // log stayed pristine and empty the whole time). This is the same
+                // burial as under an application window, just that the owner itself
+                // does the burying — and it is fixed with the same single re-assert.
                 Diag("buried under the taskbar itself — re-asserting topmost");
                 Win32.SetWindowPos(ownHwnd, Win32.HwndTopMost, 0, 0, 0, 0,
                     Win32.SwpNoMove | Win32.SwpNoSize | Win32.SwpNoActivate);
@@ -821,7 +843,7 @@ public sealed class TaskbarBandWindow : Window
             if (!overlaps) continue;
 
             var cls = Win32.GetClassName(above);
-            if (cls is "#32768" or "Xaml_WindowedPopupClass") continue; // меню/флайауты — временные, не наш случай
+            if (cls is "#32768" or "Xaml_WindowedPopupClass") continue; // menus/flyouts — temporary, not our case
 
             Diag($"buried under {above} cls={cls} — re-asserting topmost");
             Win32.SetWindowPos(ownHwnd, Win32.HwndTopMost, 0, 0, 0, 0,
@@ -835,37 +857,40 @@ public sealed class TaskbarBandWindow : Window
         if (notify != nint.Zero && Win32.GetWindowRect(notify, out var notifyRect))
             return notifyRect.Left - gapPx - bandWidthPx;
 
-        // TrayNotifyWnd не нашёлся (нестандартная сборка explorer) — правый
-        // край таскбара как более грубая, но безопасная оценка того же
-        // самого места.
+        // TrayNotifyWnd wasn't found (a non-standard explorer build) — the
+        // taskbar's right edge as a coarser, but safe, estimate of the same
+        // spot.
         return trayRect.Right - bandWidthPx - gapPx;
     }
 
     /// <summary>
-    /// Перекрыт ли таскбар чужим окном — ground truth вместо предсказаний:
-    /// зонд берёт три точки внутри полосы таскбара (см.
-    /// <see cref="ProbeFractions"/>) и спрашивает у ОС, чьё top-level окно
-    /// реально лежит в каждой (WindowFromPoint → GetAncestor(GA_ROOT)).
-    /// Правила:
-    /// - точка «за» таскбаром (корень — Shell_TrayWnd) или за нашей же
-    ///   лентой (она легитимно висит над полосой) → таскбар в этой точке
-    ///   видим;
-    /// - перекрытым таскбар считается, только когда ВСЕ точки накрыты
-    ///   чужими окнами: одиночную точку законно накрывает флайаут
-    ///   громкости/календаря над часами — прятать ленту из-за него нельзя,
-    ///   а настоящее полноэкранное приложение накрывает полосу целиком.
-    /// Этим определением автоматически решаются все случаи, на которых
-    /// ломались эвристики: maximized-окно (любого приложения) не трогает
-    /// полосу → лента видна; fullscreen на ДРУГОМ мониторе не трогает НАШ
-    /// таскбар → видна; «Свернуть»/Win+D → таскбар сверху → видна;
-    /// настоящий fullscreen на нашем мониторе накрывает полосу → прячемся.
-    /// WindowFromPoint пропускает прозрачные пиксели layered-окон насквозь,
-    /// так что прозрачные области нашей же ленты зонду не мешают.
+    /// Is the taskbar covered by a foreign window — ground truth instead of
+    /// predictions: the probe takes three points inside the taskbar strip
+    /// (see <see cref="ProbeFractions"/>) and asks the OS which top-level
+    /// window actually sits at each of them (WindowFromPoint →
+    /// GetAncestor(GA_ROOT)). Rules:
+    /// - a point "behind" the taskbar (root is Shell_TrayWnd) or behind our
+    ///   own band (it legitimately hangs above the strip) → the taskbar is
+    ///   visible at this point;
+    /// - the taskbar is considered covered only when ALL points are covered
+    ///   by foreign windows: a single point may legitimately be covered by
+    ///   the volume/calendar flyout above the clock — the band shouldn't be
+    ///   hidden because of that, while a real fullscreen application covers
+    ///   the entire strip.
+    /// This definition automatically resolves every case that broke the
+    /// heuristics: a maximized window (of any application) doesn't touch the
+    /// strip → the band is visible; fullscreen on ANOTHER monitor doesn't
+    /// touch OUR taskbar → visible; "Minimize"/Win+D → the taskbar is on top
+    /// → visible; real fullscreen on our monitor covers the strip → we hide.
+    /// WindowFromPoint passes straight through the transparent pixels of
+    /// layered windows, so the transparent areas of our own band don't
+    /// confuse the probe.
     /// </summary>
-    /// Диагностический лог зонда — включается переменной окружения
-    /// CLAUDE_BAND_DIAG=1, пишет в %TEMP%\claude-band-diag.log. Оставлен
-    /// намеренно: видимость ленты уже несколько раз глючила только на живой
-    /// машине пользователя, и каждый раз главным дефицитом были факты.
+    /// The probe's diagnostic log — enabled by the environment variable
+    /// CLAUDE_BAND_DIAG=1, writes to %TEMP%\claude-band-diag.log. Left in
+    /// deliberately: the band's visibility has glitched a few times only on
+    /// the user's live machine, and every time the main thing lacking was
+    /// facts.
     private static readonly bool DiagEnabled =
         Environment.GetEnvironmentVariable("CLAUDE_BAND_DIAG") == "1";
 
@@ -878,13 +903,14 @@ public sealed class TaskbarBandWindow : Window
                 Path.Combine(Path.GetTempPath(), "claude-band-diag.log"),
                 $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
         }
-        catch (IOException) { /* лог не важнее работы ленты */ }
+        catch (IOException) { /* the log is not more important than the band working */ }
     }
 
-    /// Итог зонда: таскбар видим; накрыт активным (foreground) окном —
-    /// это честный fullscreen, прятаться можно быстро; накрыт чем-то
-    /// НЕактивным — подозрительно на мимолётный служебный оверлей
-    /// (ShareX и подобные), убеждаемся долгой выдержкой.
+    /// The probe's verdict: the taskbar is visible; covered by the active
+    /// (foreground) window — this is genuine fullscreen, hiding can be
+    /// fast; covered by something INACTIVE — suspicious of a fleeting
+    /// service overlay (ShareX and the like), we confirm with a long
+    /// hold-off.
     private enum TaskbarCover { Visible, ObscuredByForeground, Obscured }
 
     private static TaskbarCover ProbeTaskbarCover(nint ownHwnd, nint tray)
@@ -908,21 +934,21 @@ public sealed class TaskbarBandWindow : Window
             if (hit == nint.Zero)
             {
                 Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit=0 -> visible");
-                return TaskbarCover.Visible; // пустота — уж точно не окно поверх таскбара
+                return TaskbarCover.Visible; // emptiness — definitely not a window over the taskbar
             }
 
             var root = Win32.GetAncestor(hit, Win32.GaRoot);
             Diag($"probe f={fraction} pt=({point.X},{point.Y}) hit={hit} root={root} cls={Win32.GetClassName(root)} tray={tray} own={ownHwnd}");
             if (root == tray || root == ownHwnd || root == nint.Zero) return TaskbarCover.Visible;
 
-            // Закловленное окно — призрак: DWM его не рисует, пользователь
-            // видит таскбар, но WindowFromPoint всё равно возвращает его.
-            // Живой пример: окно Deadlock (SDL_app) после выхода из
-            // exclusive-fullscreen часами висит закловленным ПОВЕРХ таскбара
-            // в z-порядке, и любая перетасовка фокуса (открыть Telegram)
-            // снова поднимает его над Shell_TrayWnd — без этой проверки
-            // лента пряталась бы при видимом глазу таскбаре. Призрак ничего
-            // не заслоняет — точка читается как «таскбар видим».
+            // A cloaked window is a ghost: DWM doesn't paint it, the user sees
+            // the taskbar, but WindowFromPoint still returns it. Live example:
+            // the Deadlock (SDL_app) window, after leaving exclusive fullscreen,
+            // hangs cloaked ABOVE the taskbar in the z-order for hours, and any
+            // focus reshuffle (opening Telegram) raises it above Shell_TrayWnd
+            // again — without this check the band would hide while the taskbar
+            // was visible to the eye. A ghost obscures nothing — the point reads
+            // as "the taskbar is visible".
             if (Win32.IsCloaked(root))
             {
                 Diag($"probe f={fraction}: root {root} is DWM-cloaked ghost -> visible");
@@ -933,10 +959,10 @@ public sealed class TaskbarBandWindow : Window
             else if (root != firstRoot) allSameRoot = false;
         }
 
-        // Одно и то же АКТИВНОЕ окно во всех точках — пользователь сам
-        // развернул что-то на весь экран (плеер YouTube, игра): решение
-        // «прятать» здесь достоверно, долгий карантин не нужен. Служебные
-        // оверлеи (ShareX) активными не бывают.
+        // The same ACTIVE window at all points — the user themselves
+        // maximized something to fill the screen (a YouTube player, a game):
+        // the "hide" decision here is reliable, a long quarantine isn't
+        // needed. Service overlays (ShareX) are never active.
         if (allSameRoot && firstRoot == Win32.GetForegroundWindow())
         {
             Diag("probe verdict: OBSCURED by foreground window (real fullscreen)");
@@ -951,15 +977,17 @@ public sealed class TaskbarBandWindow : Window
 }
 
 /// <summary>
-/// Содержимое ленты: горизонтальный ряд колонок «метка над значением»,
-/// нарисованный вручную через <see cref="OnRender"/> — тот же подход, что и
-/// у циферблатов виджета (DialControl/StatusDialControl), переиспользующий
-/// DialText.Format/DrawStackCentered, а не StackPanel из TextBlock (проще
-/// точно посчитать ширину каждой колонки для Reposition, чем заводить лишние
-/// алиасы под StackPanel/TextBlock, у которых есть тёзки в System.Windows.Forms).
-/// Белый текст с тёмной тенью-обводкой в 1 px — на прозрачном фоне поверх
-/// произвольного (светлого или тёмного) цвета таскбара один только белый
-/// местами сливался бы с фоном; тень читается на любом фоне.
+/// The band's content: a horizontal row of "label above value" columns,
+/// drawn by hand via <see cref="OnRender"/> — the same approach as the
+/// widget's dials (DialControl/StatusDialControl), reusing
+/// DialText.Format/DrawStackCentered, rather than a StackPanel of
+/// TextBlocks (it's simpler to precisely compute each column's width for
+/// Reposition than to add extra aliases for StackPanel/TextBlock, which
+/// have namesakes in System.Windows.Forms).
+/// White text with a dark 1 px drop-shadow outline — on a transparent
+/// background over an arbitrary (light or dark) taskbar color, plain
+/// white alone would blend into the background in places; the shadow
+/// reads on any background.
 /// </summary>
 internal sealed class TaskbarBandContent : FrameworkElement
 {

@@ -6,9 +6,9 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using ClaudeUsageWidget.App.Views;
 using ClaudeUsageWidget.Core;
-// UseWindowsForms делает System.Drawing/System.Windows.Forms глобально
-// видимыми (см. ClaudeUsageWidget.App.GlobalUsings.g.cs) — Point/Cursor/
-// MouseEventArgs существуют и там под тем же именем.
+// UseWindowsForms makes System.Drawing/System.Windows.Forms globally
+// visible (see ClaudeUsageWidget.App.GlobalUsings.g.cs) — Point/Cursor/
+// MouseEventArgs also exist there under the same name.
 using Point = System.Windows.Point;
 using Cursor = System.Windows.Input.Cursor;
 using Cursors = System.Windows.Input.Cursors;
@@ -18,16 +18,17 @@ using Brushes = System.Windows.Media.Brushes;
 namespace ClaudeUsageWidget.App.Windows;
 
 /// <summary>
-/// Виджет на рабочем столе: панель без рамки, не ворующая фокус, всегда
-/// прижатая к низу Z-порядка (над обоями, под любым обычным окном), с
-/// ручными drag/resize (не системными — окно не активируется, поэтому
-/// <see cref="Window.DragMove"/> здесь не работает надёжно). Порт поведения
+/// The desktop widget: a frameless panel that doesn't steal focus, always
+/// pinned to the bottom of the Z-order (above the wallpaper, below any
+/// regular window), with manual drag/resize (not system ones — the window
+/// doesn't activate, so <see cref="Window.DragMove"/> doesn't work
+/// reliably here). A port of the behavior in
 /// <c>Sources/ClaudeUsageWidget/ClaudeUsageWidgetApp.swift:196-213, 238-324</c>.
 /// </summary>
 public sealed class DesktopWidgetWindow : Window
 {
-    /// Ширина полосы у края панели, за которую хватают для resize —
-    /// task-14-brief.md: «полосы захвата ~8 px по краям».
+    /// Width of the band at the panel's edge grabbed for resize —
+    /// task-14-brief.md: "~8 px grab bands along the edges".
     private const double EdgeBand = 8;
 
     private readonly SettingsStore _settings;
@@ -36,8 +37,8 @@ public sealed class DesktopWidgetWindow : Window
 
     private double _side;
 
-    /// Число строк, под которое сейчас построена сетка. Расходится с
-    /// настройками при добавлении/удалении аккаунта — Render это ловит.
+    /// The number of rows the grid is currently built for. Diverges from the
+    /// settings when an account is added/removed — Render catches this.
     private int _accountCount;
     private bool _positionLocked;
 
@@ -53,7 +54,7 @@ public sealed class DesktopWidgetWindow : Window
     /// (see <see cref="OnEyeClicked"/>), so this is a notification only.
     public event Action? HideRequested;
 
-    /// Кнопка Sign in в плашке NoCredentials.
+    /// The Sign in button in the NoCredentials notice.
     public event Action? SignInRequested;
 
     public bool PositionLocked
@@ -189,8 +190,8 @@ public sealed class DesktopWidgetWindow : Window
         Background = Brushes.Transparent;
         ShowInTaskbar = false;
         ShowActivated = false;
-        // Системного resize тут не место — единственный источник изменения
-        // размера это наша собственная логика по EdgeBand ниже.
+        // System resize has no place here — the only source of size changes is
+        // our own EdgeBand logic below.
         ResizeMode = ResizeMode.NoResize;
 
         _root = new WidgetRootView();
@@ -209,8 +210,8 @@ public sealed class DesktopWidgetWindow : Window
         _positionLocked = data.PositionLocked;
         _root.PositionLocked = _positionLocked;
 
-        // Стартуем с одной строкой; Render пересоберёт сетку, как только
-        // узнает реальное число аккаунтов.
+        // Start with one row; Render will rebuild the grid as soon as it learns
+        // the actual number of accounts.
         _accountCount = data.Accounts.Count > 0 ? data.Accounts.Count : 1;
         ApplyLayoutAndSize(_side);
 
@@ -218,13 +219,13 @@ public sealed class DesktopWidgetWindow : Window
         {
             Left = x;
             Top = y;
-            // После присвоения, а не внутри ApplyLayoutAndSize выше: там
-            // Left/Top ещё NaN, и прижимать нечего.
+            // After the assignment, not inside ApplyLayoutAndSize above: there
+            // Left/Top are still NaN, and there's nothing to clamp.
             ClampToScreen();
         }
         else
         {
-            // Первый запуск: центр экрана, как window.center() в оригинале.
+            // First run: center of the screen, like window.center() in the original.
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
         }
 
@@ -235,9 +236,10 @@ public sealed class DesktopWidgetWindow : Window
             PersistGeometry();
         };
 
-        // OnSourceInitialized переопределён ниже (нужен доступ к HWND) —
-        // отдельная подписка на событие SourceInitialized тут не нужна и не
-        // подошла бы по сигнатуре (EventHandler против EventArgs-only override).
+        // OnSourceInitialized is overridden below (HWND access is needed) — a
+        // separate subscription to the SourceInitialized event isn't needed here
+        // and wouldn't fit the signature anyway (EventHandler vs. an
+        // EventArgs-only override).
         MouseLeftButtonDown += OnWindowMouseLeftButtonDown;
         MouseMove += OnWindowMouseMove;
         MouseLeftButtonUp += OnWindowMouseLeftButtonUp;
@@ -245,18 +247,18 @@ public sealed class DesktopWidgetWindow : Window
         Closing += (_, _) => FlushPendingPersist();
     }
 
-    /// <summary>Порт тела WidgetRootView.swift:46-96 + BlockingNotice.swift на
-    /// стороне окна: собирает всё, что WidgetRootView нужно для отрисовки, из
-    /// сырого состояния стора.</summary>
-    /// <param name="rows">По строке на аккаунт, в порядке настроек.</param>
-    /// <param name="state">Состояние ТРЕЙ-аккаунта: плашка и строка статуса
-    /// описывают его, а не все аккаунты сразу — плашка на каждую строку была бы
-    /// отдельным UI, которого дизайн не просил.</param>
+    /// <summary>A window-side port of the body of WidgetRootView.swift:46-96 +
+    /// BlockingNotice.swift: gathers everything WidgetRootView needs to draw,
+    /// from the store's raw state.</summary>
+    /// <param name="rows">One row per account, in settings order.</param>
+    /// <param name="state">The state of the TRAY account: the notice and the
+    /// status line describe it, not all accounts at once — a notice per row
+    /// would be separate UI that the design never asked for.</param>
     public void Render(
         IReadOnlyList<AccountRow> rows, UsageState state, ServiceStatus status, DateTimeOffset? retryUntil)
     {
-        // Число строк меняется при добавлении/удалении аккаунта — сетка обязана
-        // быть пересобрана до заполнения, иначе SetContent бросит.
+        // The number of rows changes when an account is added/removed — the grid
+        // must be rebuilt before filling, otherwise SetContent throws.
         if (rows.Count != _accountCount)
         {
             _accountCount = rows.Count;
@@ -267,10 +269,11 @@ public sealed class DesktopWidgetWindow : Window
         Draw();
     }
 
-    /// Последний отрисованный кадр. Пересборка сетки (ресайз, смена числа
-    /// аккаунтов) обнуляет ячейки, а следующий Changed от стора может прийти
-    /// через пять минут — без этого панель всё это время стоит пустой, что и
-    /// выглядело как «при ресайзе теряется информация».
+    /// The last frame drawn. Rebuilding the grid (resize, a change in the
+    /// number of accounts) zeroes out the cells, and the store's next Changed
+    /// might not arrive for five minutes — without this the panel would sit
+    /// empty the whole time, which is what looked like "resizing loses
+    /// information".
     private (IReadOnlyList<AccountRow> Rows, UsageState State, ServiceStatus Status, DateTimeOffset? RetryUntil)? _last;
 
     private void Draw()
@@ -284,8 +287,8 @@ public sealed class DesktopWidgetWindow : Window
             NoticeFor(f.State));
     }
 
-    /// Раскладка сменилась в настройках — пересобрать сетку и пересчитать
-    /// размер, не дожидаясь ни ресайза, ни следующего обновления стора.
+    /// The layout changed in settings — rebuild the grid and recompute the
+    /// size, without waiting for either a resize or the store's next update.
     public void RebuildLayout(int accountCount)
     {
         _accountCount = Math.Max(accountCount, 0);
@@ -310,16 +313,16 @@ public sealed class DesktopWidgetWindow : Window
         ApplyStripBand(_stripAbove ? metrics.ToolbarReserve : 0);
         // A bigger band may no longer fit above: same rule as a drag.
         ReconsiderStripSide();
-        // Сетка только что пересобрана и пуста — заполняем её тем же кадром,
-        // не дожидаясь следующего обновления стора.
+        // The grid was just rebuilt and is empty — fill it with the same frame,
+        // without waiting for the store's next update.
         Draw();
         ClampToScreen();
     }
 
-    /// Панель перестала быть квадратом и растёт вширь с каждым аккаунтом, а
-    /// сохранённая позиция — от прежнего размера: без этого правый край
-    /// уезжает за границу экрана, и часть циферблатов просто не видна
-    /// (поймано скриншотом на 256 pt и четырёх колонках).
+    /// The panel stopped being square and grows wider with every account,
+    /// while the saved position is from the previous size: without this the
+    /// right edge drifts off the screen, and some of the dials simply aren't
+    /// visible (caught in a screenshot at 256 pt and four columns).
     private void ClampToScreen()
     {
         if (double.IsNaN(Left) || double.IsNaN(Top)) return;
@@ -338,11 +341,12 @@ public sealed class DesktopWidgetWindow : Window
         System.Windows.Forms.Screen.FromPoint(
             new System.Drawing.Point((int)Left, (int)Top)).WorkingArea;
 
-    /// App-слойный аналог BlockingNotice.make(for:) — Core его не портирует
-    /// (см. task-14-brief.md), поэтому правило живёт здесь. NoCredentials
-    /// получает кнопку Sign in (в оригинальном BlockingNotice.swift такой
-    /// кнопки нет — только текст со ссылкой на меню); Unauthorized показывает
-    /// UsageError.Description, а не зашитую строку, как просит бриф.
+    /// An App-layer counterpart to BlockingNotice.make(for:) — Core doesn't
+    /// port it (see task-14-brief.md), so the rule lives here. NoCredentials
+    /// gets a Sign in button (the original BlockingNotice.swift has no such
+    /// button — just text referring to the menu); Unauthorized shows
+    /// UsageError.Description rather than a hardcoded string, as the brief
+    /// asks.
     private static WidgetNotice? NoticeFor(UsageState state) => state switch
     {
         UsageState.Failed(var error) when error.Kind == UsageErrorKind.NoCredentials =>
@@ -373,12 +377,12 @@ public sealed class DesktopWidgetWindow : Window
     }
 
     /// <summary>
-    /// Держит окно на дне Z-порядка: любая попытка системы переставить его
-    /// (SetForegroundWindow где-то ещё, alt-tab, всплытие другого окна)
-    /// перехватывается на WM_WINDOWPOSCHANGING, и hwndInsertAfter
-    /// принудительно переписывается на HWND_BOTTOM с сброшенным
-    /// SWP_NOZORDER — иначе Windows проигнорирует hwndInsertAfter и оставит
-    /// окно там, где просил вызывающий. task-14-brief.md, шаг 4.
+    /// Keeps the window at the bottom of the Z-order: any attempt by the
+    /// system to reposition it (SetForegroundWindow elsewhere, alt-tab,
+    /// another window popping up) is intercepted at WM_WINDOWPOSCHANGING, and
+    /// hwndInsertAfter is forcibly rewritten to HWND_BOTTOM with SWP_NOZORDER
+    /// cleared — otherwise Windows would ignore hwndInsertAfter and leave the
+    /// window where the caller asked. task-14-brief.md, step 4.
     /// </summary>
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
@@ -390,9 +394,9 @@ public sealed class DesktopWidgetWindow : Window
             Marshal.StructureToPtr(pos, lParam, false);
         }
 
-        // handled остаётся false: сообщение должно продолжить обычную
-        // обработку (DefWindowProc), просто со structure, которую мы только
-        // что подменили по месту через lParam.
+        // handled stays false: the message should continue normal processing
+        // (DefWindowProc), just with the structure we just swapped in place via
+        // lParam.
         return nint.Zero;
     }
 
@@ -409,8 +413,8 @@ public sealed class DesktopWidgetWindow : Window
         BottomRight,
     }
 
-    /// Какая полоса у края под точкой — либо None (внутренняя область, то
-    /// есть drag), либо одна из восьми зон resize.
+    /// Which edge band is under the point — either None (the interior area,
+    /// meaning drag), or one of the eight resize zones.
     private ResizeEdge HitTestEdge(Point pos)
     {
         var nearLeft = pos.X <= EdgeBand;
@@ -432,11 +436,11 @@ public sealed class DesktopWidgetWindow : Window
         };
     }
 
-    /// Проекция мышиного смещения на изменение единственной величины —
-    /// стороны квадрата. Знак подобран так, чтобы верхний левый угол всегда
-    /// оставался на месте (растёт вправо/вниз независимо от того, за какой
-    /// край тянут) — task-14-brief.md: «верхний левый угол на месте». Тот же
-    /// знак, что и в Grip.delta — WidgetRootView.swift:246-255.
+    /// Projects the mouse offset onto a change in the single quantity — the
+    /// square's side. The sign is chosen so the top-left corner always stays
+    /// put (it grows right/down regardless of which edge is being dragged) —
+    /// task-14-brief.md: "top-left corner stays put". The same sign as in
+    /// Grip.delta — WidgetRootView.swift:246-255.
     private static double ResizeDelta(ResizeEdge edge, double dx, double dy) => edge switch
     {
         ResizeEdge.Left => -dx,
@@ -475,11 +479,10 @@ public sealed class DesktopWidgetWindow : Window
         }
         else
         {
-            // Ручной drag через захват мыши, а не DragMove: окно
-            // ShowActivated=false + WS_EX_NOACTIVATE, а DragMove изнутри
-            // шлёт WM_SYSCOMMAND/SC_MOVE, который рассчитан на активное
-            // окно и с неактивируемым ведёт себя ненадёжно. task-14-brief.md,
-            // шаг 4.
+            // Manual drag via mouse capture, not DragMove: the window has
+            // ShowActivated=false + WS_EX_NOACTIVATE, and DragMove internally sends
+            // WM_SYSCOMMAND/SC_MOVE, which expects an active window and behaves
+            // unreliably with a non-activating one. task-14-brief.md, step 4.
             _dragging = true;
             _dragAnchor = pos;
         }
@@ -492,14 +495,14 @@ public sealed class DesktopWidgetWindow : Window
     {
         var pos = e.GetPosition(this);
 
-        // Пояс поверх подтяжек OnLostMouseCapture: если _dragging/_resizing
-        // всё же остался true без реально зажатой левой кнопки (гонка
-        // событий или сценарий потери capture, который LostMouseCapture по
-        // какой-то причине не поймал), не даём фантомный drag/resize по
-        // голому наведению — сбрасываем состояние и ведём себя как обычный
-        // hover. WM_MOUSEMOVE приходит независимо от того, захвачена мышь
-        // или нет, поэтому без этой проверки следующее наведение на панель
-        // читалось бы как продолжение перетаскивания со старым якорем.
+        // A belt-and-suspenders check on top of OnLostMouseCapture: if
+        // _dragging/_resizing somehow stayed true without the left button
+        // actually being held (an event race, or a capture-loss scenario that
+        // LostMouseCapture failed to catch for some reason), we don't let a bare
+        // hover trigger a phantom drag/resize — reset the state and behave like
+        // a normal hover. WM_MOUSEMOVE arrives regardless of whether the mouse
+        // is captured, so without this check the next hover over the panel would
+        // read as a continuation of the drag with a stale anchor.
         if ((_dragging || _resizing) && Mouse.LeftButton != MouseButtonState.Pressed)
         {
             _dragging = false;
@@ -510,14 +513,14 @@ public sealed class DesktopWidgetWindow : Window
 
         if (_dragging)
         {
-            // Инкрементальная поправка, пересчитанная на каждый tick:
-            // GetPosition(this) всегда относительно ТЕКУЩЕГО положения окна,
-            // поэтому "текущее относительное минус исходное относительное"
-            // и есть то смещение, на которое сдвинулась мышь с прошлого
-            // кадра — окно каждый раз довигается ровно настолько же.
-            // Разница с прямым screen-to-DIP пересчётом через PointToScreen:
-            // не нужно отдельно учитывать DPI монитора, GetPosition и
-            // Left/Top уже в одной системе координат.
+            // An incremental correction, recomputed on every tick:
+            // GetPosition(this) is always relative to the window's CURRENT position,
+            // so "current relative minus original relative" is exactly the offset
+            // the mouse moved since the previous frame — the window moves by exactly
+            // that much each time. The difference from a direct screen-to-DIP
+            // recomputation via PointToScreen: there's no need to separately account
+            // for the monitor's DPI, GetPosition and Left/Top are already in the
+            // same coordinate system.
             var delta = pos - _dragAnchor;
             Left += delta.X;
             Top += delta.Y;
@@ -554,15 +557,15 @@ public sealed class DesktopWidgetWindow : Window
     }
 
     /// <summary>
-    /// Захват мыши можно потерять не только через наш собственный
-    /// ReleaseMouseCapture: системный модальный диалог, блокировка экрана,
-    /// разрыв RDP-сессии или другое приложение, перехватившее capture —
-    /// во всех этих случаях OnWindowMouseLeftButtonUp никогда не вызывается,
-    /// а _dragging/_resizing застряли бы в true навсегда. WM_MOUSEMOVE при
-    /// этом продолжает приходить и при обычном наведении без зажатой
-    /// кнопки, поэтому без этого сброса следующий hover над панелью читался
-    /// бы как продолжение drag/resize со старым (уже неактуальным) якорем —
-    /// фантомное перемещение/ресайз до следующего настоящего mouse-down.
+    /// Mouse capture can be lost not only through our own
+    /// ReleaseMouseCapture: a system modal dialog, a screen lock, an RDP
+    /// session drop, or another application stealing capture — in all these
+    /// cases OnWindowMouseLeftButtonUp is never called, and _dragging/_resizing
+    /// would stay stuck at true forever. WM_MOUSEMOVE keeps arriving even on
+    /// an ordinary hover with no button held, so without this reset the next
+    /// hover over the panel would read as a continuation of the drag/resize
+    /// with a stale (already outdated) anchor — a phantom move/resize until
+    /// the next real mouse-down.
     /// </summary>
     private void OnLostMouseCapture(object sender, MouseEventArgs e)
     {
@@ -622,14 +625,15 @@ public sealed class DesktopWidgetWindow : Window
     }
 }
 
-/// <summary>P/Invoke для этого окна: пин к низу Z-порядка и стиль
-/// «не активируется, не в таскбаре». Не LibraryImport — тот требует
-/// AllowUnsafeBlocks ради одного файла P/Invoke, тот же выбор, что и в
-/// Tray/TrayIcon.cs.</summary>
+/// <summary>P/Invoke for this window: pinning to the bottom of the
+/// Z-order and the "doesn't activate, not in the taskbar" style. Not
+/// LibraryImport — that requires AllowUnsafeBlocks for the sake of a
+/// single P/Invoke file, the same choice as in Tray/TrayIcon.cs.</summary>
 internal static class NativeMethods
 {
-    // int, не nint: nint не может быть const в C#, а сами флаги укладываются
-    // в 32 бита — комбинируются через long в SetWindowLongPtr-вызове ниже.
+    // int, not nint: nint can't be const in C#, and the flags themselves fit
+    // in 32 bits — they're combined via long in the SetWindowLongPtr call
+    // below.
     public const int GwlExStyle = -20;
     public const int WsExNoActivate = 0x08000000;
     public const int WsExToolWindow = 0x00000080;

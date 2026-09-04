@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Заявляет Per-Monitor V2 DPI awareness: без этого WPF масштабирует окно
-  системно (blurry bitmap scaling) при переносе между мониторами с разным
-  DPI, а трей-иконка и циферблаты рисуются пиксель-в-пиксель сами (Task 14+).
+  Declares Per-Monitor V2 DPI awareness: without this WPF scales the window
+  at the system level (blurry bitmap scaling) when moved between monitors with
+  different DPI, and the tray icon and dials draw themselves pixel-for-pixel (Task 14+).
 -->
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <assemblyIdentity version="1.0.0.0" name="ClaudeUsageWidget.App"/>
@@ -17,8 +17,8 @@
 
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
-      <!-- Windows 7 .. 11: без этого блока приложение видится Windows как
-           Vista-совместимое и часть DPI/тема API работает иначе. -->
+      <!-- Windows 7 .. 11: without this block the application is seen by Windows as
+           Vista-compatible and part of the DPI/theme API behaves differently. -->
       <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
       <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
       <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>

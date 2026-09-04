@@ -1,6 +1,6 @@
 using System.Windows;
-// UseWindowsForms делает System.Windows.Forms видимым глобально, и все эти
-// имена существуют там же — без алиасов каждое из них неоднозначно.
+// UseWindowsForms makes System.Windows.Forms visible globally, and all these
+// names exist there too — without aliases each of them is ambiguous.
 using TextBox = System.Windows.Controls.TextBox;
 using Button = System.Windows.Controls.Button;
 using StackPanel = System.Windows.Controls.StackPanel;
@@ -9,10 +9,11 @@ using HorizontalAlignment = System.Windows.HorizontalAlignment;
 
 namespace ClaudeUsageWidget.App.Windows;
 
-/// Одно поле ввода для переименования аккаунта.
+/// A single input field for renaming an account.
 ///
-/// Своё окно, а не WinForms InputBox или MessageBox: тех в WPF нет, а тянуть
-/// Microsoft.VisualBasic ради одной строки — хуже, чем тридцать строк здесь.
+/// A window of its own, not a WinForms InputBox or MessageBox: WPF has
+/// neither, and pulling in Microsoft.VisualBasic for one string is worse than
+/// the thirty lines here.
 public sealed class RenameWindow : Window
 {
     private readonly TextBox _input;
@@ -51,7 +52,7 @@ public sealed class RenameWindow : Window
         Loaded += (_, _) => { _input.Focus(); _input.SelectAll(); };
     }
 
-    /// Null — отменено или введена пустая строка.
+    /// Null — cancelled, or an empty string was entered.
     public static string? Ask(string current)
     {
         var window = new RenameWindow(current);

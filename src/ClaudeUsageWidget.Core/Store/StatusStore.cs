@@ -15,19 +15,20 @@ public sealed class StatusStore
 
     private readonly Func<CancellationToken, Task<ServiceStatus>> _fetch;
 
-    /// Запрос, который выполняется прямо сейчас, если есть. App-слой может
-    /// дёрнуть LoadAsync() из таймера, ручного обновления и обработчика
-    /// пробуждения почти одновременно; без коалесценции они гонятся друг с
-    /// другом, и побеждает тот, кто закончил последним — на экране может
-    /// оказаться статус старее уже показанного.
+    /// The request that's in flight right now, if any. The App layer can
+    /// kick LoadAsync() from a timer, a manual refresh, and a wake handler
+    /// almost simultaneously; without coalescing they'd race each other, and
+    /// whichever finishes last wins — the screen could end up showing a
+    /// status older than the one already displayed.
     private Task? _inFlight;
 
-    /// Синхронизирует проверку-и-публикацию `_inFlight`. В отличие от
-    /// Swift-оригинала, где @MainActor сериализовал всех вызывающих,
-    /// LoadAsync() здесь дёргают и с UI-потока (таймер, пункт меню), и с
-    /// worker-потока SystemEvents.PowerModeChanged — без блокировки два
-    /// потока могут одновременно увидеть `_inFlight == null` и оба запустить
-    /// свой fetch, нарушая контракт "один fetch на все параллельные вызовы".
+    /// Synchronizes the check-and-publish of `_inFlight`. Unlike the Swift
+    /// original, where @MainActor serialized all callers, LoadAsync() here
+    /// gets called both from the UI thread (timer, menu item) and from the
+    /// SystemEvents.PowerModeChanged worker thread — without a lock, two
+    /// threads could simultaneously see `_inFlight == null` and both start
+    /// their own fetch, breaking the "one fetch for all concurrent calls"
+    /// contract.
     private readonly object _inFlightGate = new();
 
     /// The last status successfully read. A failed refresh leaves it
@@ -95,9 +96,9 @@ public sealed class StatusStore
         }
         catch
         {
-            // Сбой фетча оставляет прежний статус как есть — временный
-            // сетевой сбой не должен объявлять сервис недоступным. Порт
-            // Swift-эквивалента `guard let fetched = try? await fetch() else { return }`.
+            // A fetch failure leaves the previous status as is — a transient
+            // network glitch shouldn't declare the service unavailable. Port
+            // of the Swift equivalent `guard let fetched = try? await fetch() else { return }`.
             return;
         }
 

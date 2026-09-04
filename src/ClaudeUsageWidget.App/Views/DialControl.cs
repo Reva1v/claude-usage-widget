@@ -1,8 +1,8 @@
 using System.Windows;
 using System.Windows.Media;
 using ClaudeUsageWidget.Core;
-// UseWindowsForms делает System.Drawing глобально видимым — Point/Color
-// существуют и там под тем же именем.
+// UseWindowsForms makes System.Drawing globally visible — Point/Color
+// also exist there under the same name.
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
 using Size = System.Windows.Size;
@@ -10,14 +10,15 @@ using Size = System.Windows.Size;
 namespace ClaudeUsageWidget.App.Views;
 
 /// <summary>
-/// Один циферблат: кольцо-подложка, дуга заполнения и проценты по центру.
-/// Порт <c>Sources/ClaudeUsageWidgetCore/Views/DialView.swift</c>.
+/// A single dial: a backing ring, a fill arc and a percentage in the center.
+/// Port of <c>Sources/ClaudeUsageWidgetCore/Views/DialView.swift</c>.
 /// </summary>
 ///
-/// Рисуется вручную через <see cref="OnRender"/>, а не композицией готовых
-/// WPF-фигур: дуге нужен угол, вычисленный по <see cref="DialGeometry"/>, и
-/// три центрированных строки текста поверх неё — собрать это декларативно
-/// из стандартных панелей вышло бы многословнее, чем прямой DrawingContext.
+/// Drawn manually via <see cref="OnRender"/> rather than by composing
+/// ready-made WPF shapes: the arc needs an angle computed via
+/// <see cref="DialGeometry"/>, and three centered lines of text over it —
+/// assembling this declaratively out of standard panels would have come out
+/// more verbose than a direct DrawingContext.
 public sealed class DialControl : DialControlBase
 {
     public static readonly DependencyProperty TitleProperty = DependencyProperty.Register(
@@ -69,9 +70,9 @@ public sealed class DialControl : DialControlBase
         var center = new Point(ActualWidth / 2, ActualHeight / 2);
         var arcInset = 4 * scale;
         var arcWidth = 5 * scale;
-        // DialArc(inset:) в оригинале рисует по тому же радиусу, что и
-        // подложка после .padding(arcInset - arcWidth/2) на strokeBorder —
-        // центральная линия обводки у обеих одна и та же.
+        // DialArc(inset:) in the original draws at the same radius as the
+        // backing ring after .padding(arcInset - arcWidth/2) on strokeBorder —
+        // the centerline of the stroke is the same for both.
         var radius = size / 2 - arcInset;
 
         dc.DrawEllipse(null, RoundPen(Theme.TrackBrush, arcWidth), center, radius, radius);
@@ -87,10 +88,10 @@ public sealed class DialControl : DialControlBase
 
     private static void DrawArc(DrawingContext dc, Point center, double radius, double fraction, Color color, double strokeWidth)
     {
-        // fraction == 1 даёт вырожденную дугу: начальная и конечная точки
-        // совпадают, ArcTo не рисует вообще ничего. Тот же эпсилон-приём,
-        // что и в UsageMath.PercentText — чуть отступаем от полного круга,
-        // визуально неотличимо, зато дуга всегда есть.
+        // fraction == 1 gives a degenerate arc: the start and end points
+        // coincide, and ArcTo draws nothing at all. The same epsilon trick
+        // as in UsageMath.PercentText — we back off slightly from a full
+        // circle, visually indistinguishable, but the arc always exists.
         var clamped = Math.Min(Math.Max(fraction, 0), 0.9999);
         if (clamped <= 0) return;
 
@@ -118,8 +119,8 @@ public sealed class DialControl : DialControlBase
         var valueText = DialText.Format(valueString, Theme.ValueFontSize(scale), Theme.ValueWeight, valueBrush, pixelsPerDip);
         var remainingText = DialText.Format(Remaining ?? "—", Theme.CaptionFontSize(scale), Theme.CaptionWeight, Theme.DimBrush, pixelsPerDip);
 
-        // VStack(spacing: 1) в DialView.swift — интервал буквально 1pt, не
-        // масштабируется вместе с остальным циферблатом.
+        // VStack(spacing: 1) in DialView.swift — the gap is literally 1pt, it
+        // does not scale together with the rest of the dial.
         DialText.DrawStackCentered(dc, center, 1, titleText, valueText, remainingText);
     }
 }

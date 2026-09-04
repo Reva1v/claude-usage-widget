@@ -3,21 +3,21 @@ using Microsoft.Win32;
 namespace ClaudeUsageWidget.App;
 
 /// <summary>
-/// Автозапуск через <c>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</c>
-/// — не требует прав администратора и работает из голого exe без
-/// установщика, в отличие от Task Scheduler/службы. Порт LaunchAtLoginToggle
-/// (<c>ClaudeUsageWidgetApp.swift:165-188</c>), которая на macOS полагается
-/// на SMAppService; здесь Windows-эквивалента SMAppService нет, поэтому
-/// прямая работа с реестром.
+/// Autostart via <c>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</c>
+/// — requires no administrator rights and works from a bare exe with no
+/// installer, unlike Task Scheduler/a service. Port of LaunchAtLoginToggle
+/// (<c>ClaudeUsageWidgetApp.swift:165-188</c>), which on macOS relies
+/// on SMAppService; there is no Windows equivalent of SMAppService, hence
+/// working with the registry directly.
 /// </summary>
 public static class Autostart
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "ClaudeUsageWidget";
 
-    /// <summary>Значение может отсутствовать (никогда не включали) или быть
-    /// не строкой (кто-то вручную испортил реестр) — оба случая read as
-    /// "выключено".</summary>
+    /// <summary>The value can be missing (never turned on) or not be a
+    /// string (someone manually messed up the registry) — both cases read
+    /// as "off".</summary>
     public static bool IsEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
@@ -25,18 +25,20 @@ public static class Autostart
     }
 
     /// <summary>
-    /// Бросает наружу любое исключение реестра (нет прав, ключ заблокирован
-    /// групповой политикой и т.п.) — вызывающая сторона (TrayIcon) ловит его
-    /// и откатывает чекбокс, порт catch-семантики LaunchAtLoginToggle.
+    /// Lets any registry exception propagate out (no rights, the key is
+    /// locked down by group policy, etc.) — the caller (TrayIcon) catches
+    /// it and rolls back the checkbox, a port of LaunchAtLoginToggle's
+    /// catch semantics.
     /// </summary>
     public static void SetEnabled(bool enabled)
     {
-        // Run-ключ у HKCU почти всегда уже существует (создаётся Windows), но
-        // CreateSubKey — подстраховка на случай нестандартного профиля.
-        // Второй "?? throw": обе перегрузки аннотированы как nullable в
-        // Microsoft.Win32.Registry — компилятор не знает, что на практике
-        // они не возвращают null, и без явного throw это CS8600 (Nullable
-        // build has 0 warnings as a hard requirement).
+        // The HKCU Run key almost always already exists (Windows creates
+        // it), but CreateSubKey is a safety net for a nonstandard profile.
+        // The second "?? throw": both overloads are annotated as nullable
+        // in Microsoft.Win32.Registry — the compiler does not know that in
+        // practice they never return null, and without an explicit throw
+        // this is CS8600 (Nullable build has 0 warnings as a hard
+        // requirement).
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)
             ?? Registry.CurrentUser.CreateSubKey(RunKeyPath)
             ?? throw new InvalidOperationException($@"Unable to open or create HKCU\{RunKeyPath}.");

@@ -12,8 +12,9 @@ namespace ClaudeUsageWidget.App;
 /// <summary>
 /// Interaction logic for App.xaml
 /// </summary>
-// Полное имя обязательно: UseWindowsForms делает System.Windows.Forms.Application
-// видимым в этом файле, и Application становится неоднозначной ссылкой.
+// The fully qualified name is required: UseWindowsForms makes
+// System.Windows.Forms.Application visible in this file, and Application
+// becomes an ambiguous reference.
 public partial class App : System.Windows.Application
 {
     private TrayIcon? _trayIcon;
@@ -27,38 +28,40 @@ public partial class App : System.Windows.Application
     /// edit mode because it was closed in edit mode would be a trap.
     private bool _editingLayout;
 
-    /// Один AccountRuntime на настроенный аккаунт, в порядке настроек.
-    /// Пересоздаётся целиком при добавлении/удалении аккаунта, а не
-    /// мутируется на месте — так порядок строк на панели и порядок в
-    /// настройках не могут разойтись.
+    /// One AccountRuntime per configured account, in the settings' order.
+    /// Recreated entirely when an account is added/removed, rather than
+    /// mutated in place — this way the row order on the panel and the order
+    /// in the settings cannot drift apart.
     private IReadOnlyList<AccountRuntime> _accounts = [];
 
-    // UsageStore.hasCredentials — синхронная лямбда, а HasSessionCookieAsync
-    // ходит в WebView2 и не может быть синхронной. Блокировать UI-поток
-    // через .GetAwaiter().GetResult() (как в черновике брифа) значило бы
-    // подвесить весь Dispatcher — включая отрисовку и обработку кликов —
-    // на время, пока CoreWebView2Environment ещё не готова при первом
-    // обращении. Вместо этого RefreshAllAsync обновляет это поле асинхронно
-    // непосредственно перед вызовом LoadAsync(), а лямбда просто читает уже
-    // готовое значение.
+    // UsageStore.hasCredentials is a synchronous lambda, while
+    // HasSessionCookieAsync goes into WebView2 and cannot be synchronous.
+    // Blocking the UI thread via .GetAwaiter().GetResult() (as in the
+    // brief's draft) would mean hanging the entire Dispatcher — including
+    // rendering and click handling — for however long
+    // CoreWebView2Environment is not yet ready on the first call. Instead,
+    // RefreshAllAsync updates this field asynchronously right before
+    // calling LoadAsync(), and the lambda just reads the already-ready
+    // value.
     ///
-    /// Ключ — id аккаунта: один общий флаг на четыре аккаунта означал бы, что
-    /// залогиненный аккаунт читается как разлогиненный, стоит соседнему
-    /// потерять куку.
+    /// Keyed by account id: one shared flag for four accounts would mean
+    /// that a signed-in account reads as signed-out the moment a
+    /// neighboring account loses its cookie.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _hasSessionCookie = new();
 
-    // Отдельно от _hasSessionCookie: становится true, когда сама проверка
-    // куки (HasSessionCookieAsync) бросила исключение (например, WebView2
-    // Runtime не установлен, или профиль недоступен) — то есть когда мы даже
-    // не смогли выяснить, есть кука или нет, а не когда честно выяснили, что
-    // её нет. Читается из UpdateTrayTooltip, чтобы такой сбой не потерялся
-    // молча в FireAndForget/Debug-выводе — см. комментарий в RefreshAllAsync.
-    /// Тоже по аккаунтам: сломаться WebView2 может на одном профиле и работать
-    /// на остальных.
+    // Separate from _hasSessionCookie: becomes true when the cookie check
+    // itself (HasSessionCookieAsync) threw an exception (e.g. the WebView2
+    // Runtime is not installed, or the profile is unreachable) — that is,
+    // when we could not even determine whether the cookie exists or not,
+    // rather than when we honestly determined that it does not. Read from
+    // UpdateTrayTooltip so such a failure does not get silently lost in
+    // FireAndForget/Debug output — see the comment in RefreshAllAsync.
+    /// Also keyed by account: WebView2 can break on one profile and keep
+    /// working on the rest.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _webViewFailing = new();
 
-    /// Именованный мьютекс единственного экземпляра — живёт полем, чтобы GC
-    /// не отпустил его на всё время жизни процесса.
+    /// Named single-instance mutex — kept as a field so the GC does not
+    /// release it for the entire lifetime of the process.
     private System.Threading.Mutex? _singleInstanceMutex;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -67,11 +70,12 @@ public partial class App : System.Windows.Application
 
         LayoutPreview.RunIfRequested();
 
-        // Один экземпляр на сессию. Живая отладка (2026-08-06) поймала ДВА
-        // одновременно работающих экземпляра (зомби от предыдущих запусков
-        // dotnet run): их ленты и виджеты дрались за позицию/видимость, и
-        // со стороны это выглядело как хаотичные пропадания. Виджету с
-        // трей-иконкой второй экземпляр не нужен никогда.
+        // One instance per session. Live debugging (2026-08-06) caught TWO
+        // instances running at once (zombies from earlier `dotnet run`
+        // launches): their bands and widgets fought over
+        // position/visibility, which looked from the outside like chaotic
+        // flickering. A widget with a tray icon never needs a second
+        // instance.
         _singleInstanceMutex = new System.Threading.Mutex(
             initiallyOwned: true, "ClaudeUsageWidget.SingleInstance", out var isFirstInstance);
         if (!isFirstInstance)
@@ -80,12 +84,13 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        // Для трей-виджета необработанное исключение на UI-потоке (по
-        // умолчанию WPF после него завершает процесс) хуже, чем одна неверная
-        // или устаревшая цифра на панели — трей-иконка и уже отрисованное
-        // состояние должны пережить сбой конкретного обработчика, а не
-        // утащить с собой весь процесс. Без диалогов и намеренно минимально:
-        // это фоновый виджет, а не окно, в котором есть кому нажать "ОК".
+        // For a tray widget, an unhandled exception on the UI thread (which
+        // WPF terminates the process after, by default) is worse than one
+        // wrong or stale number on the panel — the tray icon and the
+        // already-rendered state must survive the failure of a particular
+        // handler rather than take the whole process down with it. No
+        // dialogs, deliberately minimal: this is a background widget, not a
+        // window with someone around to click "OK".
         DispatcherUnhandledException += (_, args) =>
         {
             System.Diagnostics.Debug.WriteLine($"Unhandled UI-thread exception: {args.Exception}");
@@ -95,13 +100,14 @@ public partial class App : System.Windows.Application
             args.Handled = true;
         };
 
-        // Без окна и MainWindow сборка живёт, пока жив трей-объект и
-        // ShutdownMode остаётся OnExplicitShutdown (см. App.xaml) — иначе WPF
-        // закрыл бы процесс сразу после OnStartup, не дождавшись Quit.
+        // With no window and no MainWindow, the app stays alive as long as
+        // the tray object is alive and ShutdownMode remains
+        // OnExplicitShutdown (see App.xaml) — otherwise WPF would close the
+        // process right after OnStartup, without waiting for Quit.
         _trayIcon = new TrayIcon();
         _trayIcon.QuitRequested += Shutdown;
-        // Только трей-аккаунт: ручное обновление всех четырёх — ровно то, за
-        // что этот эндпоинт наказывает лимитом.
+        // Tray account only: manually refreshing all four is exactly what
+        // this endpoint punishes with a rate limit.
         _trayIcon.RefreshRequested += () => FireAndForget(async () =>
         {
             if (TrayAccount() is { } account) await RefreshAccountAsync(account);
@@ -157,16 +163,17 @@ public partial class App : System.Windows.Application
             if (TrayAccount() is { } account) await account.Session.OpenLoginWindowAsync();
         });
 
-        // Сервер обновляет свои цифры медленно — совпадает с
-        // UsageStore.RefreshIntervalSeconds/StatusStore.RefreshIntervalSeconds,
-        // оба стора всё равно молча схлопывают более частые запросы, но нет
-        // смысла тикать чаще, чем есть новые данные.
+        // The server updates its numbers slowly — matches
+        // UsageStore.RefreshIntervalSeconds/StatusStore.RefreshIntervalSeconds;
+        // both stores silently coalesce more frequent requests anyway, but
+        // there is no point ticking faster than there is new data.
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(UsageStore.RefreshIntervalSeconds) };
         _refreshTimer.Tick += (_, _) => FireAndForget(RefreshAllAsync);
         _refreshTimer.Start();
 
-        // Порт didWakeNotification: ноутбук проспал дольше интервала таймера
-        // — не ждать следующего тика, обновиться сразу после пробуждения.
+        // Port of didWakeNotification: the laptop slept longer than the
+        // timer interval — do not wait for the next tick, refresh right
+        // after waking up.
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         RenderWidget();
@@ -174,33 +181,34 @@ public partial class App : System.Windows.Application
         RefreshTrayIcon();
         RefreshTrayMenuState();
 
-        // Порт widgetVisible-хранимого состояния: если пользователь спрятал
-        // виджет глазом в прошлом запуске, он не должен возвращаться сам
-        // собой — иначе "Show on desktop" в меню и то, что реально на
-        // экране, тут же разойдутся сразу после старта.
+        // Port of the stored widgetVisible state: if the user hid the
+        // widget with the eye icon in a previous run, it must not come back
+        // on its own — otherwise "Show on desktop" in the menu and what is
+        // actually on screen would drift apart immediately after startup.
         if (_settings.Load().WidgetVisible) _widgetWindow.Show();
 
-        // Тот же принцип, что и для WidgetVisible строкой выше: состояние
-        // ленты в таскбаре переживает перезапуск приложения.
+        // Same principle as WidgetVisible on the line above: the taskbar
+        // band's state survives an application restart.
         if (_settings.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
 
         FireAndForget(StartupAsync);
     }
 
-    /// Порт applicationDidFinishLaunching: если сессионной куки нет, окно
-    /// логина открывается сразу, не дожидаясь клика по трею.
+    /// Port of applicationDidFinishLaunching: if there is no session
+    /// cookie, the login window opens right away, without waiting for a
+    /// tray click.
     ///
-    /// Оба шага здесь обёрнуты в try — сбой WebView2 (например, не
-    /// установлен Runtime) на старте не должен помешать RefreshAllAsync()
-    /// ниже выполниться: тот сам заново попробует и корректно отрапортует об
-    /// этой же ошибке (см. его комментарий), а StatusStore обязан загрузиться
-    /// независимо от того, что случилось с веб-сессией.
+    /// Both steps here are wrapped in try — a WebView2 failure (e.g. the
+    /// Runtime is not installed) at startup must not prevent
+    /// RefreshAllAsync() below from running: it will retry on its own and
+    /// correctly report the same error (see its comment), and StatusStore
+    /// must load regardless of what happened to the web session.
     private async Task StartupAsync()
     {
-        // Окно логина открываем только для трей-аккаунта, даже если куки нет у
-        // нескольких: четыре окна логина разом на старте — это не помощь, а
-        // засада. Остальные покажут пустые циферблаты и войдут по клику из
-        // подменю Accounts.
+        // The login window is opened only for the tray account, even if
+        // several accounts have no cookie: four login windows at once on
+        // startup is not help, it is an ambush. The rest will show empty
+        // dials and sign in via a click from the Accounts submenu.
         var account = TrayAccount();
         if (account is null) return;
 
@@ -211,14 +219,15 @@ public partial class App : System.Windows.Application
         }
         catch
         {
-            // Ничего не делаем: hasSession остаётся false, и код ниже всё
-            // равно попытается открыть LoginWindow — это не страшно, даже
-            // если среда WebView2 сломана. EnsureEnvironmentAsync внутри
-            // OpenLoginWindowAsync либо создаст среду заново (см. её
-            // faulted-сброс), либо просто ещё раз дёшево провалится — и этот
-            // сбой отдельно перехвачен ниже. RefreshAllAsync() после этого
-            // блока в любом случае столкнётся с той же ошибкой и честно её
-            // покажет, независимо от того, открылось окно логина или нет.
+            // Do nothing: hasSession stays false, and the code below will
+            // still try to open LoginWindow — that is fine even if the
+            // WebView2 environment is broken. EnsureEnvironmentAsync inside
+            // OpenLoginWindowAsync will either recreate the environment
+            // (see its faulted-state reset) or just cheaply fail again —
+            // and that failure is caught separately below.
+            // RefreshAllAsync() after this block will hit the same error
+            // either way and honestly report it, regardless of whether the
+            // login window opened or not.
         }
 
         if (!hasSession)
@@ -238,17 +247,18 @@ public partial class App : System.Windows.Application
 
     private async Task RefreshAllAsync()
     {
-        // Проверка куки — в собственном try/catch, отдельном от
-        // Task.WhenAll ниже: если она бросит (сбой WebView2, а не просто
-        // "куки нет"), это не должно помешать _statusStore.LoadAsync()
-        // выполниться — тот читает публичный, не завязанный на WebView2
-        // эндпоинт status.claude.com, и его судьба никак не связана с
-        // состоянием веб-сессии.
+        // The cookie check is in its own try/catch, separate from the
+        // Task.WhenAll below: if it throws (a WebView2 failure, not just
+        // "no cookie"), that must not prevent _statusStore.LoadAsync() from
+        // running — it reads the public status.claude.com endpoint, which
+        // does not depend on WebView2, and its fate has nothing to do with
+        // the web session's state.
         var accounts = _accounts;
 
-        // Аккаунты разносятся внутри пятиминутного цикла, а не бьют залпом:
-        // PollSchedule.OffsetFor. Ждём только статус сервиса — он общий, и
-        // задерживать его на 225 секунд ради последнего аккаунта незачем.
+        // Accounts are spread out across the five-minute cycle rather than
+        // firing all at once: PollSchedule.OffsetFor. We only wait for the
+        // service status — it is shared, and there is no reason to delay
+        // it by 225 seconds for the sake of the last account.
         for (var i = 0; i < accounts.Count; i++)
         {
             var account = accounts[i];
@@ -259,8 +269,8 @@ public partial class App : System.Windows.Application
                 continue;
             }
 
-            // Продолжение обязано вернуться на UI-поток: и WebView2, и рендер
-            // по Changed живут на Dispatcher'е.
+            // The continuation must return to the UI thread: both WebView2
+            // and the render triggered by Changed live on the Dispatcher.
             _ = Task.Delay(offset).ContinueWith(
                 _ =>
                 {
@@ -286,19 +296,20 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            // Специально НЕ false: если тут выставить _hasSessionCookie в
-            // false, UsageStore.LoadAsync ниже коротко замкнётся на
-            // Failed(NoCredentials) ещё до вызова _fetch — а это неверный,
-            // вводящий в заблуждение диагноз ("не авторизован", хотя на
-            // самом деле не работает WebView2, и кнопка Sign in ниже
-            // сломается точно так же). Оставляя true, даём LoadAsync дойти
-            // до _fetch() = session.FetchUsageAsync, который сам заново
-            // наткнётся на ту же ошибку внутри собственного
-            // HasSessionCookieAsync — и на этот раз её поймает уже
-            // UsageStore.PerformLoadAsync (внешний catch(Exception)),
-            // превратив в честный Failed(Network(ex.Message)), видимый в
-            // строке статуса на панели. UpdateTrayTooltip ниже дополнительно
-            // подсвечивает то же самое в тултипе трея, пока сбой не пройдёт.
+            // Deliberately NOT false: setting _hasSessionCookie to false
+            // here would make UsageStore.LoadAsync below short-circuit to
+            // Failed(NoCredentials) before even calling _fetch — which is a
+            // wrong, misleading diagnosis ("not signed in", when in fact
+            // WebView2 is not working, and the Sign in button below would
+            // fail exactly the same way). Leaving it true lets LoadAsync
+            // reach _fetch() = session.FetchUsageAsync, which will itself
+            // run into the same error inside its own
+            // HasSessionCookieAsync — and this time it will be caught by
+            // UsageStore.PerformLoadAsync (the outer catch(Exception)),
+            // turning it into an honest Failed(Network(ex.Message)),
+            // visible in the status line on the panel. UpdateTrayTooltip
+            // below additionally highlights the same thing in the tray
+            // tooltip until the failure clears.
             _hasSessionCookie[id] = true;
             _webViewFailing[id] = true;
             System.Diagnostics.Debug.WriteLine($"WebView2 session check failed for '{id}': {ex}");
@@ -336,8 +347,9 @@ public partial class App : System.Windows.Application
                 UsageExport.FileNameFor(account.Profile.DisplayName, account.Profile.Id) + ".widget.json");
         }
 
-        // Только по свежему успешному ответу: перезаписывать файл последним
-        // хорошим снимком значило бы обновлять его "возраст", ничего не узнав.
+        // Only on a fresh successful response: overwriting the file with
+        // the last good snapshot would mean bumping its "age" without
+        // learning anything new.
         if (account.Store.CurrentState is not UsageState.Ok(var snapshot, _)) return;
         // ModelBucket is the same choice the third dial shows; otherwise the
         // file and the panel would call two different limits by one name.
@@ -349,26 +361,27 @@ public partial class App : System.Windows.Application
 
     private void OnSignedIn(string accountId)
     {
-        // Логин мог пройти под другим аккаунтом — сохранённый id организации
-        // от предыдущей сессии не должен пережить новый вход. Порт
-        // fetchUsage's onSignedIn-эквивалента в applicationDidFinishLaunching.
+        // The login may have gone through a different account — the
+        // organization id saved from the previous session must not survive
+        // a new sign-in. Port of fetchUsage's onSignedIn equivalent in
+        // applicationDidFinishLaunching.
         var account = _accounts.FirstOrDefault(a => a.Profile.Id == accountId);
         if (account is null) return;
 
         account.Session.ClearCachedOrganization();
-        // Только этот аккаунт: вход в один не повод дёргать claude.ai за
-        // остальные три.
+        // This account only: signing into one is not a reason to hit
+        // claude.ai for the other three.
         FireAndForget(() => RefreshAccountAsync(account));
     }
 
     private void OnWidgetHideRequested()
     {
-        // Сам DesktopWidgetWindow уже спрятал себя и сохранил
-        // WidgetVisible=false в OnEyeClicked до того, как поднял это
-        // событие — здесь заново делать нечего, кроме как подтянуть в меню
-        // трея снятую галочку "Show on desktop": глаз на панели меняет то же
-        // самое состояние, что и пункт меню, и они обязаны показывать одно и
-        // то же, даже если это меню сейчас не открыто.
+        // DesktopWidgetWindow itself has already hidden itself and saved
+        // WidgetVisible=false in OnEyeClicked before raising this event —
+        // there is nothing to redo here except pull the cleared "Show on
+        // desktop" checkbox into the tray menu: the eye icon on the panel
+        // changes the same state as the menu item, and they must show the
+        // same thing even when this menu is not currently open.
         SetEditingLayout(false);
     }
 
@@ -388,18 +401,18 @@ public partial class App : System.Windows.Application
     {
         if (e.Mode != PowerModes.Resume) return;
 
-        // SystemEvents вызывает обработчики на отдельном системном потоке —
-        // и Dispatcher-чувствительный рендер внутри OnStoresChanged, и сами
-        // вызовы WebView2 в ClaudeWebSession ожидают UI-поток, поэтому
-        // маршалим целиком обработчик, а не только его хвост.
+        // SystemEvents invokes handlers on a separate system thread — both
+        // the Dispatcher-sensitive render inside OnStoresChanged and the
+        // WebView2 calls themselves in ClaudeWebSession expect the UI
+        // thread, so we marshal the whole handler, not just its tail.
         Dispatcher.Invoke(() => FireAndForget(RefreshAllAsync));
     }
 
     private void OnStoresChanged()
     {
-        // Changed у обоих сторов может прийти не с UI-потока (см.
-        // OnPowerModeChanged) — WPF запрещает трогать визуальное дерево не с
-        // потока, который им владеет.
+        // Changed from either store may arrive off the UI thread (see
+        // OnPowerModeChanged) — WPF forbids touching the visual tree from
+        // any thread other than the one that owns it.
         Dispatcher.Invoke(() =>
         {
             RenderWidget();
@@ -410,9 +423,9 @@ public partial class App : System.Windows.Application
         });
     }
 
-    /// <summary>Пересчитывает живую цифру трея из свежих данных — та же
-    /// пара DialModel.All/TrayText.Metrics, что и тултип, но берёт из неё
-    /// только метрику, выбранную в "Tray shows" (TrayMetricKey).</summary>
+    /// <summary>Recomputes the tray's live number from fresh data — the
+    /// same DialModel.All/TrayText.Metrics pair the tooltip uses, but takes
+    /// from it only the metric chosen in "Tray shows" (TrayMetricKey).</summary>
     private void RefreshTrayIcon()
     {
         var account = TrayAccount();
@@ -425,23 +438,23 @@ public partial class App : System.Windows.Application
         _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value));
     }
 
-    /// <summary>Подтягивает в меню трея (чекбоксы, "Model limit") актуальное
-    /// состояние — на старте и на каждый TrayIcon.MenuOpening/Changed
-    /// стора, поскольку часть этого состояния (PositionLocked, доступные
-    /// model-бакеты) может измениться не через сам пункт меню.</summary>
+    /// <summary>Pulls the current state into the tray menu (checkboxes,
+    /// "Model limit") — on startup and on every TrayIcon.MenuOpening/store
+    /// Changed, since part of this state (PositionLocked, available model
+    /// buckets) can change other than through the menu item itself.</summary>
     private void RefreshTrayMenuState()
     {
         var data = _settings!.Load();
-        // Список модельных бакетов берём у трей-аккаунта: выбор "Model limit"
-        // один на виджет, и предлагать в нём то, чего у показываемого аккаунта
-        // нет, было бы враньём.
+        // The list of model buckets comes from the tray account: the
+        // "Model limit" choice is one per widget, and offering something
+        // the displayed account does not have would be a lie.
         var snapshot = TrayAccount()?.Snapshot;
         var availableBuckets = snapshot is null ? Array.Empty<string>() : ModelBuckets.Available(snapshot);
 
-        // То же разрешение бакета, что DialModel.All использует для заголовка
-        // третьего циферблата — "MODEL (X)" в меню трея должно называть ровно
-        // ту модель, которую сейчас реально показывает панель/лента, а не
-        // просто "выбранную пользователем" (та может быть Auto/null).
+        // The same bucket resolution DialModel.All uses for the third
+        // dial's title — "MODEL (X)" in the tray menu must name exactly the
+        // model the panel/band is currently actually showing, not just
+        // "what the user picked" (which can be Auto/null).
         var resolvedModelLabel = snapshot is not null && ModelBuckets.Resolve(data.ModelBucket, snapshot) is { } resolvedKey
             ? ModelBuckets.Label(resolvedKey)
             : null;
@@ -472,8 +485,9 @@ public partial class App : System.Windows.Application
         var data = _settings!.Load();
         _settings.Save(data with { ModelBucket = key });
 
-        // В отличие от TrayMetricKey, ModelBucket виден и на панели виджета
-        // (третий циферблат), и в тултипе, а не только в иконке трея.
+        // Unlike TrayMetricKey, ModelBucket is visible both on the widget
+        // panel (the third dial) and in the tooltip, not only in the tray
+        // icon.
         RenderWidget();
         UpdateTrayTooltip();
         RefreshTrayIcon();
@@ -485,9 +499,10 @@ public partial class App : System.Windows.Application
         var data = _settings!.Load();
         _settings.Save(data with { WidgetVisible = visible });
 
-        // Тот же переключатель, что и глаз на панели — просто вход с
-        // противоположной стороны, поэтому просто Show/Hide, без
-        // PersistWidgetVisible ниже: настройка уже сохранена строкой выше.
+        // The same toggle as the eye icon on the panel — just entered from
+        // the opposite side, so plain Show/Hide, without
+        // PersistWidgetVisible below: the setting is already saved on the
+        // line above.
         if (visible) _widgetWindow!.Show(); else _widgetWindow!.Hide();
 
         if (!visible) SetEditingLayout(false); else RefreshTrayMenuState();
@@ -495,9 +510,9 @@ public partial class App : System.Windows.Application
 
     private void OnLockPositionToggled(bool locked)
     {
-        // Сеттер PositionLocked сам обновляет _root.PositionLocked и
-        // сохраняет настройку (см. DesktopWidgetWindow.PositionLocked) —
-        // здесь дублировать нечего.
+        // The PositionLocked setter itself updates _root.PositionLocked
+        // and saves the setting (see DesktopWidgetWindow.PositionLocked) —
+        // there is nothing to duplicate here.
         _widgetWindow!.PositionLocked = locked;
         RefreshTrayMenuState();
     }
@@ -518,10 +533,11 @@ public partial class App : System.Windows.Application
         RefreshTrayMenuState();
     }
 
-    /// <summary>Включает/выключает ленту. Окно создаётся лениво при первом
-    /// включении и переживает последующие выключения (Detach лишь прячет и
-    /// снимает владельца) — пересоздавать TaskbarBandWindow на каждый
-    /// чекбокс незачем, Dock/Detach уже идемпотентны.</summary>
+    /// <summary>Turns the band on/off. The window is created lazily on the
+    /// first enable and survives subsequent disables (Detach only hides it
+    /// and clears the owner) — there is no need to recreate
+    /// TaskbarBandWindow on every checkbox toggle, Dock/Detach are already
+    /// idempotent.</summary>
     private void SetTaskbarBandVisible(bool visible)
     {
         if (visible)
@@ -532,9 +548,9 @@ public partial class App : System.Windows.Application
                 _bandWindow.Lost += OnTaskbarBandLost;
             }
             _bandWindow.SetPosition(_settings!.Load().BandPosition);
-            // Рендерим ДО Dock: тот сразу вызывает Reposition(), которому
-            // нужна актуальная ширина контента, а не ширина от предыдущего
-            // показа (или вовсе нулевая при самом первом).
+            // Render BEFORE Dock: it immediately calls Reposition(), which
+            // needs the current content width, not the width from the
+            // previous showing (or zero on the very first one).
             RenderTaskbarBand();
             _bandWindow.Dock();
         }
@@ -544,26 +560,28 @@ public partial class App : System.Windows.Application
         }
     }
 
-    /// <summary>TaskbarBandWindow.Lost: нативный HWND ленты пропал не через
-    /// наш собственный Detach()/Close() — owned window не рушится каскадно
-    /// вместе с таскбаром (в отличие от прежнего WS_CHILD-варианта), так что
-    /// это стало защитным бэкстопом на непредвиденный случай, а не основным
-    /// путём восстановления после перезапуска explorer.exe (тот теперь чинит
-    /// себя сам на ближайшем тике — см. TaskbarBandWindow.RepositionCore).
-    /// WPF не даёт повторно показать Window, чей нативный хэндл пропал таким
-    /// образом — бросаем старый экземпляр (его HWND уже недействителен,
-    /// закрывать нечего) и, если лента всё ещё должна быть включена, заводим
-    /// новый, как при обычном первом включении.</summary>
+    /// <summary>TaskbarBandWindow.Lost: the band's native HWND disappeared
+    /// not through our own Detach()/Close() — an owned window does not
+    /// cascade-die along with the taskbar (unlike the earlier WS_CHILD
+    /// variant), so this became a defensive backstop for an unforeseen
+    /// case rather than the main recovery path after explorer.exe restarts
+    /// (that now fixes itself on the nearest tick — see
+    /// TaskbarBandWindow.RepositionCore). WPF does not let you show a
+    /// Window again once its native handle has disappeared this way — we
+    /// drop the old instance (its HWND is already invalid, there is
+    /// nothing to close) and, if the band is still supposed to be enabled,
+    /// create a new one, just like on the normal first enable.</summary>
     private void OnTaskbarBandLost()
     {
-        // Закрываем WPF-оболочку мёртвого экземпляра: его нативный HWND уже
-        // недействителен, но сам Window-объект без Close() остаётся жить в
-        // списке окон приложения — живая отладка (2026-08-06) находила по
-        // несколько таких осиротевших скрытых окон за один запуск.
+        // Close the WPF shell of the dead instance: its native HWND is
+        // already invalid, but the Window object itself, without Close(),
+        // stays alive in the application's window list — live debugging
+        // (2026-08-06) found several such orphaned hidden windows in a
+        // single run.
         var dead = _bandWindow;
         _bandWindow = null;
         try { dead?.Close(); }
-        catch (InvalidOperationException) { /* уже закрыт самим WPF — и хорошо */ }
+        catch (InvalidOperationException) { /* already closed by WPF itself — and that's fine */ }
 
         if (_settings!.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
     }
@@ -605,17 +623,18 @@ public partial class App : System.Windows.Application
 
         if (_webViewFailing.TryGetValue(account.Profile.Id, out var failing) && failing)
         {
-            // Простейший честный сигнал наружу для сбоя, который иначе
-            // тонет в FireAndForget/Debug-выводе — не модальный MessageBox
-            // (тот заблокировал бы Dispatcher прямо во время старта, пока
-            // проверка куки ещё не завершилась) и не разовое сообщение
-            // (тогда его смыл бы первый же следующий Changed от стора,
-            // например когда RefreshWidget вызывается таймером) — а тултип
-            // трея, который держится именно до тех пор, пока проблема
-            // сохраняется. Панель виджета тем временем и так покажет
-            // Failed(Network(...)) через обычный путь UsageStore, как только
-            // FetchUsageAsync внутри LoadAsync наткнётся на ту же ошибку
-            // (см. комментарий в RefreshAllAsync).
+            // The simplest honest outward signal for a failure that would
+            // otherwise drown in FireAndForget/Debug output — not a modal
+            // MessageBox (that would block the Dispatcher right during
+            // startup, while the cookie check has not finished yet) and
+            // not a one-off message (that would then get washed away by
+            // the very next Changed from the store, e.g. when
+            // RefreshWidget is called by the timer) — but a tray tooltip,
+            // which sticks around for exactly as long as the problem
+            // persists. The widget panel, meanwhile, will show
+            // Failed(Network(...)) through UsageStore's normal path anyway,
+            // as soon as FetchUsageAsync inside LoadAsync runs into the
+            // same error (see the comment in RefreshAllAsync).
             _trayIcon!.SetTooltip("Claude Usage Widget — WebView2 error, see widget for details");
             return;
         }
@@ -627,10 +646,10 @@ public partial class App : System.Windows.Application
         var metrics = TrayText.Metrics(models);
         var statusLine = StatusLine.Text(state, now, account.Store.RetryPausedUntil);
 
-        // "5H 42% · 7D 18% · FAB 8%" — тот же разделитель " · ", что и в
-        // строке статуса под циферблатами на панели; статус (если есть)
-        // идёт отдельной строкой, а не тем же " · ", чтобы не сливаться с
-        // цифрами при беглом взгляде на всплывающую подсказку.
+        // "5H 42% · 7D 18% · FAB 8%" — the same " · " separator as in
+        // the status line under the dials on the panel; the status (if any)
+        // goes on a separate line rather than the same " · ", so it does
+        // not blend with the numbers at a quick glance at the tooltip.
         var metricsText = metrics.Count == 0
             ? "Claude Usage Widget"
             : "Claude Usage Widget — " + string.Join(" · ", metrics.Select(m => $"{m.Label} {m.Value}"));
@@ -638,8 +657,8 @@ public partial class App : System.Windows.Application
         _trayIcon!.SetTooltip(statusLine is null ? metricsText : $"{metricsText}\n{statusLine}");
     }
 
-    /// Пауза после 429 — персональная для аккаунта: общая заморозила бы опрос
-    /// остальных трёх из-за одного упершегося.
+    /// The pause after a 429 is per-account: a shared one would freeze
+    /// polling for the other three because of one that hit the limit.
     private UsageRetryState? LoadRetryState(string accountId)
     {
         var account = _settings!.Load().Account(accountId);
@@ -657,9 +676,10 @@ public partial class App : System.Windows.Application
         }));
     }
 
-    /// Собирает список аккаунтов из настроек. На самом первом запуске файла
-    /// нет вовсе, миграция не срабатывает, и список пуст — тогда заводим один
-    /// аккаунт, чтобы виджету было что показывать и куда логиниться.
+    /// Builds the account list from the settings. On the very first run
+    /// the file does not exist at all, the migration does not fire, and
+    /// the list is empty — in that case we create one account so the
+    /// widget has something to show and somewhere to sign in.
     private void BuildAccounts()
     {
         var data = _settings!.Load();
@@ -678,10 +698,11 @@ public partial class App : System.Windows.Application
 
     private AccountRuntime CreateAccountRuntime(AccountProfile profile)
     {
-        // Мигрированный (он же первый) аккаунт остаётся на НЕЯВНОМ профиле
-        // WebView2 — там лежит вход, сделанный до мультиаккаунта, и именем
-        // тот профиль не адресуется. Остальные аккаунты получают именованный
-        // профиль по своему id. Подробности и измерение — в комментарии к
+        // The migrated (i.e. first) account stays on the IMPLICIT WebView2
+        // profile — that is where the sign-in made before multi-account
+        // support lives, and that profile is not addressed by name. The
+        // other accounts get a named profile keyed by their own id.
+        // Details and the reasoning are in the comment on
         // ClaudeWebSession._profileName.
         var profileName = profile.Id == SettingsMigration.LegacyAccountId ? null : profile.Id;
         var session = new ClaudeWebSession(profileName, profile.Id, profile.DisplayName, _settings!);
@@ -698,8 +719,8 @@ public partial class App : System.Windows.Application
         return new AccountRuntime(profile, session, store);
     }
 
-    /// Аккаунт, к которому привязаны трей-иконка, её тултип и «Refresh now».
-    /// Null только когда аккаунтов нет вообще.
+    /// The account the tray icon, its tooltip and "Refresh now" are bound
+    /// to. Null only when there are no accounts at all.
     private AccountRuntime? TrayAccount()
     {
         var id = _settings!.Load().TrayAccountId;
@@ -723,8 +744,8 @@ public partial class App : System.Windows.Application
             ModelDial = modelDial,
         });
 
-        // Смена раскладки меняет и размер панели, и её сетку — окно
-        // пересобирается целиком, а не перерисовывается.
+        // Changing the layout changes both the panel's size and its grid —
+        // the window is rebuilt entirely, not merely repainted.
         _widgetWindow!.RebuildLayout(_accounts.Count);
         RenderWidget();
         RefreshTrayMenuState();
@@ -797,8 +818,9 @@ public partial class App : System.Windows.Application
         var data = _settings!.Load();
         if (data.Accounts.Count >= AccountLimits.Max) return;
 
-        // Guid — внутри алфавита ProfileName и заведомо не совпадёт с
-        // legacy-id "default", который обязан остаться на неявном профиле.
+        // Guid — within ProfileName's alphabet and guaranteed not to
+        // collide with the legacy id "default", which must stay on the
+        // implicit profile.
         var profile = new AccountProfile(Guid.NewGuid().ToString(), "New account", null, null, 0);
         _settings.Save(data with { Accounts = [.. data.Accounts, profile] });
 
@@ -829,9 +851,9 @@ public partial class App : System.Windows.Application
         var runtime = _accounts.FirstOrDefault(a => a.Profile.Id == accountId);
         if (runtime is null) return;
 
-        // Чистим ДО удаления из настроек: после удаления уже нечему знать,
-        // какой профиль стирать, и следующий аккаунт с тем же id унаследовал бы
-        // чужую сессию.
+        // Clean up BEFORE removing from settings: once removed, there is
+        // nothing left to know which profile to wipe, and the next account
+        // with the same id would inherit someone else's session.
         try
         {
             await runtime.Session.ClearBrowsingDataAsync();
@@ -855,9 +877,9 @@ public partial class App : System.Windows.Application
         RefreshTrayMenuState();
     }
 
-    /// Подтягивает изменившиеся поля профиля (пока только DisplayName) в уже
-    /// живые AccountRuntime, не пересоздавая сессии и не теряя загруженные
-    /// снимки.
+    /// Pulls changed profile fields (currently only DisplayName) into
+    /// already live AccountRuntime instances, without recreating sessions
+    /// or losing loaded snapshots.
     private void ReloadAccountProfiles()
     {
         var byId = _settings!.Load().Accounts.ToDictionary(a => a.Id);
@@ -867,11 +889,11 @@ public partial class App : System.Windows.Application
             .ToList();
     }
 
-    /// Обёртка над "выстрелил и забыл" для обработчиков кликов/таймера:
-    /// без неё необработанное исключение внутри async-задачи, на которую
-    /// никто не подписан через await, тихо теряется (в лучшем случае — уходит
-    /// в TaskScheduler.UnobservedTaskException при следующей сборке мусора).
-    /// Здесь оно хотя бы попадает в Debug-вывод.
+    /// A "fire and forget" wrapper for click/timer handlers: without it,
+    /// an unhandled exception inside an async task that nobody awaits is
+    /// silently lost (at best, it ends up in
+    /// TaskScheduler.UnobservedTaskException at the next garbage
+    /// collection). Here it at least reaches Debug output.
     private static async void FireAndForget(Func<Task> action)
     {
         try
@@ -887,22 +909,23 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // Статический ивент — не отписаться значит держать App живым в
-        // подписчиках SystemEvents дольше, чем нужно.
+        // A static event — not unsubscribing means keeping App alive in
+        // SystemEvents' subscribers longer than needed.
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _refreshTimer?.Stop();
 
-        // NotifyIcon переживает процесс визуально до следующего движения
-        // мыши, если его не спрятать явно — Dispose убирает иконку сразу.
+        // NotifyIcon visually outlives the process until the next mouse
+        // movement unless hidden explicitly — Dispose removes the icon
+        // immediately.
         _trayIcon?.Dispose();
         _trayIcon = null;
 
         _widgetWindow?.Close();
         _widgetWindow = null;
 
-        // Detach перед Close: наше окно всё ещё может быть дочерним
-        // Shell_TrayWnd (чужого процесса) — сначала аккуратно отвязываем,
-        // потом закрываем как обычное WPF-окно.
+        // Detach before Close: our window may still be a child of
+        // Shell_TrayWnd (another process) — first detach it carefully,
+        // then close it as a regular WPF window.
         _bandWindow?.Detach();
         _bandWindow?.Close();
         _bandWindow = null;

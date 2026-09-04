@@ -3,8 +3,8 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using ClaudeUsageWidget.Core;
-// UseWindowsForms делает System.Drawing/System.Windows.Forms глобально
-// видимыми — Point/Cursor/Cursors существуют и там под тем же именем.
+// UseWindowsForms makes System.Drawing/System.Windows.Forms globally
+// visible — Point/Cursor/Cursors also exist there under the same name.
 using Point = System.Windows.Point;
 using Cursor = System.Windows.Input.Cursor;
 using Cursors = System.Windows.Input.Cursors;
@@ -14,9 +14,9 @@ using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 namespace ClaudeUsageWidget.App.Views;
 
 /// <summary>
-/// Четвёртый циферблат: собственный статус claude.ai. Кольцо закрашено
-/// целиком, а не на долю — состояния, а не процента. Клик открывает
-/// status.claude.com. Порт
+/// The fourth dial: claude.ai's own status. The ring is filled entirely,
+/// not by a fraction — it's a state, not a percentage. A click opens
+/// status.claude.com. Port of
 /// <c>Sources/ClaudeUsageWidgetCore/Views/StatusDialView.swift</c>.
 /// </summary>
 public sealed class StatusDialControl : DialControlBase
@@ -54,9 +54,9 @@ public sealed class StatusDialControl : DialControlBase
         var size = Math.Min(ActualWidth, ActualHeight);
         if (size <= 0) return;
 
-        // Полностью закрашенный (пусть и прозрачный) прямоугольник участвует
-        // в hit-тестировании целиком, а голая обводка — только по своим
-        // пикселям. Порт .contentShape(Rectangle()) — StatusDialView.swift:50.
+        // A fully filled (even if transparent) rectangle takes part in
+        // hit-testing over its whole area, while a bare outline only does so
+        // along its own pixels. Port of .contentShape(Rectangle()) — StatusDialView.swift:50.
         dc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, ActualWidth, ActualHeight));
 
         var scale = size / DesignSize;
@@ -80,7 +80,7 @@ public sealed class StatusDialControl : DialControlBase
     {
         var pixelsPerDip = DialText.PixelsPerDip(this);
         var valueBrush = Dimmed ? Theme.DimBrush : Theme.TextBrush;
-        // .padding(.horizontal, 6 * scale) в StatusDialView.swift:47.
+        // .padding(.horizontal, 6 * scale) in StatusDialView.swift:47.
         var maxWidth = Math.Max(0, size - 2 * 6 * scale);
 
         var labelText = DialText.Format("STATUS", Theme.LabelFontSize(scale), Theme.LabelWeight, Theme.DimBrush, pixelsPerDip);
@@ -96,11 +96,11 @@ public sealed class StatusDialControl : DialControlBase
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
-        // Событие останавливается здесь, а не всплывает к
-        // DesktopWidgetWindow — иначе клик по циферблату статуса запустил
-        // бы перетаскивание панели вместо открытия ссылки. В оригинале то
-        // же самое делает SwiftUI Button, перехватывающий жест раньше, чем
-        // NSWindow.mouseDown вообще о нём узнаёт.
+        // The event is stopped here rather than bubbling up to
+        // DesktopWidgetWindow — otherwise a click on the status dial would
+        // start dragging the panel instead of opening the link. In the
+        // original, SwiftUI's Button does exactly the same thing, intercepting
+        // the gesture before NSWindow.mouseDown even learns about it.
         e.Handled = true;
         base.OnMouseLeftButtonDown(e);
 
@@ -141,9 +141,9 @@ public sealed class StatusDialControl : DialControlBase
         // control belongs to no account in particular.
         WidgetLog.Write("-", "browser-open", $"site=status-dial url={StatusUrl}");
 
-        // UseShellExecute: true — без него .NET пытается запустить URL как
-        // исполняемый файл напрямую и падает с Win32Exception (тот же приём,
-        // что и в Tray/TrayIcon.cs).
+        // UseShellExecute: true — without it .NET tries to launch the URL
+        // directly as an executable and fails with a Win32Exception (the same
+        // trick as in Tray/TrayIcon.cs).
         Process.Start(new ProcessStartInfo(StatusUrl) { UseShellExecute = true });
     }
 }

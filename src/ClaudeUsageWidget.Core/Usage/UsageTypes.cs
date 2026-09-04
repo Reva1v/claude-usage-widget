@@ -1,24 +1,24 @@
 namespace ClaudeUsageWidget.Core;
 
-/// Один usage bucket из ответа /api/oauth/usage.
+/// One usage bucket from the /api/oauth/usage response.
 public sealed record UsageBucket(
-    /// Процент от лимита, использованный в диапазоне сервера 0...100.
+    /// Percentage of the limit used, in the server's 0...100 range.
     double Utilization,
-    /// Когда это окно обнулится. Отсутствует для bucket'ов, которые аккаунт не использует.
+    /// When this window resets. Absent for buckets the account doesn't use.
     DateTimeOffset? ResetsAt);
 
-/// Декодированный ответ /api/oauth/usage.
+/// The decoded /api/oauth/usage response.
 ///
-/// Намеренно словарь, а не запись с фиксированными свойствами: набор ключей
-/// bucket'ов меняется по мере появления и исчезновения моделей, и ни новый,
-/// ни пропавший ключ не должны требовать изменения кода.
+/// Intentionally a dictionary rather than a record with fixed properties: the
+/// set of bucket keys changes as models come and go, and neither a new nor a
+/// disappearing key should require a code change.
 public sealed class UsageSnapshot : IEquatable<UsageSnapshot>
 {
     public IReadOnlyDictionary<string, UsageBucket> Buckets { get; }
 
-    /// Когда источник реально наблюдал эти цифры. Сетевые ответы актуальны и
-    /// оставляют это null; statusline-мост Claude Code передаёт время
-    /// снятия, чтобы устаревшие закэшированные цифры были честно помечены.
+    /// When the source actually observed these numbers. Network responses are
+    /// fresh and leave this null; the Claude Code statusline bridge passes the
+    /// capture time so stale cached numbers are honestly marked as such.
     public DateTimeOffset? SourceUpdatedAt { get; }
 
     public UsageSnapshot(IReadOnlyDictionary<string, UsageBucket> buckets, DateTimeOffset? sourceUpdatedAt = null)
@@ -49,9 +49,9 @@ public sealed class UsageSnapshot : IEquatable<UsageSnapshot>
 
     public override int GetHashCode()
     {
-        // Порядок словаря не гарантирован, поэтому XOR по ключам — этого
-        // достаточно для стабильности хэша, поэлементное сравнение всё равно
-        // делает Equals.
+        // Dictionary order isn't guaranteed, so XOR over the keys is enough
+        // for hash stability — the element-by-element comparison is still
+        // done by Equals.
         var hash = Buckets.Count.GetHashCode();
         foreach (var key in Buckets.Keys)
             hash ^= key.GetHashCode();
@@ -61,15 +61,15 @@ public sealed class UsageSnapshot : IEquatable<UsageSnapshot>
 
 public enum UsageErrorKind
 {
-    /// В Keychain не найдены credentials Claude Code.
+    /// No Claude Code credentials were found in the Keychain.
     NoCredentials,
-    /// Эндпоинт отклонил токен — Claude Code нужен новый логин.
+    /// The endpoint rejected the token — Claude Code needs a fresh login.
     Unauthorized,
-    /// Тело не было JSON, либо вообще не содержало usage buckets.
+    /// The body wasn't JSON, or didn't contain usage buckets at all.
     MalformedResponse,
-    /// Эндпоинт ответил 429; RetryAfterSeconds — Retry-After сервера, если он его прислал.
+    /// The endpoint answered 429; RetryAfterSeconds is the server's Retry-After, if it sent one.
     RateLimited,
-    /// Сбой транспорта или неожиданный код статуса.
+    /// Transport failure or an unexpected status code.
     Network,
 }
 
@@ -85,9 +85,8 @@ public sealed record UsageError(UsageErrorKind Kind, int? RetryAfterSeconds = nu
     public static UsageError Network(string message) =>
         new(UsageErrorKind.Network, Message: message);
 
-    /// Эти сообщения доходят до пользователя напрямую — алерт проверки
-    /// обновлений показывает их при сбое — поэтому они читаются как
-    /// предложения, а не как C#-синтаксис.
+    /// These messages reach the user directly — the update-check alert shows
+    /// them on failure — so they read as sentences, not as C# syntax.
     public string Description => Kind switch
     {
         UsageErrorKind.NoCredentials => "No Claude.ai web session was found.",

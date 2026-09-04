@@ -551,8 +551,9 @@ public class PanelMetricsTests
     [Fact]
     public void TheGapAboveTheContentEqualsTheGapUnderIt()
     {
-        // The user's report, 2026-09-04: «отступы сверху и снизу визуально не
-        // идентичные; service operational прилип в самом низу». The panel used
+        // The user's report, 2026-09-04: "the top and bottom padding look
+        // visually inconsistent; service operational is stuck right at the
+        // bottom". The panel used
         // to centre the dial grid in everything but its padding and then draw
         // the status line 2 px off the bottom edge — 34 px over the names and
         // 3 px under the text, measured at his side of 207.

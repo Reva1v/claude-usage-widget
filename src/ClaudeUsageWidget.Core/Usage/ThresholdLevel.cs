@@ -1,7 +1,7 @@
 namespace ClaudeUsageWidget.Core;
 
-/// Насколько тревожна доля использования. Отделено от палитры цветов,
-/// чтобы пороги можно было протестировать без обращения к UI.
+/// How alarming the usage fraction is. Kept separate from the color palette
+/// so the thresholds can be tested without touching the UI.
 public enum ThresholdLevel
 {
     Ok,

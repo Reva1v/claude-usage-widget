@@ -19,8 +19,8 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     /// a dial with no data reads as `n/a` rather than disappearing and shifting
     /// the layout.
     ///
-    /// "5H"/"7D" — пользователь выбрал подписи временных окон, а не имён
-    /// лимитов, чтобы совпадать с тем, что уже показывают taskbar-band и tray.
+    /// "5H"/"7D" — the user chose time-window labels rather than limit names,
+    /// to match what the taskbar band and tray already show.
     public static IReadOnlyList<DialModel> All(UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now)
     {
         var modelKey = snapshot is null ? null : ModelBuckets.Resolve(preferredModelKey, snapshot);

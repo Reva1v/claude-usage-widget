@@ -1,9 +1,9 @@
 using System.Windows.Media;
 using ClaudeUsageWidget.Core;
-// UseWindowsForms делает System.Drawing/System.Windows.Forms глобально
-// видимыми (см. ClaudeUsageWidget.App.GlobalUsings.g.cs) — Color/FontFamily
-// существуют в обоих мирах под одним именем, отсюда явные алиасы на
-// WPF-варианты (тот же приём, что и в App.xaml.cs для Application).
+// UseWindowsForms makes System.Drawing/System.Windows.Forms globally
+// visible (see ClaudeUsageWidget.App.GlobalUsings.g.cs) — Color/FontFamily
+// exist in both worlds under the same name, hence the explicit aliases to
+// the WPF variants (the same trick as in App.xaml.cs for Application).
 using Color = System.Windows.Media.Color;
 using FontFamily = System.Windows.Media.FontFamily;
 using FontWeight = System.Windows.FontWeight;
@@ -12,12 +12,12 @@ using FontWeights = System.Windows.FontWeights;
 namespace ClaudeUsageWidget.App.Views;
 
 /// <summary>
-/// Порт палитры и типографики из <c>Sources/ClaudeUsageWidgetCore/Views/Theme.swift</c>:
-/// тёмная стеклянная панель с пастельными циферблатами.
+/// Port of the palette and typography from <c>Sources/ClaudeUsageWidgetCore/Views/Theme.swift</c>:
+/// a dark glass panel with pastel dials.
 /// </summary>
 ///
-/// RGB-компоненты пересчитаны из float(0…1) в byte(0…255) один раз здесь, а
-/// не на каждый кадр рендера.
+/// RGB components are converted from float(0…1) to byte(0…255) once here,
+/// rather than on every render frame.
 public static class Theme
 {
     public static readonly Color Panel = Color.FromRgb(30, 34, 48);
@@ -29,7 +29,7 @@ public static class Theme
     public static readonly Color Warning = Color.FromRgb(229, 200, 144);
     public static readonly Color Danger = Color.FromRgb(231, 130, 132);
 
-    /// Плановое обслуживание — информационная линия, не тревожная. Порт Theme.info.
+    /// Scheduled maintenance — an informational line, not an alarming one. Port of Theme.info.
     public static readonly Color Info = Color.FromRgb(138, 180, 230);
 
     public static readonly SolidColorBrush TrackBrush = Freeze(new SolidColorBrush(Track));
@@ -55,48 +55,48 @@ public static class Theme
         _ => throw new ArgumentOutOfRangeException(nameof(status)),
     };
 
-    /// Моноширинный шрифт вместо SwiftUI .monospacedDigit(): в WPF нет
-    /// декларативной фичи, включающей табличные цифры для произвольного
-    /// шрифта, а Consolas моноширинный по умолчанию — тот же эффект
-    /// («проценты не дрожат при обновлении»), которого добивался Theme.swift.
+    /// A monospaced font instead of SwiftUI's .monospacedDigit(): WPF has no
+    /// declarative feature that turns on tabular figures for an arbitrary
+    /// font, and Consolas is monospaced by default — the same effect
+    /// ("percentages don't jitter on update") that Theme.swift was going for.
     public static readonly FontFamily FontFamily = new("Consolas");
 
     public static readonly FontWeight LabelWeight = FontWeights.SemiBold;
     public static readonly FontWeight ValueWeight = FontWeights.SemiBold;
     public static readonly FontWeight CaptionWeight = FontWeights.Medium;
 
-    /// Шрифты заданы на дизайн-размере 170pt и масштабируются линейно вместе
-    /// с панелью (DialView.designSize / WidgetRootView.scale в Theme.swift).
+    /// Fonts are defined at a design size of 170pt and scale linearly together
+    /// with the panel (DialView.designSize / WidgetRootView.scale in Theme.swift).
     public static double LabelFontSize(double scale) => 8 * scale;
     public static double ValueFontSize(double scale) => 14 * scale;
     public static double CaptionFontSize(double scale) => 8 * scale;
 
-    /// Отступ панели и зазор между циферблатами — WidgetRootView.swift:42-44.
+    /// Panel padding and gap between dials — WidgetRootView.swift:42-44.
     public static double Padding(double scale) => 12 * scale;
     public static double Gap(double scale) => 10 * scale;
 
-    /// Радиус скругления панели — WidgetRootView.swift:87.
+    /// Panel corner rounding radius — WidgetRootView.swift:87.
     public static double CornerRadius(double scale) => 22 * scale;
 
-    /// Основной фон панели. Theme.swift кладёт под него NSVisualEffectView
-    /// (блюр рабочего стола) и поэтому обходится альфой 0.35; здесь блюра
-    /// нет — акриловый composited backdrop потребовал бы либо нового
-    /// NuGet-пакета, либо недокументированного DWM-состава, что за рамками
-    /// этой задачи — так что альфа выше, чтобы цифры оставались читаемыми
-    /// на произвольных обоях.
+    /// The panel's main background. Theme.swift puts an NSVisualEffectView
+    /// underneath it (desktop blur) and so gets away with alpha 0.35; here
+    /// there is no blur — an acrylic composited backdrop would require
+    /// either a new NuGet package or an undocumented DWM composition, which
+    /// is out of scope for this task — so the alpha is higher, to keep the
+    /// digits readable over arbitrary wallpapers.
     public const double PanelAlpha = 0.82;
 
-    /// Хедер и BlockingNotice — как в Theme.swift (panel.opacity(0.92)): они
-    /// и там почти непрозрачны, блюр под ними не принципиален.
+    /// Header and BlockingNotice — as in Theme.swift (panel.opacity(0.92)): they
+    /// are almost opaque there too, blur underneath them isn't essential.
     public const double OverlayAlpha = 0.92;
 
-    /// Фон самой панели (2x2 циферблатов) — используется через x:Static в
-    /// WidgetRootView.xaml, поэтому это готовая кисть, а не метод: x:Static
-    /// умеет читать только поля/свойства, вызвать PanelBrush(alpha) из XAML
-    /// нельзя.
+    /// Background of the main panel (2x2 dials) — used via x:Static in
+    /// WidgetRootView.xaml, so this is a ready-made brush rather than a
+    /// method: x:Static can only read fields/properties, calling
+    /// PanelBrush(alpha) from XAML isn't possible.
     public static readonly SolidColorBrush PanelBackgroundBrush = Freeze(PanelBrush(PanelAlpha));
 
-    /// Фон хедера и BlockingNotice — та же панель, но почти непрозрачная.
+    /// Background of the header and BlockingNotice — the same panel, but almost opaque.
     public static readonly SolidColorBrush OverlayBackgroundBrush = Freeze(PanelBrush(OverlayAlpha));
 
     public static SolidColorBrush PanelBrush(double alpha) =>

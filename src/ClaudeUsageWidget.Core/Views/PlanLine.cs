@@ -3,8 +3,8 @@ namespace ClaudeUsageWidget.Core;
 /// Whether the subscription plan is drawn as a second line under the account
 /// name. Off unless asked for: the widget is about the limits, and a panel that
 /// grew a row on upgrade would be a surprise nobody chose. The user turns it on
-/// from the toolbar («хочу чтобы оно показывало тир подписки, отдельную кнопку
-/// чтобы показать/спрятать», 2026-09-04).
+/// from the toolbar ("I want it to show the subscription tier, a separate
+/// button to show/hide it", 2026-09-04).
 public enum PlanLine
 {
     Hidden,

@@ -19,18 +19,18 @@ public sealed class UsageStore
     /// The server's figures move slowly; a faster poll would only add requests.
     public const int RefreshIntervalSeconds = 300;
 
-    /// Запас сверх Retry-After сервера. Из наблюдений в проде: заголовок
-    /// занижает длительность бана на несколько минут, а счётчик нарушений
-    /// бана переживает собственное истечение — повтор, пришедшийся на
-    /// несколько секунд раньше срока, снова триггерит свежий часовой бан, и
-    /// так до бесконечности. Ожидание чуть дольше запрошенного разрывает
-    /// этот цикл.
+    /// Margin added on top of the server's Retry-After. From production
+    /// observations: the header understates the ban duration by a few
+    /// minutes, and the ban-violation counter outlives its own expiry — a
+    /// retry that lands a few seconds early triggers a fresh hour-long ban
+    /// again, and so on forever. Waiting a bit longer than requested breaks
+    /// this cycle.
     public const int RetryMarginSeconds = 300;
 
-    /// Дедлайн Retry-After на практике неоднократно оказывался
-    /// недостаточным. Первый повтор разрешён через час; дальнейшие сбои
-    /// размыкают цепь на шесть часов, а затем на сутки. Состояние переживает
-    /// перезапуск приложения — см. loadRetryState/saveRetryState в конструкторе.
+    /// The Retry-After deadline has repeatedly proven insufficient in
+    /// practice. The first retry is allowed after an hour; further failures
+    /// open the circuit for six hours, then for a day. State survives an app
+    /// restart — see loadRetryState/saveRetryState in the constructor.
     private static readonly int[] RateLimitBackoffSeconds = [3600, 6 * 3600, 24 * 3600];
 
     private readonly Func<CancellationToken, Task<UsageSnapshot>> _fetch;
@@ -40,19 +40,20 @@ public sealed class UsageStore
 
     private int _consecutiveRateLimits;
 
-    /// Запрос, который выполняется прямо сейчас, если есть. App-слой может
-    /// дёрнуть LoadAsync() из таймера, ручного обновления и обработчика
-    /// пробуждения почти одновременно; без коалесценции они гонятся друг с
-    /// другом, и побеждает тот, кто закончил последним — на экране может
-    /// оказаться снимок старее уже показанного.
+    /// The request that's in flight right now, if any. The App layer can
+    /// kick LoadAsync() from a timer, a manual refresh, and a wake handler
+    /// almost simultaneously; without coalescing they'd race each other, and
+    /// whichever finishes last wins — the screen could end up showing a
+    /// snapshot older than the one already displayed.
     private Task? _inFlight;
 
-    /// Синхронизирует проверку-и-публикацию `_inFlight`. В отличие от
-    /// Swift-оригинала, где @MainActor сериализовал всех вызывающих,
-    /// LoadAsync() здесь дёргают и с UI-потока (таймер, пункт меню), и с
-    /// worker-потока SystemEvents.PowerModeChanged — без блокировки два
-    /// потока могут одновременно увидеть `_inFlight == null` и оба запустить
-    /// свой fetch, нарушая контракт "один fetch на все параллельные вызовы".
+    /// Synchronizes the check-and-publish of `_inFlight`. Unlike the Swift
+    /// original, where @MainActor serialized all callers, LoadAsync() here
+    /// gets called both from the UI thread (timer, menu item) and from the
+    /// SystemEvents.PowerModeChanged worker thread — without a lock, two
+    /// threads could simultaneously see `_inFlight == null` and both start
+    /// their own fetch, breaking the "one fetch for all concurrent calls"
+    /// contract.
     private readonly object _inFlightGate = new();
 
     public UsageState CurrentState { get; private set; } = new UsageState.Loading();

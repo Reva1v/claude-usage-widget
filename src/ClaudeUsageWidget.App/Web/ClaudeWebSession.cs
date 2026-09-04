@@ -30,18 +30,18 @@ namespace ClaudeUsageWidget.App.Web;
 /// </summary>
 public sealed class ClaudeWebSession
 {
-    // Имя ПРОФИЛЯ WebView2, а не папка: аккаунты разделены профилями внутри
-    // одной общей user data folder (WebViewEnvironment), иначе на каждый
-    // аккаунт поднимался бы свой набор процессов браузера.
+    // The WebView2 PROFILE name, not a folder: accounts are separated by
+    // profiles inside one shared user data folder (WebViewEnvironment),
+    // otherwise every account would spin up its own set of browser processes.
     //
-    // NULL — особый и нужный случай: «неявный профиль по умолчанию». Именованные
-    // профили WebView2 складывает в `EBWebView\WV2Profile_<имя>`, а профиль,
-    // созданный БЕЗ опций, — в `EBWebView\Default`, и добраться до второго по
-    // имени нельзя никаким `ProfileName` (измерено 2026-08-26 на живом
-    // WebView2 Runtime).
-    // Всё, что было залогинено до мультиаккаунта, лежит именно там — поэтому
-    // мигрированный аккаунт остаётся на неявном профиле и переживает
-    // обновление, а каждый следующий получает именованный.
+    // NULL is a special and necessary case: the "implicit default profile".
+    // WebView2 stores named profiles under `EBWebView\WV2Profile_<name>`, while
+    // a profile created WITHOUT options goes to `EBWebView\Default`, and there
+    // is no `ProfileName` that reaches the latter by name (measured 2026-08-26
+    // on a live WebView2 Runtime).
+    // Everything that was signed in before multi-account support lives exactly
+    // there — so the migrated account stays on the implicit profile and
+    // survives the upgrade, while every subsequent one gets a named profile.
     private readonly string? _profileName;
     private readonly string _accountId;
 
@@ -54,47 +54,49 @@ public sealed class ClaudeWebSession
 
     private readonly SettingsStore _settings;
 
-    // Единственная on-demand среда WebView2 на весь процесс: LoginWindow
-    // получает её же через EnsureEnvironmentAsync, чтобы кука, полученная при
-    // входе, легла в тот самый профиль, который потом читает
-    // HasSessionCookieAsync/FetchUsageAsync.
+    // The single on-demand WebView2 environment for the whole process:
+    // LoginWindow obtains the same one through EnsureEnvironmentAsync, so the
+    // cookie obtained at sign-in lands in the very profile that
+    // HasSessionCookieAsync/FetchUsageAsync later read.
     private Task<CoreWebView2Environment>? _environmentTask;
 
-    // Скрытый CoreWebView2 для фетча JSON-страниц — один на всю сессию;
-    // отдельного webview на запрос не создаём, а сериализуем обращения к
-    // этому через _fetchGate ниже.
+    // The hidden CoreWebView2 for fetching JSON pages — one for the whole
+    // session; a separate webview per request is not created, instead
+    // accesses to this one are serialized through _fetchGate below.
     private Task<CoreWebView2>? _fetchWebViewTask;
     private Window? _hiddenHost;
 
-    // КРИТИЧНО держать сильную ссылку на контроллер, а не только на его
-    // CoreWebView2: .NET-обёртка CoreWebView2Controller при сборке мусора
-    // закрывает нативный контроллер (финализатор → Close()), после чего
-    // любой вызов кэшированного CoreWebView2 навсегда падает с "CoreWebView2
+    // CRITICAL to hold a strong reference to the controller, not only to its
+    // CoreWebView2: the .NET wrapper CoreWebView2Controller closes the native
+    // controller on garbage collection (finalizer → Close()), after which any
+    // call on the cached CoreWebView2 fails forever with "CoreWebView2
     // members cannot be accessed after the WebView2 control is disposed".
-    // Именно так и проявлялось: данные шли, пока не случилась Gen2-сборка,
-    // а дальше каждый рефреш — одна и та же ошибка до перезапуска.
+    // That is exactly how it manifested: data kept flowing until a Gen2
+    // collection happened, and after that every refresh hit the same error
+    // until a restart.
     private CoreWebView2Controller? _fetchController;
 
-    // Один разделяемый webview не может обслуживать две навигации одновременно
-    // — вторая Navigate() перезапишет страницу раньше, чем обработчик первой
-    // успеет прочитать HttpStatusCode/тело. UsageStore и так не допускает
-    // параллельных вызовов FetchUsageAsync (коалесцирует LoadAsync), но этот
-    // семафор — самостоятельная гарантия на уровне самого webview, а не
-    // побочный эффект чужой логики.
+    // One shared webview cannot serve two navigations at once — the second
+    // Navigate() would overwrite the page before the first one's handler
+    // manages to read the HttpStatusCode/body. UsageStore already disallows
+    // concurrent FetchUsageAsync calls (it coalesces LoadAsync), but this
+    // semaphore is an independent guarantee at the level of the webview
+    // itself, not a side effect of someone else's logic.
     private readonly SemaphoreSlim _fetchGate = new(1, 1);
 
     private LoginWindow? _loginWindow;
 
-    // Открытие окна логина само по себе асинхронное (нужна среда WebView2),
-    // а значит между проверкой `_loginWindow == null` и её присвоением есть
-    // await-разрыв. Без отдельного поля два конкурирующих вызова (автооткрытие
-    // на старте гонится с ручным кликом "Sign in" из трея) оба успевают
-    // увидеть null и создать по окну каждый. `_openLoginWindowTask`
-    // выставляется синхронно, до первого await — второй вызов видит уже
-    // запущенную задачу и просто дожидается того же самого окна.
+    // Opening the login window is itself asynchronous (the WebView2
+    // environment is needed), which means there is an await-gap between
+    // checking `_loginWindow == null` and assigning it. Without a separate
+    // field, two concurrent calls (auto-open at start-up racing a manual
+    // "Sign in" click from the tray) would both manage to see null and each
+    // create its own window. `_openLoginWindowTask` is set synchronously,
+    // before the first await — the second call sees the already-running task
+    // and simply waits for the same window.
     private Task<LoginWindow>? _openLoginWindowTask;
 
-    /// Кука появилась и окно логина закрылось — порт uses site's onSignedIn.
+    /// The cookie appeared and the login window closed — port uses site's onSignedIn.
     public event Action? SignedIn;
 
     public ClaudeWebSession(string? profileName, string accountId, string accountLabel, SettingsStore settings)
@@ -105,8 +107,9 @@ public sealed class ClaudeWebSession
         _settings = settings;
     }
 
-    /// Организация у каждого аккаунта своя: до мультиаккаунта это поле лежало
-    /// на верхнем уровне настроек просто потому, что аккаунт был один.
+    /// Each account has its own organization: before multi-account support
+    /// this field lived at the top level of settings simply because there was
+    /// only one account.
     private AccountProfile? LoadProfile() => _settings.Load().Account(_accountId);
 
     private string? LoadOrganizationId() => LoadProfile()?.OrganizationId;
@@ -139,17 +142,18 @@ public sealed class ClaudeWebSession
     /// and null is the condition being tested.
     private bool _subscriptionFieldsFetched;
 
-    /// Стирает куки и кэш ЭТОГО аккаунта. Нужно для «Remove» в трее: удалить
-    /// аккаунт из настроек, не почистив профиль, значит оставить его залогиненным
-    /// — и следующий аккаунт с тем же id унаследовал бы чужую сессию.
+    /// Clears cookies and cache for THIS account. Needed for "Remove" in the
+    /// tray: removing an account from settings without cleaning its profile
+    /// would leave it signed in — and the next account with the same id would
+    /// inherit someone else's session.
     public async Task ClearBrowsingDataAsync()
     {
         var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
         await webView.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
     }
 
-    /// Порт <c>hasSessionCookie()</c> — sessionKey на домене claude.ai с
-    /// непустым значением.
+    /// Port of <c>hasSessionCookie()</c> — sessionKey on the claude.ai domain
+    /// with a non-empty value.
     public Task<bool> HasSessionCookieAsync() =>
         RunWithFetchWebViewAsync(async webView =>
         {
@@ -157,7 +161,7 @@ public sealed class ClaudeWebSession
             return SessionCookie.IsPresent(cookies);
         });
 
-    /// Порт <c>fetchUsage()</c>.
+    /// Port of <c>fetchUsage()</c>.
     public async Task<UsageSnapshot> FetchUsageAsync(CancellationToken ct)
     {
         if (!await HasSessionCookieAsync().ConfigureAwait(true))
@@ -210,9 +214,9 @@ public sealed class ClaudeWebSession
         }
         catch (UsageException ex) when (ex.Error.Kind == UsageErrorKind.Unauthorized)
         {
-            // Сохранённая организация могла умереть вместе с сессией (аккаунт
-            // удалён из неё, доступ отозван) — не тащить мёртвый id в
-            // следующую попытку логина.
+            // The saved organization could have died along with the session
+            // (the account was removed from it, access revoked) — don't carry
+            // a dead id into the next login attempt.
             ClearCachedOrganization();
             throw;
         }
@@ -243,10 +247,10 @@ public sealed class ClaudeWebSession
         SaveOrganizationId(null);
     }
 
-    /// Повторный вызов, пока окно логина ещё открыто (или ещё только
-    /// открывается), поднимает то же самое окно вместо создания второго —
-    /// сравнение с <c>_loginWindow</c>, а не счётчик, поскольку окно само
-    /// сбрасывает поле в null при закрытии.
+    /// A repeat call while the login window is still open (or is still only
+    /// opening) brings up that same window instead of creating a second one —
+    /// a comparison against <c>_loginWindow</c>, not a counter, since the
+    /// window itself resets the field to null when it closes.
     public Task<LoginWindow> OpenLoginWindowAsync()
     {
         if (_loginWindow is { } existing)
@@ -288,7 +292,7 @@ public sealed class ClaudeWebSession
         try
         {
             var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
-            // Тот же профиль, что читает фетч — см. инвариант в CreateFetchWebViewAsync.
+            // The same profile that the fetch reads — see the invariant in CreateFetchWebViewAsync.
             var window = new LoginWindow(environment, _profileName, _accountLabel);
             window.SignedIn += OnLoginWindowSignedIn;
             window.Closed += OnLoginWindowClosed;
@@ -303,11 +307,11 @@ public sealed class ClaudeWebSession
         }
         finally
         {
-            // Освобождаем "замок" независимо от исхода: при успехе
-            // следующий вызов пойдёт по ветке `_loginWindow is { } existing`
-            // выше; при сбое (например, среда WebView2 не создалась) —
-            // разрешаем следующему вызову попробовать заново, а не залипнуть
-            // на однажды провалившейся задаче навсегда.
+            // Release the "lock" regardless of outcome: on success the next
+            // call goes down the `_loginWindow is { } existing` branch above;
+            // on failure (e.g. the WebView2 environment failed to create) —
+            // let the next call try again instead of getting stuck on a
+            // once-failed task forever.
             _openLoginWindowTask = null;
         }
     }
@@ -323,7 +327,7 @@ public sealed class ClaudeWebSession
     }
 
     // ------------------------------------------------------------------
-    // Page-fetch: порт WebPageJSONFetcher.
+    // Page-fetch: port of WebPageJSONFetcher.
     // ------------------------------------------------------------------
 
     /// One retry on a transient navigation failure — and a log line for EVERY
@@ -378,11 +382,11 @@ public sealed class ClaudeWebSession
         }
     }
 
-    /// Все обращения к разделяемому fetch-webview идут через эту обёртку:
-    /// если движок умер (процесс браузера завершился/упал — например, после
-    /// сна — или контроллер оказался закрыт), кэш сбрасывается и попытка
-    /// повторяется один раз на свежесозданном webview вместо того, чтобы
-    /// возвращать одну и ту же ошибку до перезапуска приложения.
+    /// All accesses to the shared fetch webview go through this wrapper: if
+    /// the engine died (the browser process exited/crashed — for example
+    /// after sleep — or the controller turned out to be closed), the cache is
+    /// reset and the attempt is retried once on a freshly created webview
+    /// instead of returning the same error until the application restarts.
     private async Task<T> RunWithFetchWebViewAsync<T>(Func<CoreWebView2, Task<T>> action)
     {
         for (var attempt = 0; ; attempt++)
@@ -399,11 +403,11 @@ public sealed class ClaudeWebSession
         }
     }
 
-    /// Формы смерти WebView2, после которых кэшированный CoreWebView2
-    /// бесполезен: ObjectDisposedException — обёртка закрыта ("...cannot be
-    /// accessed after the WebView2 control is disposed"); COMException
-    /// 0x8007139F (ERROR_INVALID_STATE) и 0x80010108 (RPC_E_DISCONNECTED) —
-    /// процесс браузера завершился, нативный объект отвалился.
+    /// Forms of WebView2 death after which the cached CoreWebView2 is
+    /// useless: ObjectDisposedException — the wrapper is closed ("...cannot
+    /// be accessed after the WebView2 control is disposed"); COMException
+    /// 0x8007139F (ERROR_INVALID_STATE) and 0x80010108 (RPC_E_DISCONNECTED)
+    /// — the browser process exited, the native object fell off.
     private static bool IsWebViewDead(Exception ex) => ex switch
     {
         ObjectDisposedException => true,
@@ -426,8 +430,9 @@ public sealed class ClaudeWebSession
         }
         catch
         {
-            // Контроллер и так мёртв — Close() поверх умершего процесса
-            // браузера может бросить, терять из-за этого пересоздание нельзя.
+            // The controller is already dead — Close() on top of a dead
+            // browser process may throw, and recreation must not be lost
+            // because of that.
         }
         _fetchController = null;
         _hiddenHost?.Close();
@@ -439,7 +444,7 @@ public sealed class ClaudeWebSession
     {
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // 30 с — тот же таймаут, что и в оригинале
+        // 30 s — the same timeout as in the original
         // (WebPageJSONFetcher.fetch, URLRequest(timeoutInterval: 30)).
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
@@ -472,7 +477,7 @@ public sealed class ClaudeWebSession
                         $"path={new Uri(url).AbsolutePath} http={args.HttpStatusCode} success={args.IsSuccess} status={args.WebErrorStatus}");
                 }
 
-                // Семантика статусов — порт webView(_:didFinish:) в
+                // Status semantics — port of webView(_:didFinish:) in
                 // ClaudeWebSession.swift:126-139.
                 if (args.HttpStatusCode is 401 or 403)
                 {
@@ -504,20 +509,21 @@ public sealed class ClaudeWebSession
 
                 var raw = await webView.ExecuteScriptAsync(
                     "document.body.innerText || document.body.textContent || ''").ConfigureAwait(true);
-                // ExecuteScriptAsync возвращает JSON-представление значения
-                // скрипта (строка приходит как JSON-строка с экранированием),
-                // а не голый текст — распаковываем тем же JSON-декодером.
+                // ExecuteScriptAsync returns a JSON representation of the
+                // script's value (a string arrives as an escaped JSON string),
+                // not raw text — unwrap it with the same JSON decoder.
                 var text = JsonSerializer.Deserialize<string>(raw);
                 if (text is null) tcs.TrySetException(new UsageException(UsageError.MalformedResponse));
                 else tcs.TrySetResult(text);
             }
             catch (Exception ex)
             {
-                // Смерть webview пробрасываем как есть — по ней
-                // RunWithFetchWebViewAsync пересоздаёт движок и повторяет
-                // запрос; завёрнутая в UsageException.Network она выглядела
-                // бы обычной сетевой ошибкой и уходила пользователю на дисплей
-                // ("cannot be accessed after the WebView2...") до перезапуска.
+                // A webview death is rethrown as-is — RunWithFetchWebViewAsync
+                // uses it to recreate the engine and retry the request; if it
+                // were wrapped in UsageException.Network it would look like an
+                // ordinary network error and would surface to the user's
+                // display ("cannot be accessed after the WebView2...") until
+                // a restart.
                 tcs.TrySetException(IsWebViewDead(ex) ? ex : new UsageException(UsageError.Network(ex.Message)));
             }
         }
@@ -535,31 +541,31 @@ public sealed class ClaudeWebSession
     }
 
     // ------------------------------------------------------------------
-    // Ленивая, разделяемая среда/webview.
+    // Lazy, shared environment/webview.
     // ------------------------------------------------------------------
 
     private Task<CoreWebView2Environment> EnsureEnvironmentAsync()
     {
-        // Тот же приём, что и у `_openLoginWindowTask` в CreateLoginWindowAsync
-        // (см. finally-комментарий выше): без него `??=` запомнил бы FAULTED
-        // (или CANCELED) Task навсегда — если первая попытка провалилась
-        // (например, Runtime WebView2 ещё не установлен), пользователь мог бы
-        // поставить его прямо во время работы приложения, но UI продолжал бы
-        // показывать ту же самую ошибку до перезапуска, потому что
-        // CreateEnvironmentAsync() больше никогда не вызвалась бы повторно.
-        // Сбрасываем кеш перед `??=`, чтобы следующий вызов пересоздал среду
-        // с нуля.
+        // The same trick as `_openLoginWindowTask` in CreateLoginWindowAsync
+        // (see the finally-comment above): without it `??=` would remember a
+        // FAULTED (or CANCELED) Task forever — if the first attempt failed
+        // (for example, the WebView2 Runtime is not installed yet), the user
+        // could install it right while the application is running, but the UI
+        // would keep showing the same error until a restart, because
+        // CreateEnvironmentAsync() would never be called again. Reset the
+        // cache before `??=`, so the next call recreates the environment from
+        // scratch.
         //
-        // Конкурентность: блокировка не нужна, потому что все вызовы этого
-        // метода приходят с UI-потока. EnsureEnvironmentAsync вызывается
-        // только из CreateFetchWebViewAsync (через EnsureFetchWebViewAsync) и
-        // CreateLoginWindowAsync — оба, в свою очередь, вызываются
-        // исключительно из App.xaml.cs (RefreshAllAsync/StartupAsync и
-        // OpenLoginWindowAsync через SignInRequested/OnSignedIn), где каждый
-        // await всюду использует ConfigureAwait(true) и возвращается на
-        // Dispatcher; единственный источник вызовов с не-UI-потока,
-        // SystemEvents.PowerModeChanged, сам явно маршалится через
-        // Dispatcher.Invoke перед тем, как дойти до RefreshAllAsync.
+        // Concurrency: no lock is needed, because all calls to this method
+        // come from the UI thread. EnsureEnvironmentAsync is only called from
+        // CreateFetchWebViewAsync (through EnsureFetchWebViewAsync) and
+        // CreateLoginWindowAsync — both of which, in turn, are called
+        // exclusively from App.xaml.cs (RefreshAllAsync/StartupAsync and
+        // OpenLoginWindowAsync through SignInRequested/OnSignedIn), where
+        // every await everywhere uses ConfigureAwait(true) and returns to the
+        // Dispatcher; the one source of calls from a non-UI thread,
+        // SystemEvents.PowerModeChanged, is itself explicitly marshalled
+        // through Dispatcher.Invoke before it reaches RefreshAllAsync.
         if (_environmentTask is { IsFaulted: true } or { IsCanceled: true })
             _environmentTask = null;
 
@@ -567,15 +573,17 @@ public sealed class ClaudeWebSession
     }
 
     private static Task<CoreWebView2Environment> CreateEnvironmentAsync() =>
-        // Среда теперь одна на процесс: разделяет аккаунты ProfileName на
-        // контроллере, а не отдельная папка на каждый.
+        // The environment is now one per process: it separates accounts by
+        // ProfileName on the controller, rather than a separate folder for
+        // each.
         WebViewEnvironment.SharedAsync();
 
     private Task<CoreWebView2> EnsureFetchWebViewAsync()
     {
-        // Тот же сброс FAULTED/CANCELED-кеша, что и в EnsureEnvironmentAsync
-        // ниже: провал самого создания webview (а не его последующая смерть)
-        // не должен залипать до перезапуска приложения.
+        // The same FAULTED/CANCELED cache reset as in EnsureEnvironmentAsync
+        // below: a failure of the webview's creation itself (as opposed to
+        // its later death) must not stick around until the application
+        // restarts.
         if (_fetchWebViewTask is { IsFaulted: true } or { IsCanceled: true })
             _fetchWebViewTask = null;
 
@@ -586,30 +594,30 @@ public sealed class ClaudeWebSession
     {
         var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
 
-        // Раньше здесь был голый HwndSource(Width=0,Height=0) в расчёте на
-        // то, что CreateWindowEx без WS_VISIBLE в стиле останется невидимым
-        // сам по себе. На практике пользователь всё равно увидел на рабочем
-        // столе чёрное окно "ClaudeWebSessionFetchHost" — судя по всему,
-        // CoreWebView2Controller при первом прикреплении к родителю сам
-        // выставляет этому HWND WS_VISIBLE как побочный эффект (раннер
-        // WebView2 недокументированно расчитан на "обычное" встраивание в
-        // видимое окно, а не в чистый message-only хост). Полагаться на то,
-        // что родитель, отданный контроллеру, останется невидимым сам по
-        // себе, оказалось недостаточно — нужна гарантия, которая переживёт
-        // то, что делает сам контроллер.
+        // This used to be a bare HwndSource(Width=0,Height=0), betting that
+        // CreateWindowEx without WS_VISIBLE in its style would stay invisible
+        // on its own. In practice the user still saw a black
+        // "ClaudeWebSessionFetchHost" window on the desktop — apparently
+        // CoreWebView2Controller, on first attaching to the parent, sets
+        // WS_VISIBLE on that HWND itself as a side effect (the WebView2
+        // runner is undocumentedly designed for "normal" embedding into a
+        // visible window, not into a pure message-only host). Relying on the
+        // parent handed to the controller staying invisible by itself turned
+        // out not to be enough — a guarantee is needed that outlives what the
+        // controller itself does.
         //
-        // Поэтому вместо HwndSource — обычное WPF Window, но с HWND,
-        // принудительно созданным через EnsureHandle() (тот же приём, что
-        // и в Windows/TaskbarBandWindow.TryAttach — там тоже нужен реальный
-        // HWND до того, как окно вообще может появиться на экране): весь
-        // путь WPF, которым выставляется WS_VISIBLE, лежит внутри Show()/
-        // Visibility-setter'а, а раз Show() здесь не вызывается никогда,
-        // сработать ему просто негде. Поверх — четыре независимых слоя
-        // подстраховки на случай, если WebView2 всё же попытается вернуть
-        // родителю видимость: офф-скрин позиция, нулевой размер,
-        // WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE (не попадёт в alt-tab/панель
-        // задач, даже если формально станет видимым) и, отдельно,
-        // controller.IsVisible=false на стороне самого WebView2.
+        // So instead of HwndSource — a regular WPF Window, but with its HWND
+        // forcibly created through EnsureHandle() (the same trick as in
+        // Windows/TaskbarBandWindow.TryAttach — that one also needs a real
+        // HWND before the window can appear on screen at all): the entire WPF
+        // path that sets WS_VISIBLE lives inside Show()/the Visibility
+        // setter, and since Show() is never called here, it simply has
+        // nowhere to fire. On top of that — four independent layers of
+        // insurance in case WebView2 still tries to give the parent back its
+        // visibility: an off-screen position, zero size,
+        // WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE (won't show up in alt-tab/the
+        // taskbar even if it formally becomes visible) and, separately,
+        // controller.IsVisible=false on WebView2's own side.
         _hiddenHost = new Window
         {
             WindowStyle = WindowStyle.None,
@@ -636,21 +644,23 @@ public sealed class ClaudeWebSession
             .ConfigureAwait(true);
 
         controller.IsVisible = false;
-        // В поле, не в локальную переменную — см. doc-comment у
-        // _fetchController: без сильной ссылки GC финализирует обёртку
-        // контроллера и тем самым закрывает CoreWebView2 под нами.
+        // Into a field, not a local variable — see the doc-comment on
+        // _fetchController: without a strong reference, GC finalizes the
+        // controller's wrapper and thereby closes CoreWebView2 under us.
         _fetchController = controller;
 
-        // Проактивный сброс при смерти процесса браузера (крэш рантайма,
-        // завершение после сна): следующий фетч сразу начнёт с создания
-        // нового движка, а не с гарантированно провальной попытки на мёртвом.
-        // Событие приходит на UI-поток (тот, где создан webview) — гонок с
-        // ResetFetchWebView из RunWithFetchWebViewAsync нет.
+        // Proactive reset on the browser process's death (runtime crash,
+        // termination after sleep): the next fetch will immediately start by
+        // creating a new engine, rather than with a guaranteed-to-fail
+        // attempt on a dead one. The event arrives on the UI thread (the one
+        // the webview was created on) — there is no race with
+        // ResetFetchWebView from RunWithFetchWebViewAsync.
         controller.CoreWebView2.ProcessFailed += (_, args) =>
         {
-            // Сравнение с _fetchController отсекает запоздавшее событие от
-            // УЖЕ заменённого движка (ретрай успел пересоздать) — иначе оно
-            // снесло бы свежий контроллер и скрытый хост под ним.
+            // Comparing against _fetchController filters out a late event
+            // from an engine that has ALREADY been replaced (a retry managed
+            // to recreate it) — otherwise it would tear down the fresh
+            // controller and the hidden host under it.
             if (!ReferenceEquals(_fetchController, controller)) return;
 
             // Logged for EVERY kind, including the ones that do not trigger a
@@ -726,10 +736,11 @@ internal sealed class NavigationFailedException : UsageException
     }
 }
 
-/// Общий предикат для двух мест, которые ищут sessionKey в куках профиля:
-/// <see cref="ClaudeWebSession.HasSessionCookieAsync"/> (можно ли уже
-/// фетчить usage) и <see cref="LoginWindow"/> (когда закрывать окно логина).
-/// Раздельные копии одного и того же условия рано или поздно разъехались бы.
+/// A shared predicate for the two places that look for sessionKey in the
+/// profile's cookies: <see cref="ClaudeWebSession.HasSessionCookieAsync"/>
+/// (whether usage can already be fetched) and <see cref="LoginWindow"/>
+/// (when to close the login window). Separate copies of the same condition
+/// would eventually have drifted apart.
 internal static class SessionCookie
 {
     public static bool IsPresent(IEnumerable<CoreWebView2Cookie> cookies) =>

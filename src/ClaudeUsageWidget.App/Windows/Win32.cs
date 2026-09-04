@@ -4,12 +4,13 @@ using System.Text;
 namespace ClaudeUsageWidget.App.Windows;
 
 /// <summary>
-/// P/Invoke для <see cref="TaskbarBandWindow"/>: поиск таскбара/области
-/// трея, установка окна-владельца (GWLP_HWNDPARENT) и позиционирование.
-/// Отдельный класс от <c>DesktopWidgetWindow.NativeMethods</c> (Task 14) —
-/// тот занят только z-order/no-activate ТОГО окна на рабочем столе; здесь
-/// совсем другой набор вызовов, а общих сигнатур (Get/SetWindowLongPtr)
-/// ровно две — не стоило тащить туда чужой контекст ради такой мелочи
+/// P/Invoke for <see cref="TaskbarBandWindow"/>: locating the taskbar/tray
+/// area, setting the owner window (GWLP_HWNDPARENT), and positioning.
+/// A separate class from <c>DesktopWidgetWindow.NativeMethods</c> (Task 14) —
+/// that one only deals with z-order/no-activate for THAT window on the
+/// desktop; here it's a completely different set of calls, and there are
+/// exactly two shared signatures (Get/SetWindowLongPtr) — not worth dragging
+/// unrelated context there for such a small overlap
 /// (task-17-brief.md: "move existing declarations there ONLY if trivially
 /// safe").
 /// </summary>
@@ -17,18 +18,19 @@ internal static class Win32
 {
     public const int GwlExStyle = -20;
 
-    /// GWLP_HWNDPARENT — для top-level (не WS_CHILD) окна задаёт не
-    /// родителя, а ВЛАДЕЛЬЦА: Windows держит owned-окно всегда выше его
-    /// владельца в Z-порядке, но при этом окно остаётся обычным top-level —
-    /// никакого child-композитинга (и связанного с ним Mica-глушения
-    /// содержимого на таскбаре, см. doc-comment TaskbarBandWindow).
+    /// GWLP_HWNDPARENT — for a top-level (non-WS_CHILD) window this sets not
+    /// the parent but the OWNER: Windows always keeps an owned window above
+    /// its owner in Z-order, while the window itself remains an ordinary
+    /// top-level window — no child compositing (and the associated Mica
+    /// muting of content over the taskbar, see the TaskbarBandWindow
+    /// doc-comment).
     public const int GwlpHwndParent = -8;
 
     public const long WsExNoActivate = 0x08000000L;
     public const long WsExToolWindow = 0x00000080L;
 
-    /// HWND_TOPMOST — вставить в начало общего Z-порядка (не только среди
-    /// детей/owned-окон конкретного родителя).
+    /// HWND_TOPMOST — insert at the front of the overall Z-order (not just
+    /// among the children/owned windows of a particular parent).
     public static readonly nint HwndTopMost = -1;
 
     public const uint SwpNoZOrder = 0x0004;
@@ -36,7 +38,8 @@ internal static class Win32
     public const uint SwpNoMove = 0x0002;
     public const uint SwpNoSize = 0x0001;
 
-    /// GW_HWNDPREV — окно, стоящее НАД данным в Z-порядке (к вершине).
+    /// GW_HWNDPREV — the window that sits ABOVE this one in the Z-order
+    /// (toward the top).
     public const uint GwHwndPrev = 3;
 
     [DllImport("user32.dll")]
@@ -47,50 +50,53 @@ internal static class Win32
 
     public const int WmDpiChanged = 0x02E0;
 
-    /// MONITOR_DEFAULTTONEAREST — MonitorFromWindow никогда не возвращает
-    /// NULL с этим флагом (в отличие от MONITOR_DEFAULTTONULL), даже если
-    /// окно временно не пересекает ни один монитор.
+    /// MONITOR_DEFAULTTONEAREST — MonitorFromWindow never returns NULL with
+    /// this flag (unlike MONITOR_DEFAULTTONULL), even if the window
+    /// temporarily doesn't intersect any monitor.
     public const uint MonitorDefaultToNearest = 0x00000002;
 
-    /// WINEVENT_OUTOFCONTEXT — колбэк живёт в НАШЕМ процессе, ОС не
-    /// инжектирует нашу DLL в чужие процессы, чтобы доставить событие (в
-    /// отличие от WINEVENT_INCONTEXT). Событие приходит в поток, который
-    /// вызвал SetWinEventHook (тот, что качает насос сообщений) — у нас это
-    /// UI-поток WPF-Dispatcher'а.
+    /// WINEVENT_OUTOFCONTEXT — the callback lives in OUR process; the OS
+    /// does not inject our DLL into other processes to deliver the event
+    /// (unlike WINEVENT_INCONTEXT). The event arrives on the thread that
+    /// called SetWinEventHook (the one pumping messages) — for us that's
+    /// the WPF Dispatcher's UI thread.
     public const uint WinEventOutOfContext = 0x0000;
 
-    /// EVENT_SYSTEM_FOREGROUND — сменилось активное (foreground) окно.
+    /// EVENT_SYSTEM_FOREGROUND — the active (foreground) window has changed.
     public const uint EventSystemForeground = 0x0003;
 
-    /// EVENT_OBJECT_LOCATIONCHANGE — окно/объект переместилось или
-    /// изменило размер. Ловит переключение в fullscreen БЕЗ смены
-    /// foreground-окна (F11, безрамочный режим той же игры).
+    /// EVENT_OBJECT_LOCATIONCHANGE — a window/object moved or changed size.
+    /// Catches switching to fullscreen WITHOUT a change of the foreground
+    /// window (F11, borderless mode of the same game).
     public const uint EventObjectLocationChange = 0x800B;
 
-    /// EVENT_OBJECT_REORDER — z-порядок детей окна изменился; для
-    /// перетасовок top-level-окон родителем выступает рабочий стол. Это
-    /// САМ момент, когда шелл мог поднять таскбар над лентой (захоронение),
-    /// — реагируя на него, а не на последующую смену фокуса, убираем даже
-    /// однокадровое мигание ленты под непрозрачным таскбаром.
+    /// EVENT_OBJECT_REORDER — a window's children z-order has changed; for
+    /// top-level window reshuffles the desktop acts as the parent. This is
+    /// the EXACT moment the shell may have raised the taskbar above the
+    /// band (burying it) — by reacting to this instead of a subsequent
+    /// focus change, we eliminate even a single-frame flicker of the band
+    /// under an opaque taskbar.
     public const uint EventObjectReorder = 0x8004;
 
-    /// EVENT_SYSTEM_MINIMIZESTART/END — окно свернулось/развернулось из
-    /// свёрнутого состояния. Смежная пара значений — один SetWinEventHook
-    /// с диапазоном покрывает обе. Нужны зонду видимости таскбара: после
-    /// «Свернуть» foreground меняется не всегда мгновенно, а вот сам факт
-    /// сворачивания приходит сразу.
+    /// EVENT_SYSTEM_MINIMIZESTART/END — a window minimized/restored from a
+    /// minimized state. An adjacent pair of values — a single
+    /// SetWinEventHook with a range covers both. Needed by the taskbar
+    /// visibility probe: after "Minimize" the foreground doesn't always
+    /// change instantly, but the fact of minimizing itself arrives right
+    /// away.
     public const uint EventSystemMinimizeStart = 0x0016;
     public const uint EventSystemMinimizeEnd = 0x0017;
 
-    /// GA_ROOT — верхнее (top-level) окно в цепочке родителей: WindowFromPoint
-    /// возвращает самый глубокий дочерний элемент под точкой, а для ответа
-    /// «чьё это окно» нужен его корень.
+    /// GA_ROOT — the topmost (top-level) window in the parent chain:
+    /// WindowFromPoint returns the deepest child element under the point,
+    /// and answering "whose window is this" requires its root.
     public const uint GaRoot = 2;
 
-    /// OBJID_WINDOW/CHILDID_SELF — фильтр "событие про само окно целиком",
-    /// а не про один из его внутренних UI-элементов (кнопку, скроллбар и
-    /// т.п.) — тех IDOBJECT/IDCHILD событий system-wide хук получает
-    /// на порядки больше, и почти все не имеют отношения к fullscreen.
+    /// OBJID_WINDOW/CHILDID_SELF — a filter for "an event about the whole
+    /// window itself", not about one of its internal UI elements (a
+    /// button, a scrollbar, etc.) — the system-wide hook receives orders
+    /// of magnitude more of those IDOBJECT/IDCHILD events, and almost none
+    /// of them are related to fullscreen.
     public const int ObjIdWindow = 0;
     public const int ChildIdSelf = 0;
 
@@ -148,8 +154,8 @@ internal static class Win32
         public RECT NormalPosition;
     }
 
-    /// SW_SHOWMAXIMIZED — значение WINDOWPLACEMENT.ShowCmd для развёрнутого
-    /// (maximized) окна.
+    /// SW_SHOWMAXIMIZED — the WINDOWPLACEMENT.ShowCmd value for a maximized
+    /// window.
     public const uint SwShowMaximized = 3;
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -176,25 +182,27 @@ internal static class Win32
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool IsWindow(nint hWnd);
 
-    /// Доступна с Windows 10 1607 (Anniversary Update) — минимальная
-    /// поддерживаемая версия здесь и так Windows 10/11, отдельная проверка
-    /// версии не нужна.
+    /// Available since Windows 10 1607 (Anniversary Update) — the minimum
+    /// supported version here is already Windows 10/11, so a separate
+    /// version check isn't needed.
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(nint hWnd);
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
 
-    // EntryPoint обязателен: имя метода здесь ("...Native") не совпадает с
-    // именем настоящего экспорта, а без явного EntryPoint P/Invoke ищет в
-    // DLL функцию с ИМЕНЕМ МЕТОДА ("GetClassNameNative"), а не с GetClassNameW
-    // — падает EntryPointNotFoundException при первом же вызове.
+    // EntryPoint is required: the method name here ("...Native") doesn't
+    // match the real export name, and without an explicit EntryPoint
+    // P/Invoke looks in the DLL for a function with the METHOD NAME
+    // ("GetClassNameNative") rather than GetClassNameW — it throws
+    // EntryPointNotFoundException on the very first call.
     [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
     private static extern int GetClassNameNative(nint hWnd, StringBuilder lpClassName, int nMaxCount);
 
-    /// Обёртка над GetClassNameW — раздельно объявлять буфер и вызывать
-    /// P/Invoke на каждом месте использования было бы лишним дублированием
-    /// ради единственного реального потребителя (фуллскрин-проверка ниже).
+    /// A wrapper over GetClassNameW — declaring the buffer separately and
+    /// calling P/Invoke at every call site would be needless duplication
+    /// for the sake of the single real consumer (the fullscreen check
+    /// below).
     public static string GetClassName(nint hWnd)
     {
         var buffer = new StringBuilder(256);
@@ -202,33 +210,35 @@ internal static class Win32
         return buffer.ToString();
     }
 
-    /// DWMWA_CLOAKED — окно «закловлено»: DWM его не отрисовывает, хотя по
-    /// Win32 оно остаётся WS_VISIBLE и попадает в WindowFromPoint. Так живут
-    /// приостановленные UWP-приложения и, что важно для зонда таскбара,
-    /// окна exclusive-fullscreen игр после потери фокуса: Deadlock (SDL_app)
-    /// после сворачивания часами висит призраком ПОВЕРХ таскбара в
-    /// z-порядке, не отрисовываясь.
+    /// DWMWA_CLOAKED — the window is "cloaked": DWM doesn't render it, even
+    /// though in Win32 terms it remains WS_VISIBLE and is returned by
+    /// WindowFromPoint. This is how suspended UWP apps live, and,
+    /// importantly for the taskbar probe, so do exclusive-fullscreen game
+    /// windows after losing focus: Deadlock (SDL_app), after being
+    /// minimized, hangs around as a ghost ABOVE the taskbar in the
+    /// z-order for hours without rendering.
     public const uint DwmwaCloaked = 14;
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out uint pvAttribute, int cbAttribute);
 
-    /// true, если DWM реально не рисует это окно. Ошибка запроса читается
-    /// как «не закловлено»: лучше лишний раз поверить, что окно настоящее,
-    /// чем проигнорировать реальную полноэкранную игру.
+    /// true if DWM genuinely isn't painting this window. A failed query is
+    /// read as "not cloaked": better to err on the side of trusting the
+    /// window is real than to ignore an actual fullscreen game.
     public static bool IsCloaked(nint hwnd) =>
         DwmGetWindowAttribute(hwnd, DwmwaCloaked, out var cloaked, sizeof(uint)) == 0 && cloaked != 0;
 
     [DllImport("user32.dll")]
     public static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
 
-    // EntryPoint явно, а не положились на автоматическое A/W-разрешение
-    // (макрос GetMonitorInfo в самом деле разворачивается в GetMonitorInfoW
-    // при Unicode, и CLR в теории находит её сам по CharSet — но именно на
-    // соседнем GetClassNameNative выше эта неявность подвела: EntryPoint не
-    // подставился автоматом, потому что имя C#-метода вообще не совпадало ни
-    // с одним экспортом. Явный EntryPoint здесь дешёвая страховка от того же
-    // класса ошибки).
+    // EntryPoint given explicitly rather than relying on automatic A/W
+    // resolution (the GetMonitorInfo macro does indeed expand to
+    // GetMonitorInfoW under Unicode, and the CLR can in theory find it on
+    // its own via CharSet — but it was exactly this implicitness that
+    // failed on the neighboring GetClassNameNative above: EntryPoint
+    // wasn't substituted automatically because the C# method name didn't
+    // match any export at all. An explicit EntryPoint here is cheap
+    // insurance against the same class of bug).
     [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
     public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
 }

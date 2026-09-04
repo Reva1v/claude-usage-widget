@@ -6,26 +6,27 @@ using System.Windows.Forms;
 namespace ClaudeUsageWidget.App.Tray;
 
 /// <summary>
-/// Рисует живую цифру трея — значение выбранной метрики без знака «%» (на
-/// иконке размером с <see cref="SystemInformation.SmallIconSize"/> знак
-/// процента сжимает сами цифры до нечитаемости), белым по прозрачному,
+/// Draws the tray's live digit — the value of the selected metric without
+/// the "%" sign (on an icon the size of
+/// <see cref="SystemInformation.SmallIconSize"/> the percent sign squeezes
+/// the digits themselves into illegibility), white on transparent,
 /// GDI+ → <see cref="Icon.FromHandle"/>.
 /// </summary>
 ///
-/// Пока данных нет, рисуется кольцо-заглушка — тот же глиф, что раньше жил в
-/// TrayIcon.CreateRingIcon (порт monochrome-ring из
-/// <c>ClaudeUsageWidgetApp.swift:17-30</c>; там template-изображение, которое
-/// tint-ит сама macOS под светлый/тёмный менюбар — у Win32-трея такого
-/// автотонирования нет, а подавляющее большинство трей-панелей тёмные,
-/// поэтому белый зашит напрямую, не чёрный).
+/// While there's no data yet, a placeholder ring is drawn — the same glyph
+/// that used to live in TrayIcon.CreateRingIcon (a port of the
+/// monochrome-ring from <c>ClaudeUsageWidgetApp.swift:17-30</c>; there it's
+/// a template image that macOS itself tints for the light/dark menu bar —
+/// the Win32 tray has no such auto-tinting, and the vast majority of tray
+/// panels are dark, so white is hardcoded directly, not black).
 public static class TrayIconRenderer
 {
     /// <summary>
-    /// <paramref name="valueText"/> — значение вида "42%" (как в
-    /// <c>TrayText.Metrics</c>) или null/пусто/"—" (доли нет). Возвращённый
-    /// <see cref="Icon"/> оборачивает новый HICON, которым владеет вызывающая
-    /// сторона: она обязана вызвать DestroyIcon при замене/освобождении (тот
-    /// же контракт, что раньше был у TrayIcon.CreateRingIcon — см.
+    /// <paramref name="valueText"/> — a value like "42%" (as in
+    /// <c>TrayText.Metrics</c>) or null/empty/"—" (no fraction). The returned
+    /// <see cref="Icon"/> wraps a new HICON owned by the caller: it must call
+    /// DestroyIcon on replacement/disposal (the same contract that
+    /// TrayIcon.CreateRingIcon used to have — see
     /// TrayIcon.SetIcon/Dispose).
     /// </summary>
     public static Icon Render(string? valueText)
@@ -36,9 +37,9 @@ public static class TrayIconRenderer
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            // AntiAlias/AntiAliasGridFit — обычное серошкальное сглаживание,
-            // не ClearType: на прозрачном фоне субпиксельный ClearType дал бы
-            // цветные ореолы по краям глифов, а эти два режима — нет.
+            // AntiAlias/AntiAliasGridFit — plain grayscale anti-aliasing, not
+            // ClearType: on a transparent background subpixel ClearType would give
+            // colored halos along glyph edges, while these two modes don't.
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             g.Clear(Color.Transparent);
 
@@ -53,17 +54,18 @@ public static class TrayIconRenderer
             }
         }
 
-        // Bitmap.GetHicon() выделяет новый HICON, переживающий bitmap —
-        // владение переходит вызывающей стороне (см. doc-комментарий выше).
+        // Bitmap.GetHicon() allocates a new HICON that outlives the bitmap —
+        // ownership passes to the caller (see the doc comment above).
         return Icon.FromHandle(bitmap.GetHicon());
     }
 
-    /// <summary>"42%" → "42"; строка вообще без цифр — null/пусто, "—"
-    /// (TrayText.Metrics для отсутствующей доли) или что угодно ещё
-    /// нечисловое — → null, то есть кольцо-заглушка. Проверка на "хотя бы
-    /// одна цифра", а не точечное сравнение с "—": RefreshTrayIcon на самом
-    /// первом старте (LastSnapshot ещё null) как раз и подаёт сюда "—", и
-    /// проверять нужно именно это, а не только явные null/пусто.</summary>
+    /// <summary>"42%" → "42"; a string with no digits at all — null/empty, "—"
+    /// (TrayText.Metrics for a missing fraction), or anything else
+    /// non-numeric — → null, meaning the placeholder ring. Checking for "at
+    /// least one digit" rather than a pointwise comparison with "—":
+    /// RefreshTrayIcon on the very first startup (LastSnapshot still null)
+    /// feeds exactly "—" in here, and that's what needs checking, not just
+    /// the explicit null/empty cases.</summary>
     private static string? DigitsOnly(string? valueText)
     {
         if (string.IsNullOrEmpty(valueText)) return null;
@@ -93,10 +95,10 @@ public static class TrayIconRenderer
     }
 
     /// <summary>
-    /// Подбирает наибольший кегль Segoe UI Bold, при котором строка ещё
-    /// умещается по ширине иконки — у "8" и "100" при одном кегле совсем
-    /// разная ширина, а трей слишком мал, чтобы фиксировать шрифт под
-    /// худший случай (три цифры).
+    /// Picks the largest Segoe UI Bold size at which the string still fits
+    /// within the icon's width — "8" and "100" have completely different
+    /// widths at the same size, and the tray is too small to fix the font for
+    /// the worst case (three digits).
     /// </summary>
     private static Font FitFont(Graphics g, string digits, Size size)
     {

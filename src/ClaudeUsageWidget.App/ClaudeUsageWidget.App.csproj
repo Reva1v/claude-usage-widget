@@ -14,18 +14,18 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <!-- NotifyIcon и ContextMenuStrip живут в WinForms; WPF своего трея не имеет. -->
+    <!-- NotifyIcon and ContextMenuStrip live in WinForms; WPF has no tray of its own. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- Иконка exe (Пуск/проводник/панель задач). Трей-иконку она не задаёт —
-         та рисуется динамически с живой цифрой (TrayIconRenderer). -->
+    <!-- The exe's icon (Start menu/Explorer/taskbar). It does not set the tray
+         icon — that one is drawn dynamically with a live number (TrayIconRenderer). -->
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <Version>0.2.3</Version>
     <AssemblyTitle>Claude Usage Widget</AssemblyTitle>
-    <!-- WFAC010 предлагает ApplicationHighDpiMode/SetHighDpiMode — API из мира
-         WinForms-приложений. Здесь процесс хозяйский WPF, WinForms используется
-         только под трей, а PerMonitorV2 в манифесте — задокументированный способ
-         DPI-awareness для WPF, поэтому предупреждение неприменимо. -->
+    <!-- WFAC010 suggests ApplicationHighDpiMode/SetHighDpiMode — APIs from the
+         WinForms-application world. Here the host process is WPF, WinForms is used
+         only for the tray, and PerMonitorV2 in the manifest is the documented way to
+         get DPI-awareness for WPF, so the warning does not apply. -->
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>
 

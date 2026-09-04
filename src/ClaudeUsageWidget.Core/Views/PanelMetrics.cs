@@ -206,11 +206,12 @@ public sealed record PanelMetrics(
         // One padding above the caption and one below it. The panel used to
         // reserve a flat 16 pt band and centre the dial grid in everything but
         // the padding, which put 13 pt of slack over the names, 15 under the
-        // last dial and 2 under the text: «отступы сверху и снизу визуально не
-        // идентичные; service operational прилип в самом низу» (the user,
-        // 2026-09-04). With the caption's own line height as the middle term,
-        // the top edge, the gap over the text and the gap under it are one
-        // number — the padding — and the panel reads the same on all four sides.
+        // last dial and 2 under the text: "the top and bottom padding look
+        // visually inconsistent; service operational is stuck right at the
+        // bottom" (the user, 2026-09-04). With the caption's own line height
+        // as the middle term, the top edge, the gap over the text and the gap
+        // under it are one number — the padding — and the panel reads the
+        // same on all four sides.
         var statusBand = padding * 2 + CaptionLineHeight * scale;
 
         // Top padding, the content, then the band: no slack anywhere else, so

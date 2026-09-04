@@ -27,11 +27,11 @@ public sealed record TrayMenuState(
     string? TrayAccountId);
 
 /// <summary>
-/// Иконка приложения в системном трее и её контекстное меню.
+/// The application's icon in the system tray and its context menu.
 /// </summary>
 ///
-/// WPF не имеет своего трея — оборачиваем WinForms <see cref="NotifyIcon"/>,
-/// как это обычно делают в портах меню-бар-приложений на Windows.
+/// WPF has no tray of its own — we wrap WinForms <see cref="NotifyIcon"/>,
+/// the way menu-bar-app ports usually do on Windows.
 public sealed class TrayIcon : IDisposable
 {
     private const string RepoUrl = "https://github.com/Reva1v/claude-usage-widget";
@@ -54,43 +54,43 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _accountsMenu = null!;
     private ToolStripMenuItem _layoutMenu = null!;
 
-    /// <summary>Пункт меню "Refresh now".</summary>
+    /// <summary>The "Refresh now" menu item.</summary>
     public event Action? RefreshRequested;
 
-    /// <summary>Пункт меню "Sign in to Claude.ai…".</summary>
+    /// <summary>The "Sign in to Claude.ai…" menu item.</summary>
     public event Action? SignInRequested;
 
-    /// <summary>Пункт меню "Quit Claude Usage Widget".</summary>
+    /// <summary>The "Quit Claude Usage Widget" menu item.</summary>
     public event Action? QuitRequested;
 
-    /// <summary>"Tray shows" — новое значение TrayMetricKey ("five_hour"/"seven_day"/"model").</summary>
+    /// <summary>"Tray shows" — the new TrayMetricKey value ("five_hour"/"seven_day"/"model").</summary>
     public event Action<string>? TrayMetricSelected;
 
-    /// <summary>"Model limit" — выбранный ключ бакета, либо null для "Auto".</summary>
+    /// <summary>"Model limit" — the selected bucket key, or null for "Auto".</summary>
     public event Action<string?>? ModelBucketSelected;
 
-    /// <summary>"Show on desktop" — новое желаемое состояние.</summary>
+    /// <summary>"Show on desktop" — the new desired state.</summary>
     public event Action<bool>? ShowOnDesktopToggled;
 
-    /// <summary>"Taskbar band" — новое желаемое состояние.</summary>
+    /// <summary>"Taskbar band" — the new desired state.</summary>
     public event Action<bool>? TaskbarBandToggled;
 
-    /// <summary>"Band position" — новое значение ("tray"/"left").</summary>
+    /// <summary>"Band position" — the new value ("tray"/"left").</summary>
     public event Action<string>? BandPositionSelected;
 
-    /// <summary>"Lock position" — новое желаемое состояние.</summary>
+    /// <summary>"Lock position" — the new desired state.</summary>
     public event Action<bool>? LockPositionToggled;
 
-    /// <summary>Accounts — выбран аккаунт для трей-иконки.</summary>
+    /// <summary>Accounts — the account selected for the tray icon.</summary>
     public event Action<string>? AccountSelected;
 
     /// <summary>Accounts — "Add account…".</summary>
     public event Action? AccountAddRequested;
 
-    /// <summary>Accounts — "Rename…" для этого id.</summary>
+    /// <summary>Accounts — "Rename…" for this id.</summary>
     public event Action<string>? AccountRenameRequested;
 
-    /// <summary>Accounts — "Sign out and remove" для этого id.</summary>
+    /// <summary>Accounts — "Sign out and remove" for this id.</summary>
     public event Action<string>? AccountRemoveRequested;
 
     /// Raised by the Layout submenu's edit item. The App owns the flag; the
@@ -102,15 +102,15 @@ public sealed class TrayIcon : IDisposable
     public bool EditingLayout { get; set; }
 
     /// <summary>
-    /// Меню вот-вот откроется — момент подтянуть свежее состояние
-    /// (SettingsStore, PositionLocked виджета, доступные model-бакеты) через
-    /// <see cref="SyncMenuState"/>, не дожидаясь следующего Changed стора.
+    /// The menu is about to open — the moment to pull in fresh state
+    /// (SettingsStore, the widget's PositionLocked, available model buckets) via
+    /// <see cref="SyncMenuState"/>, without waiting for the store's next Changed.
     /// </summary>
     public event Action? MenuOpening;
 
     /// <summary>
-    /// Открытое меню — последующие задачи (org picker) дописывают в него свои
-    /// пункты, не пересоздавая TrayIcon целиком.
+    /// The open menu — later tasks (org picker) append their own items to it,
+    /// without recreating TrayIcon wholesale.
     /// </summary>
     public ContextMenuStrip Menu { get; }
 
@@ -137,10 +137,10 @@ public sealed class TrayIcon : IDisposable
 
         if (previous is null) return;
 
-        // NotifyIcon.Icon = ... не забирает владение хэндлом; иконка,
-        // созданная из HICON через Icon.FromHandle, требует ручного
-        // DestroyIcon — иначе каждая замена (живая цифра, TrayIconRenderer)
-        // течёт в GDI-квоту процесса до её исчерпания.
+        // NotifyIcon.Icon = ... does not take ownership of the handle; an icon
+        // created from a HICON via Icon.FromHandle requires a manual
+        // DestroyIcon — otherwise every replacement (the live digit,
+        // TrayIconRenderer) leaks into the process's GDI quota until it's exhausted.
         var handle = previous.Handle;
         previous.Dispose();
         NativeMethods.DestroyIcon(handle);
@@ -148,23 +148,23 @@ public sealed class TrayIcon : IDisposable
 
     public void SetTooltip(string text)
     {
-        // NOTIFYICONDATA.szTip вмещает 128 символов включая завершающий NUL;
-        // WinForms бросает ArgumentOutOfRangeException при 128+, отсюда 127.
+        // NOTIFYICONDATA.szTip holds 128 characters including the trailing NUL;
+        // WinForms throws ArgumentOutOfRangeException at 128+, hence 127.
         _notifyIcon.Text = text.Length > 127 ? text[..127] : text;
     }
 
-    /// <summary>Синхронизирует динамическую часть меню (чекбоксы, «Model
-    /// limit», «Tray shows») с текущим состоянием настроек/виджета. Вызывать
-    /// на старте и на каждый <see cref="MenuOpening"/> — источник истины
-    /// живёт в App.xaml.cs (SettingsStore/DesktopWidgetWindow), не здесь.</summary>
+    /// <summary>Syncs the dynamic part of the menu (checkboxes, "Model
+    /// limit", "Tray shows") with the current settings/widget state. Call it
+    /// on startup and on every <see cref="MenuOpening"/> — the source of truth
+    /// lives in App.xaml.cs (SettingsStore/DesktopWidgetWindow), not here.</summary>
     public void SyncMenuState(TrayMenuState state)
     {
-        // MetricIndex, не точечное сравнение с "five_hour": та же функция,
-        // что и App.xaml.cs.RefreshTrayIcon использует для самой цифры —
-        // нераспознанный/битый TrayMetricKey (например, из вручную
-        // отредактированного settings.json) обязан читаться в меню как
-        // SESSION ровно потому же правилу, по которому иконка в этом случае
-        // рисует SESSION, а не оставлять все три чекбокса пустыми.
+        // MetricIndex, not a pointwise comparison with "five_hour": the same
+        // function App.xaml.cs.RefreshTrayIcon uses for the digit itself —
+        // an unrecognized/corrupt TrayMetricKey (e.g. from a manually edited
+        // settings.json) must read in the menu as SESSION by exactly the same
+        // rule that makes the icon draw SESSION in that case, rather than
+        // leaving all three checkboxes blank.
         SyncAccountsMenu(state.Accounts, state.TrayAccountId);
         SyncLayoutMenu(state.ShowOnDesktop);
 
@@ -183,9 +183,9 @@ public sealed class TrayIcon : IDisposable
             ? "MODEL"
             : $"MODEL ({TitleCase(state.ResolvedModelLabel)})";
 
-        // ModelBucketPicker.swift:145-163 — видно только когда есть из чего
-        // выбирать; при 0/1 бакете выбор бессмысленен (Resolve и так возьмёт
-        // единственный доступный).
+        // ModelBucketPicker.swift:145-163 — visible only when there's something
+        // to choose from; with 0/1 buckets the choice is meaningless (Resolve
+        // will take the only available one anyway).
         _modelLimitMenu.Visible = state.AvailableModelBuckets.Count > 1;
         _modelLimitMenu.DropDownItems.Clear();
 
@@ -198,7 +198,7 @@ public sealed class TrayIcon : IDisposable
 
         foreach (var key in state.AvailableModelBuckets)
         {
-            var capturedKey = key; // не полагаемся на semantics захвата переменной цикла — на всякий случай локальная копия
+            var capturedKey = key; // don't rely on loop-variable capture semantics — a local copy just in case
             _modelLimitMenu.DropDownItems.Add(new ToolStripMenuItem(
                 ModelBuckets.Label(capturedKey), null, (_, _) => ModelBucketSelected?.Invoke(capturedKey))
             {
@@ -212,8 +212,9 @@ public sealed class TrayIcon : IDisposable
         _bandPositionTrayItem.Checked = state.BandPosition != "left"; // "tray" and any unrecognized value default here, same fallback shape as MetricIndex
         _lockPositionItem.Checked = state.PositionLocked;
 
-        // Launch at login не приходит через TrayMenuState: это не
-        // JSON-настройка, а сам реестр — источник истины уже под рукой.
+        // Launch at login doesn't come through TrayMenuState: it's not a
+        // JSON setting but the registry itself — the source of truth is already
+        // at hand.
         _launchAtLoginItem.Checked = Autostart.IsEnabled();
     }
 
@@ -224,30 +225,31 @@ public sealed class TrayIcon : IDisposable
     private static string TitleCase(string s) =>
         s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
 
-    /// <summary>SESSION/WEEK/MODEL → индекс в DialModel.All, которое всегда
-    /// возвращает ровно эти три циферблата в этом порядке. Публичный и общий
-    /// с App.xaml.cs.RefreshTrayIcon: обе стороны обязаны сходиться в том,
-    /// что означает нераспознанный/битый TrayMetricKey (SESSION), иначе
-    /// чекбоксы меню и цифра в иконке способны разойтись.</summary>
+    /// <summary>SESSION/WEEK/MODEL → index into DialModel.All, which always
+    /// returns exactly these three dials in this order. Public and shared
+    /// with App.xaml.cs.RefreshTrayIcon: both sides must agree on what an
+    /// unrecognized/corrupt TrayMetricKey means (SESSION), otherwise the menu
+    /// checkboxes and the icon's digit could disagree.</summary>
     public static int MetricIndex(string trayMetricKey) => trayMetricKey switch
     {
         "seven_day" => 1,
         "model" => 2,
-        _ => 0, // "five_hour" и любое нераспознанное значение — сессия по умолчанию
+        _ => 0, // "five_hour" and any unrecognized value — session by default
     };
 
-    /// Пересобирается целиком на каждое открытие меню, а не мутируется:
-    /// аккаунты добавляются и удаляются из этого же подменю, и пересборка —
-    /// то, что не даёт галочке, списку и настройкам разъехаться.
+    /// Rebuilt from scratch on every menu opening rather than mutated:
+    /// accounts are added and removed from this same submenu, and rebuilding
+    /// is what keeps the checkmark, the list, and the settings from drifting
+    /// apart.
     private void SyncAccountsMenu(IReadOnlyList<AccountProfile> accounts, string? trayAccountId)
     {
         foreach (var item in _accountsMenu.DropDownItems.OfType<ToolStripMenuItem>())
             item.DropDown.Closing -= CancelCloseOnItemClick;
         _accountsMenu.DropDownItems.Clear();
 
-        // Подменю аккаунтов бессмысленно, пока аккаунт один и добавить второй
-        // нельзя; но «добавить» нужно всегда, поэтому скрываем только сам
-        // список, а не пункт целиком.
+        // The accounts submenu is meaningless while there's only one account and
+        // a second can't be added; but "add" is always needed, so we hide only
+        // the list itself, not the whole item.
         foreach (var account in accounts)
         {
             var item = new ToolStripMenuItem(
@@ -264,8 +266,8 @@ public sealed class TrayIcon : IDisposable
 
         if (accounts.Count > 0) _accountsMenu.DropDownItems.Add(new ToolStripSeparator());
 
-        // Выключен, а не скрыт: пропавший пункт читается как баг, погашенный
-        // с подсказкой — как предел.
+        // Disabled rather than hidden: a missing item reads as a bug, one grayed
+        // out with a tooltip reads as a limit.
         var atLimit = accounts.Count >= AccountLimits.Max;
         _accountsMenu.DropDownItems.Add(new ToolStripMenuItem(
             "Add account…", null, (_, _) => AccountAddRequested?.Invoke())
@@ -298,19 +300,19 @@ public sealed class TrayIcon : IDisposable
     {
         var menu = new ContextMenuStrip();
 
-        // Порядок и разделители — как в macOS-меню (ClaudeUsageWidgetApp.swift:33-58):
-        // сначала GitHub/issues, затем refresh/sign-in, затем toggles, затем quit.
-        // "Check for Updates…" не портирован (нет Sparkle-эквивалента в этом
-        // таске); "Tray shows" — пункт без аналога в Swift, специфичный для
-        // Windows-трея: там менюбар всегда рисует все три цифры разом,
-        // здесь иконка вмещает только одну.
+        // Order and separators — like the macOS menu (ClaudeUsageWidgetApp.swift:33-58):
+        // GitHub/issues first, then refresh/sign-in, then toggles, then quit.
+        // "Check for Updates…" isn't ported (no Sparkle equivalent in this
+        // task); "Tray shows" is an item with no Swift counterpart, specific to
+        // the Windows tray: there the menu bar always draws all three numbers at
+        // once, here the icon only fits one.
         menu.Items.Add($"Claude Usage Widget v{CoreInfo.Version} — GitHub", null, (_, _) => OpenUrl(RepoUrl));
         menu.Items.Add("Report an Issue", null, (_, _) => OpenUrl(IssuesUrl));
         menu.Items.Add(new ToolStripSeparator());
-        // Refresh now — исключение из «меню не закрывается по клику» ниже:
-        // это действие, а не переключатель, держать меню открытым после него
-        // незачем. Явный Close() приходит с причиной CloseCalled, которую
-        // CancelCloseOnItemClick пропускает.
+        // Refresh now — an exception to the "menu doesn't close on click" rule
+        // below: it's an action, not a toggle, no reason to keep the menu open
+        // after it. The explicit Close() arrives with reason CloseCalled, which
+        // CancelCloseOnItemClick lets through.
         menu.Items.Add("Refresh now", null, (_, _) =>
         {
             RefreshRequested?.Invoke();
@@ -319,11 +321,11 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add("Sign in to Claude.ai…", null, (_, _) => SignInRequested?.Invoke());
         menu.Items.Add(new ToolStripSeparator());
 
-        // Подписи короче ("5H"/"7D" вместо "SESSION"/"WEEK") — те же ключи
-        // TrayMetricKey под капотом ("five_hour"/"seven_day"/"model"), меняется
-        // только то, что видно в меню. "MODEL" здесь — заглушка на старте
-        // (снапшот ещё не загружен); SyncMenuState дописывает разрешённый
-        // бакет в скобках, как только он известен ("MODEL (Fable)").
+        // Shorter labels ("5H"/"7D" instead of "SESSION"/"WEEK") — the same
+        // TrayMetricKey keys under the hood ("five_hour"/"seven_day"/"model"),
+        // only what's visible in the menu changes. "MODEL" here is a placeholder
+        // at startup (the snapshot hasn't loaded yet); SyncMenuState appends the
+        // resolved bucket in parentheses as soon as it's known ("MODEL (Fable)").
         var trayShowsMenu = new ToolStripMenuItem("Tray shows");
         _trayShowsSessionItem = new ToolStripMenuItem("5H", null, (_, _) => TrayMetricSelected?.Invoke("five_hour"));
         _trayShowsWeekItem = new ToolStripMenuItem("7D", null, (_, _) => TrayMetricSelected?.Invoke("seven_day"));
@@ -333,14 +335,14 @@ public sealed class TrayIcon : IDisposable
         trayShowsMenu.DropDownItems.Add(_trayShowsModelItem);
         menu.Items.Add(trayShowsMenu);
 
-        // DropDownItems наполняются заново в SyncMenuState — на старте
-        // доступных бакетов ещё нет (снапшот не загружен), поэтому здесь
-        // пустое подменю, скрытое до первого SyncMenuState.
+        // DropDownItems are refilled in SyncMenuState — at startup there are no
+        // available buckets yet (the snapshot hasn't loaded), so this starts as
+        // an empty submenu, hidden until the first SyncMenuState.
         _modelLimitMenu = new ToolStripMenuItem("Model limit") { Visible = false };
         menu.Items.Add(_modelLimitMenu);
 
-        // Какой аккаунт описывает трей-иконка. Альтернативой были бы четыре
-        // иконки, но Windows прячет их в переполнение по своему усмотрению.
+        // Which account the tray icon describes. The alternative would be four
+        // icons, but Windows hides them in the overflow at its own discretion.
         _accountsMenu = new ToolStripMenuItem("Accounts");
         menu.Items.Add(_accountsMenu);
 
@@ -357,9 +359,10 @@ public sealed class TrayIcon : IDisposable
         _taskbarBandItem.Click += (_, _) => TaskbarBandToggled?.Invoke(!_taskbarBandItem.Checked);
         menu.Items.Add(_taskbarBandItem);
 
-        // "Near tray"/"Left corner" — задаёт BandPosition независимо от того,
-        // включена ли сама лента сейчас (тот же принцип, что и "Tray shows":
-        // предпочтение сохраняется даже пока не на что смотреть).
+        // "Near tray"/"Left corner" — sets BandPosition independently of
+        // whether the band itself is currently enabled (the same principle as
+        // "Tray shows": the preference is kept even while there's nothing to
+        // look at).
         var bandPositionMenu = new ToolStripMenuItem("Band position");
         _bandPositionTrayItem = new ToolStripMenuItem("Near tray", null, (_, _) => BandPositionSelected?.Invoke("tray"));
         _bandPositionLeftItem = new ToolStripMenuItem("Left corner", null, (_, _) => BandPositionSelected?.Invoke("left"));
@@ -371,12 +374,12 @@ public sealed class TrayIcon : IDisposable
         _lockPositionItem.Click += (_, _) => LockPositionToggled?.Invoke(!_lockPositionItem.Checked);
         menu.Items.Add(_lockPositionItem);
 
-        // Launch at login самодостаточен (порт LaunchAtLoginToggle,
-        // ClaudeUsageWidgetApp.swift:168-188): в отличие от остальных
-        // чекбоксов, у него нет соответствующего поля в WidgetSettingsData —
-        // источник истины это сам реестр (Autostart), поэтому не нужен
-        // круговой путь через App/SettingsStore, а откат при сбое проще
-        // сделать на месте.
+        // Launch at login is self-contained (a port of LaunchAtLoginToggle,
+        // ClaudeUsageWidgetApp.swift:168-188): unlike the other checkboxes, it
+        // has no corresponding field in WidgetSettingsData — the source of truth
+        // is the registry itself (Autostart), so there's no need for a round
+        // trip through App/SettingsStore, and rolling back on failure is easier
+        // to do in place.
         _launchAtLoginItem = new ToolStripMenuItem("Launch at login");
         _launchAtLoginItem.Click += OnLaunchAtLoginClicked;
         menu.Items.Add(_launchAtLoginItem);
@@ -384,14 +387,15 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Quit Claude Usage Widget", null, (_, _) => QuitRequested?.Invoke());
 
-        // Меню не закрывается после клика по пункту — только явно (клик мимо
-        // меню, Esc, потеря фокуса): почти все пункты здесь — переключатели,
-        // и пользователь щёлкает несколько за одно открытие, а WinForms по
-        // умолчанию схлопывает меню на первом же. Подписка нужна и корню, и
-        // каждому подменю: клик по вложенному пункту закрывает всю цепочку
-        // DropDown'ов, и каждое звено спрашивает о закрытии отдельно. Один
-        // общий цикл в конце, а не строка у каждого подменю — новое подменю
-        // подхватится само, без риска забыть подписку.
+        // The menu doesn't close after clicking an item — only explicitly (a
+        // click outside the menu, Esc, loss of focus): almost all items here are
+        // toggles, and the user clicks several during a single opening, while
+        // WinForms collapses the menu on the very first one by default. The
+        // subscription is needed on both the root and every submenu: clicking a
+        // nested item closes the whole chain of DropDowns, and each link asks
+        // about closing separately. One shared loop at the end, rather than a
+        // line per submenu — a new submenu picks it up automatically, with no
+        // risk of forgetting the subscription.
         menu.Closing += CancelCloseOnItemClick;
         foreach (var submenu in menu.Items.OfType<ToolStripMenuItem>())
         {
@@ -402,9 +406,9 @@ public sealed class TrayIcon : IDisposable
         return menu;
     }
 
-    /// ItemClicked — единственная причина закрытия, которую гасим; Quit это
-    /// не задерживает (приложение гасит меню целиком через Dispose), а
-    /// клавиатура и клик за пределами меню продолжают закрывать как обычно.
+    /// ItemClicked is the only close reason we suppress; it doesn't delay
+    /// Quit (the app tears down the whole menu via Dispose), and the keyboard
+    /// and a click outside the menu keep closing it as usual.
     private static void CancelCloseOnItemClick(object? sender, ToolStripDropDownClosingEventArgs e)
     {
         if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked) e.Cancel = true;
@@ -420,12 +424,11 @@ public sealed class TrayIcon : IDisposable
         }
         catch (Exception ex)
         {
-            // Порт catch-семантики LaunchAtLoginToggle (swift:174-185): при
-            // сбое чекбокс не просто откатывается к старому значению, а
-            // перечитывает реальное состояние реестра — SetEnabled мог
-            // упасть на середине (например SetValue после успешного
-            // OpenSubKey), и старое "было" не обязательно совпадает с тем,
-            // что там сейчас.
+            // A port of LaunchAtLoginToggle's catch semantics (swift:174-185): on
+            // failure the checkbox doesn't just roll back to the old value, it
+            // rereads the actual registry state — SetEnabled could have failed
+            // midway (e.g. SetValue after a successful OpenSubKey), and the old
+            // "was" doesn't necessarily match what's there now.
             _launchAtLoginItem.Checked = Autostart.IsEnabled();
             Debug.WriteLine($"Failed to change launch-at-login: {ex}");
         }
@@ -437,8 +440,8 @@ public sealed class TrayIcon : IDisposable
         // the widget itself, not about whichever account the tray shows.
         WidgetLog.Write("-", "browser-open", $"site=tray url={url}");
 
-        // UseShellExecute: true — без него .NET пытается запустить URL как
-        // исполняемый файл напрямую и падает с Win32Exception.
+        // UseShellExecute: true — without it .NET tries to launch the URL as an
+        // executable directly and fails with Win32Exception.
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
@@ -462,8 +465,9 @@ public sealed class TrayIcon : IDisposable
 
 internal static class NativeMethods
 {
-    // DllImport, а не LibraryImport: последний требует AllowUnsafeBlocks для
-    // one-off P/Invoke не стоит того в проекте, где unsafe больше нигде не нужен.
+    // DllImport, not LibraryImport: the latter requires AllowUnsafeBlocks,
+    // not worth it for a one-off P/Invoke in a project where unsafe isn't
+    // needed anywhere else.
     [DllImport("user32.dll")]
     public static extern bool DestroyIcon(nint handle);
 }

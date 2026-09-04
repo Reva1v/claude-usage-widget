@@ -412,8 +412,8 @@ internal static class LayoutPreview
     /// counting pixel rows in the PNG rather than by looking: the gap from the
     /// panel's top edge to the name row must equal the gap from the last dial
     /// to the status text, and the gap under the text must equal the gap over
-    /// it. «Отступы сверху и снизу визуально не идентичные; service operational
-    /// прилип в самом низу» (2026-09-04).
+    /// it. "The top and bottom padding are not visually identical; service
+    /// operational is stuck right at the bottom" (2026-09-04).
     private static void RenderPadding(
         string dir,
         string name,
@@ -466,8 +466,8 @@ internal static class LayoutPreview
     }
 
     /// The plan under the account name, in all three placements that draw a
-    /// name — «сверху текст аккаунта, а под ним тир подписки» (the user,
-    /// 2026-09-04). Two accounts with the fields the live bodies carried, so the
+    /// name — "the account text on top, with the subscription tier below it"
+    /// (the user, 2026-09-04). Two accounts with the fields the live bodies carried, so the
     /// lines read `Max 20x` and `Team` rather than a placeholder.
     ///
     /// Each is rendered TWICE, `<stem>-off` and `<stem>-on`, and the pair is the

@@ -5,8 +5,8 @@
              Background="Transparent"
              ClipToBounds="True">
     <UserControl.Resources>
-        <!-- Плоская кнопка-иконка: без стандартного WPF-хрома (рамка/подсветка),
-             который бы не вписался в тёмную панель. Порт .buttonStyle(.plain). -->
+        <!-- A flat icon button: without the standard WPF chrome (border/highlight),
+             which wouldn't fit into the dark panel. Port of .buttonStyle(.plain). -->
         <Style x:Key="IconButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -54,34 +54,34 @@
          anywhere on the square — including the padding, where a press must NOT
          reach the window's drag. -->
     <Grid x:Name="RootGrid" Background="Transparent">
-        <!-- Панель: тёмный полупрозрачный фон со скруглением, внутри — сетка
-             циферблатов ПО СТРОКЕ НА АККАУНТ. Порядок детей в Grid — это и
-             порядок отрисовки (z-order), как overlay-цепочка в
-             WidgetRootView.swift.
+        <!-- The panel: a dark translucent background with rounded corners, with a
+             grid of dials ONE ROW PER ACCOUNT inside. The order of children in
+             the Grid is also the drawing order (z-order), like the overlay
+             chain in WidgetRootView.swift.
 
-             Сетка пуста в разметке и строится в ApplyLayout: число строк
-             равно числу настроенных аккаунтов и меняется в рантайме
-             (добавление/удаление аккаунта), а четыре именованных циферблата
-             в XAML были той самой зашитой раскладкой 2x2, которую это
-             заменяет. Статус сервиса больше не циферблат: он общий на все
-             аккаунты и уехал в строку статуса. -->
+             The grid is empty in markup and is built in ApplyLayout: the number
+             of rows equals the number of configured accounts and changes at
+             runtime (adding/removing an account), and the four named dials
+             that used to be in XAML were exactly the hardcoded 2x2 layout that
+             this replaces. Service status is no longer a dial: it's shared
+             across all accounts and moved to the status line. -->
         <Border x:Name="PanelBorder" Background="{x:Static views:Theme.PanelBackgroundBrush}">
             <Grid x:Name="DialGrid" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
 
-        <!-- Плашка поверх циферблатов, когда их цифрам нельзя доверять
-             (NoCredentials/Unauthorized). Порт BlockingNotice.swift +
-             overlay в WidgetRootView.swift:186-208.
+        <!-- A notice card over the dials when their numbers can't be trusted
+             (NoCredentials/Unauthorized). Port of BlockingNotice.swift +
+             overlay in WidgetRootView.swift:186-208.
 
-             IsHitTestVisible здесь намеренно НЕ выключен (в отличие от
-             Swift-оригинала, где .allowsHitTesting(false) держит всю плашку
-             прозрачной для кликов): в WPF выключение hit-теста на предке
-             вырубает его для всего поддерева, включая SignInButton, и
-             сделать кнопку кликабельной обратно снизу уже нельзя. Вместо
-             этого просто не мешаем всплытию: сам Border и текстовые блоки
-             не выставляют e.Handled, поэтому клик по фону плашки всё равно
-             доходит до DesktopWidgetWindow и запускает drag — тот же эффект,
-             без потери кнопки. -->
+             IsHitTestVisible here is deliberately NOT turned off (unlike the
+             Swift original, where .allowsHitTesting(false) keeps the whole
+             notice transparent to clicks): in WPF turning off hit-testing on
+             an ancestor disables it for the entire subtree, including
+             SignInButton, and there's no way to make the button clickable
+             again from below. Instead we simply don't block bubbling: the
+             Border itself and the text blocks don't set e.Handled, so a click
+             on the notice's background still reaches DesktopWidgetWindow and
+             starts a drag — the same effect, without losing the button. -->
         <Border x:Name="NoticeBorder" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
                 Visibility="Collapsed">
             <StackPanel x:Name="NoticeStack" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -92,7 +92,7 @@
                            TextWrapping="Wrap"
                            FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
                            Foreground="{x:Static views:Theme.DimBrush}"/>
-                <!-- Видна только для Failed(NoCredentials) — SetContent переключает Visibility. -->
+                <!-- Visible only for Failed(NoCredentials) — SetContent toggles Visibility. -->
                 <Button x:Name="SignInButton" Content="Sign in" Margin="0,8,0,0"
                         Style="{StaticResource SignInButtonStyle}"
                         Visibility="Collapsed"
@@ -124,8 +124,8 @@
             <Grid x:Name="EditToolbar"/>
         </Border>
 
-        <!-- Строка статуса — молчит, пока всё в порядке (StatusLine.Text
-             возвращает null). WidgetRootView.swift:170-177. -->
+        <!-- The status line — stays silent while everything is fine (StatusLine.Text
+             returns null). WidgetRootView.swift:170-177. -->
         <TextBlock x:Name="StatusLineText" VerticalAlignment="Bottom" HorizontalAlignment="Center"
                    FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
                    Foreground="{x:Static views:Theme.DimBrush}"

@@ -21,9 +21,9 @@ using Orientation = System.Windows.Controls.Orientation;
 namespace ClaudeUsageWidget.App.Views;
 
 /// <summary>
-/// Плашка «цифрам нельзя доверять» — App-слойный аналог BlockingNotice.swift.
-/// Core её не портирует (см. task-14-brief.md), поэтому текстовые правила
-/// живут здесь же, рядом с тем, что их показывает.
+/// The "the numbers can't be trusted" notice — an App-layer analog of BlockingNotice.swift.
+/// Core doesn't port it (see task-14-brief.md), so the text rules
+/// live right here, next to whatever displays them.
 /// </summary>
 public sealed record WidgetNotice(string Title, string Detail, bool ShowSignIn);
 
@@ -43,9 +43,10 @@ public partial class WidgetRootView : UserControl
     /// so this asks for the same single `App.SetEditingLayout(false)`.
     public event Action? EditDoneRequested;
 
-    /// Кнопка Sign in в плашке NoCredentials — в оригинальном
-    /// BlockingNotice.swift такой кнопки нет вовсе (там только текст со
-    /// ссылкой на меню), но бриф Task 14 явно просит именно кнопку.
+    /// The Sign in button in the NoCredentials notice — the original
+    /// BlockingNotice.swift has no such button at all (there it's just text
+    /// with a reference to the menu), but the Task 14 brief explicitly asks
+    /// for a button.
     public event Action? SignInRequested;
 
     /// The toolbar's Lock button. A notification of the click only — the source
@@ -327,14 +328,14 @@ public partial class WidgetRootView : UserControl
     }
 
     /// <summary>
-    /// Пересчитывает всю геометрию под новую сторону панели. В Swift это
-    /// происходит реактивно на каждый рендер через вычисляемые свойства
-    /// scale/pad/gap/dialSize; здесь вызывается явно из
-    /// DesktopWidgetWindow — при создании окна и на каждом изменении
-    /// размера при resize.
+    /// Recomputes the whole geometry for a new panel side length. In Swift this
+    /// happens reactively on every render via computed properties
+    /// scale/pad/gap/dialSize; here it's called explicitly from
+    /// DesktopWidgetWindow — when the window is created and on every size
+    /// change during a resize.
     /// </summary>
-    /// <param name="accountCount">Число блоков. Меняется в рантайме, поэтому
-    /// сетка пересобирается здесь целиком.</param>
+    /// <param name="accountCount">The number of blocks. Changes at runtime, so
+    /// the grid is rebuilt here from scratch.</param>
     public void ApplyLayout(
         WidgetLayout layout, StatusMode statusMode, ModelDial modelDial, PlanLine planLine,
         int accountCount, double side)
@@ -466,9 +467,10 @@ public partial class WidgetRootView : UserControl
         }
     }
 
-    /// Что нарисовано для одного аккаунта. Циферблаты адресуются индексом из
-    /// DialModel.All (0 = 5H, 1 = 7D, 2 = per-model), а не позицией в сетке:
-    /// позиция задаётся настройкой и меняется, смысл — нет.
+    /// What's drawn for a single account. Dials are addressed by an index into
+    /// DialModel.All (0 = 5H, 1 = 7D, 2 = per-model), not by their position in
+    /// the grid: the position is set by a setting and changes, the meaning
+    /// doesn't.
     private sealed class BlockVisual
     {
         public TextBlock? Name;
@@ -760,8 +762,8 @@ public partial class WidgetRootView : UserControl
         }
     }
 
-    /// Имя сверху/снизу — отдельной строкой по центру блока; имя в клетке —
-    /// одним из элементов потока, на месте бывшего STATUS.
+    /// The name above/below — a separate line centered in the block; the name
+    /// in a cell — one of the flow's items, in the place of the former STATUS.
     private Grid BuildBlock(WidgetLayout layout, PanelMetrics metrics, BlockVisual visual, int blockIndex)
     {
         var cells = BuildCells(layout, metrics, visual, blockIndex);
@@ -839,7 +841,7 @@ public partial class WidgetRootView : UserControl
         return grid;
     }
 
-    /// Порядок, в котором DialModel.All всегда возвращает свои три модели.
+    /// The order in which DialModel.All always returns its three models.
     private static int DialIndex(BlockItem item) => item switch
     {
         BlockItem.FiveHour => 0,
@@ -849,7 +851,7 @@ public partial class WidgetRootView : UserControl
     };
 
     /// The account name, with the subscription plan under it when the setting
-    /// is on: «сверху текст аккаунта, а под ним тир подписки» (the user,
+    /// is on: "the account text on top, and the subscription tier below it" (the user,
     /// 2026-09-04).
     ///
     /// One builder for both placements, because the pair must read the same in
@@ -896,12 +898,12 @@ public partial class WidgetRootView : UserControl
         TextTrimming = TextTrimming.CharacterEllipsis,
     };
 
-    /// Заполняет строки, строку статуса и плашку — порт тела
-    /// WidgetRootView.swift:46-96, по строке на аккаунт.
+    /// Populates the rows, the status line and the notice — port of the body of
+    /// WidgetRootView.swift:46-96, one row per account.
     public void SetContent(IReadOnlyList<AccountRow> rows, ServiceStatus status, bool dimmed, string? statusLine, WidgetNotice? notice)
     {
-        // Несовпадение значит, что ApplyLayout не звали под этот список —
-        // рисовать дальше значило бы молча потерять или задвоить аккаунт.
+        // A mismatch means ApplyLayout wasn't called for this list —
+        // drawing further would silently lose or duplicate an account.
         if (rows.Count != _blocks.Count)
             throw new InvalidOperationException(
                 $"SetContent got {rows.Count} rows for a panel built for {_blocks.Count}.");
@@ -912,8 +914,8 @@ public partial class WidgetRootView : UserControl
             if (visual.Name is { } name)
             {
                 name.Text = rows[i].DisplayName;
-                // Полное имя в подсказке: в клетке шириной с циферблат длинное
-                // имя обрезается многоточием.
+                // The full name in the tooltip: in a cell as wide as a dial a
+                // long name gets truncated with an ellipsis.
                 name.ToolTip = rows[i].DisplayName;
             }
 
