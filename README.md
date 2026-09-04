@@ -248,7 +248,7 @@ covering it — this does not depend on the state of anyone's desktop.
 $env:CUW_RENDER_PREVIEW = "$env:TEMP\cuw-layouts"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-309 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
+329 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
 
 ## Architecture
 
