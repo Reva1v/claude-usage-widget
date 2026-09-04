@@ -27,12 +27,12 @@
 
         <Style x:Key="SignInButtonStyle" TargetType="Button">
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="{x:Static views:Theme.TextBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextBrush}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Chrome"
-                                Background="{x:Static views:Theme.DimBrush}"
+                                Background="{DynamicResource Theme.DimBrush}"
                                 Opacity="0.35"
                                 CornerRadius="10"
                                 Padding="10,4">
@@ -65,7 +65,7 @@
              that used to be in XAML were exactly the hardcoded 2x2 layout that
              this replaces. Service status is no longer a dial: it's shared
              across all accounts and moved to the status line. -->
-        <Border x:Name="PanelBorder" Background="{x:Static views:Theme.PanelBackgroundBrush}">
+        <Border x:Name="PanelBorder" Background="{DynamicResource Theme.PanelBackgroundBrush}">
             <Grid x:Name="DialGrid" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
 
@@ -82,16 +82,16 @@
              Border itself and the text blocks don't set e.Handled, so a click
              on the notice's background still reaches DesktopWidgetWindow and
              starts a drag — the same effect, without losing the button. -->
-        <Border x:Name="NoticeBorder" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
+        <Border x:Name="NoticeBorder" Background="{DynamicResource Theme.OverlayBackgroundBrush}"
                 Visibility="Collapsed">
             <StackPanel x:Name="NoticeStack" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <TextBlock x:Name="NoticeTitleText" HorizontalAlignment="Center" TextAlignment="Center"
                            FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.ValueWeight}"
-                           Foreground="{x:Static views:Theme.TextBrush}"/>
+                           Foreground="{DynamicResource Theme.TextBrush}"/>
                 <TextBlock x:Name="NoticeDetailText" HorizontalAlignment="Center" TextAlignment="Center"
                            TextWrapping="Wrap"
                            FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
-                           Foreground="{x:Static views:Theme.DimBrush}"/>
+                           Foreground="{DynamicResource Theme.DimBrush}"/>
                 <!-- Visible only for Failed(NoCredentials) — SetContent toggles Visibility. -->
                 <Button x:Name="SignInButton" Content="Sign in" Margin="0,8,0,0"
                         Style="{StaticResource SignInButtonStyle}"
@@ -104,7 +104,7 @@
              Visible only while the pointer is over the panel and the edit mode
              is off — in the mode the strip below carries the same buttons and
              the top row of cells must stay draggable. WidgetRootView.swift:110-166. -->
-        <Border x:Name="HeaderBorder" VerticalAlignment="Top" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
+        <Border x:Name="HeaderBorder" VerticalAlignment="Top" Background="{DynamicResource Theme.OverlayBackgroundBrush}"
                 Opacity="0" IsHitTestVisible="False">
             <Grid x:Name="HeaderGrid">
                 <Grid.ColumnDefinitions>
@@ -116,19 +116,19 @@
                 </Grid.ColumnDefinitions>
 
                 <Button x:Name="EyeButton" Grid.Column="0" Style="{StaticResource IconButtonStyle}"
-                        Foreground="{x:Static views:Theme.DimBrush}"
+                        Foreground="{DynamicResource Theme.DimBrush}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE890;"
                         ToolTip="Hide widget — bring it back from the tray icon"
                         Click="EyeButton_Click"/>
 
                 <Button x:Name="PencilButton" Grid.Column="2" Style="{StaticResource IconButtonStyle}"
-                        Foreground="{x:Static views:Theme.DimBrush}"
+                        Foreground="{DynamicResource Theme.DimBrush}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE70F;"
                         ToolTip="Edit layout — drag a cell onto another to swap them"
                         Click="PencilButton_Click"/>
 
                 <Button x:Name="LockButton" Grid.Column="4" Style="{StaticResource IconButtonStyle}"
-                        Foreground="{x:Static views:Theme.DimBrush}"
+                        Foreground="{DynamicResource Theme.DimBrush}"
                         FontFamily="Segoe MDL2 Assets" Content="&#xE785;"
                         ToolTip="Click to lock the widget position and size"
                         Click="LockButton_Click"/>
@@ -153,7 +153,7 @@
              not known here), and the row/column counts from Core's
              ToolbarMetrics, so what is drawn and what the window grew by cannot
              disagree. -->
-        <Border x:Name="ToolbarPill" Background="{x:Static views:Theme.PanelBackgroundBrush}"
+        <Border x:Name="ToolbarPill" Background="{DynamicResource Theme.PanelBackgroundBrush}"
                 VerticalAlignment="Top" HorizontalAlignment="Center"
                 Visibility="Collapsed">
             <Grid x:Name="EditToolbar"/>
@@ -163,7 +163,7 @@
              returns null). WidgetRootView.swift:170-177. -->
         <TextBlock x:Name="StatusLineText" VerticalAlignment="Bottom" HorizontalAlignment="Center"
                    FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
-                   Foreground="{x:Static views:Theme.DimBrush}"
+                   Foreground="{DynamicResource Theme.DimBrush}"
                    Visibility="Collapsed" IsHitTestVisible="False"/>
 
         <!-- Edit-mode chrome: dashed cell outlines, the drag ghost, the target

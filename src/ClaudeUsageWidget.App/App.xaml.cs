@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using ClaudeUsageWidget.App.Tray;
+using ClaudeUsageWidget.App.Views;
 using ClaudeUsageWidget.App.Web;
 using ClaudeUsageWidget.App.Windows;
 using ClaudeUsageWidget.Core;
@@ -67,6 +68,10 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // The XAML binds the palette with DynamicResource; the keys must exist
+        // before the first view loads (the preview included).
+        Theme.PublishResources();
 
         LayoutPreview.RunIfRequested();
 
