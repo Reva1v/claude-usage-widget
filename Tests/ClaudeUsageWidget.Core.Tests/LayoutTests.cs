@@ -575,7 +575,10 @@ public class PanelMetricsTests
 
             var m = PanelMetrics.For(layout, 3, 207);
 
-            Assert.Equal(m.TopGap, m.BottomGap, 6);
+            // With the status as a dial there is no caption band: the bottom
+            // edge is the padding itself, the same number as the top.
+            if (mode == StatusMode.Cell) Assert.Equal(m.TopGap, m.StatusBand, 6);
+            else Assert.Equal(m.TopGap, m.BottomGap, 6);
         }
     }
 
@@ -596,12 +599,12 @@ public class PanelMetricsTests
     }
 
     [Fact]
-    public void TheStatusBandIsReservedEvenWhenTheLineHasNothingToSay()
+    public void AStatusDialDropsTheCaptionBand()
     {
-        // In Cell mode the line is silent until something goes wrong, and in
-        // either mode the edit hint appears the moment the mode is entered. The
-        // panel must not change height for either, so the band is reserved from
-        // the metrics and never from the text.
+        // In Line mode the band is reserved from the metrics, never from the
+        // text, so the panel does not change height when the service goes
+        // down. In Cell mode the dial says it and the band is the bottom
+        // padding alone — the plain square the panel was before accounts.
         var cell = PanelMetrics.For(
             WidgetLayout.Sanitize(WidgetLayout.Default, StatusMode.Cell, ModelDial.Shown),
             2, WidgetSettings.DefaultSide);
@@ -609,8 +612,10 @@ public class PanelMetricsTests
             WidgetLayout.Sanitize(WidgetLayout.Default, StatusMode.Line, ModelDial.Shown),
             2, WidgetSettings.DefaultSide);
 
-        Assert.Equal(line.StatusBand, cell.StatusBand, 6);
-        Assert.Equal(cell.TopGap, cell.BottomGap, 6);
+        Assert.Equal(line.CaptionLine + 2 * line.Padding, line.StatusBand, 6);
+        Assert.Equal(cell.Padding, cell.StatusBand, 6);
+        // Trouble text, when there is any, sits inside that padding.
+        Assert.True(cell.BottomGap >= 0 && cell.BottomGap < cell.Padding);
     }
 
     [Fact]

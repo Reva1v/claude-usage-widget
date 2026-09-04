@@ -34,8 +34,12 @@ public sealed record WidgetNotice(string Title, string Detail, bool ShowSignIn);
 /// </summary>
 public partial class WidgetRootView : UserControl
 {
-    /// The toolbar's Hide button.
+    /// The toolbar's Hide button, and the hover header's eye.
     public event Action? HideRequested;
+
+    /// The hover header's pencil: flips the edit mode through the App, the
+    /// same single toggle the tray item and the toolbar's Done button use.
+    public event Action? EditToggleRequested;
 
     /// The toolbar's Done button. The mode had no way out from the panel — you
     /// had to go back to the tray for the item that turned it on (the user,
@@ -82,6 +86,7 @@ public partial class WidgetRootView : UserControl
         {
             _positionLocked = value;
             RefreshToolbar();
+            RefreshHeaderLock();
         }
     }
 
@@ -141,6 +146,8 @@ public partial class WidgetRootView : UserControl
             ApplySize(Metrics(_editMode));
             RefreshToolbar();
             RefreshEditChrome();
+            // The header gives way to the strip while the mode is on.
+            SetHovering(RootGrid.IsMouseOver);
         }
     }
 
@@ -236,8 +243,12 @@ public partial class WidgetRootView : UserControl
         RootGrid.PreviewMouseLeftButtonUp += OnEditMouseUp;
         RootGrid.LostMouseCapture += (_, _) => CancelDrag();
 
+        RootGrid.MouseEnter += (_, _) => SetHovering(true);
+        RootGrid.MouseLeave += (_, _) => SetHovering(false);
+
         BuildToolbar();
         RefreshToolbar();
+        RefreshHeaderLock();
     }
 
     /// Glyphs are Segoe MDL2 Assets, the font the deleted eye and lock already
@@ -355,6 +366,15 @@ public partial class WidgetRootView : UserControl
 
         PanelBorder.CornerRadius = new CornerRadius(corner);
         NoticeBorder.CornerRadius = new CornerRadius(corner);
+        // Top corners only — the header sits over the panel's top edge,
+        // WidgetRootView.swift:151-159.
+        HeaderBorder.CornerRadius = new CornerRadius(corner, corner, 0, 0);
+        // WidgetRootView.swift:144-148: 10*scale at the sides and top, 5*scale below.
+        HeaderGrid.Margin = new Thickness(10 * scale, 10 * scale, 10 * scale, 5 * scale);
+        EyeButton.Width = EyeButton.Height = 16 * scale;
+        PencilButton.Width = PencilButton.Height = 16 * scale;
+        LockButton.Width = LockButton.Height = 16 * scale;
+        EyeButton.FontSize = PencilButton.FontSize = LockButton.FontSize = 12 * scale;
 
         BuildGrid(layout, accountCount, metrics);
         RefreshToolbar();
@@ -944,16 +964,13 @@ public partial class WidgetRootView : UserControl
         // mode this is the only place it appears, so it speaks even when the
         // service is fine — a silent line reads as a lost dial.
         //
-        // The hint is one more part of the line, not a replacement for it:
-        // substituting it would hide an outage or a rate-limit notice for as
-        // long as the mode is on, and last in the list means the thing the user
-        // did not already know leads. Written here rather than when the mode is
-        // entered because SetContent runs on every poll, so a hint assigned
-        // once would be erased a minute later; the window redraws the cached
-        // frame on the toggle so it does not have to wait for that poll.
-        var editHint = _editMode ? "drag a cell to swap · Done finishes" : null;
+        //
+        // No edit-mode hint here: the line is sized into the panel, and a hint
+        // that appears only in the mode made the panel taller than it would be
+        // once the mode is off (the user, 2026-09-05). The pencil's tooltip
+        // and the strip say how the mode works.
         var text = string.Join(" · ",
-            new[] { ServiceStatusText.Line(status, _statusMode), statusLine, editHint }
+            new[] { ServiceStatusText.Line(status, _statusMode), statusLine }
                 .Where(part => !string.IsNullOrEmpty(part)));
 
         StatusLineText.Text = text;
@@ -980,4 +997,34 @@ public partial class WidgetRootView : UserControl
     }
 
     private void SignInButton_Click(object sender, RoutedEventArgs e) => SignInRequested?.Invoke();
+
+    /// Opacity alone would leave the buttons clickable: an invisible eye
+    /// would take the press meant for a drag and hide the widget for no
+    /// visible reason. Port of .allowsHitTesting(hovering) —
+    /// WidgetRootView.swift:164. Hidden throughout the edit mode: the strip
+    /// carries the same buttons, and the top row of cells must stay draggable.
+    private void SetHovering(bool hovering)
+    {
+        var shown = hovering && !_editMode;
+        HeaderBorder.Opacity = shown ? 1 : 0;
+        HeaderBorder.IsHitTestVisible = shown;
+    }
+
+    /// The header's lock mirrors the strip's: an open padlock while the panel
+    /// can be moved, a closed one in the warning colour while it cannot.
+    private void RefreshHeaderLock()
+    {
+        LockButton.Content = _positionLocked ? "\uE72E" : "\uE785";
+        LockButton.Foreground = _positionLocked ? Theme.WarningBrush : Theme.DimBrush;
+        LockButton.ToolTip = _positionLocked
+            ? "Position locked — click to unlock"
+            : "Click to lock the widget position and size";
+    }
+
+    private void EyeButton_Click(object sender, RoutedEventArgs e) => HideRequested?.Invoke();
+
+    private void PencilButton_Click(object sender, RoutedEventArgs e) => EditToggleRequested?.Invoke();
+
+    private void LockButton_Click(object sender, RoutedEventArgs e) => LockToggleRequested?.Invoke();
 }
+

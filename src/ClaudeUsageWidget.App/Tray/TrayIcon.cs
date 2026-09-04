@@ -24,7 +24,9 @@ public sealed record TrayMenuState(
     string BandPosition,
     string? ResolvedModelLabel,
     IReadOnlyList<AccountProfile> Accounts,
-    string? TrayAccountId);
+    string? TrayAccountId,
+    PanelView? PanelView,
+    BandView BandView);
 
 /// <summary>
 /// The application's icon in the system tray and its context menu.
@@ -53,6 +55,8 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _launchAtLoginItem = null!;
     private ToolStripMenuItem _accountsMenu = null!;
     private ToolStripMenuItem _layoutMenu = null!;
+    private ToolStripMenuItem _bandViewMetricsItem = null!;
+    private ToolStripMenuItem _bandViewAccountsItem = null!;
 
     /// <summary>The "Refresh now" menu item.</summary>
     public event Action? RefreshRequested;
@@ -96,6 +100,12 @@ public sealed class TrayIcon : IDisposable
     /// Raised by the Layout submenu's edit item. The App owns the flag; the
     /// tray only asks for it to be flipped.
     public event Action? EditLayoutToggled;
+
+    /// Layout — one of the two named views was picked.
+    public event Action<PanelView>? PanelViewSelected;
+
+    /// "Band shows" — what the taskbar band draws.
+    public event Action<BandView>? BandViewSelected;
 
     /// What the tick beside `Edit layout…` should show. Set before the menu is
     /// opened, like the rest of the Layout submenu's state.
@@ -166,7 +176,9 @@ public sealed class TrayIcon : IDisposable
         // rule that makes the icon draw SESSION in that case, rather than
         // leaving all three checkboxes blank.
         SyncAccountsMenu(state.Accounts, state.TrayAccountId);
-        SyncLayoutMenu(state.ShowOnDesktop);
+        SyncLayoutMenu(state.ShowOnDesktop, state.PanelView);
+        _bandViewMetricsItem.Checked = state.BandView == BandView.Metrics;
+        _bandViewAccountsItem.Checked = state.BandView == BandView.Accounts;
 
         var metricIndex = MetricIndex(state.TrayMetricKey);
         _trayShowsSessionItem.Checked = metricIndex == 0;
@@ -277,12 +289,27 @@ public sealed class TrayIcon : IDisposable
         });
     }
 
-    /// One item now. Every flow, the name placement and the status live on the
-    /// panel's own toolbar — one editing surface rather than two that have to
-    /// keep agreeing with each other.
-    private void SyncLayoutMenu(bool widgetVisible)
+    /// The two named views, then the editor. Every flow, the name placement
+    /// and the status live on the panel's own toolbar — one editing surface
+    /// rather than two that have to keep agreeing with each other; the views
+    /// here are presets that write the same settings the toolbar edits, and a
+    /// hand-arranged panel ticks neither.
+    private void SyncLayoutMenu(bool widgetVisible, PanelView? current)
     {
         _layoutMenu.DropDownItems.Clear();
+        _layoutMenu.DropDownItems.Add(new ToolStripMenuItem(
+            "Classic", null, (_, _) => PanelViewSelected?.Invoke(PanelView.Classic))
+        {
+            Checked = current == PanelView.Classic,
+            ToolTipText = "A 2x2 grid of dials with the service status as a dial — the panel as it was before accounts.",
+        });
+        _layoutMenu.DropDownItems.Add(new ToolStripMenuItem(
+            "Account rows", null, (_, _) => PanelViewSelected?.Invoke(PanelView.Accounts))
+        {
+            Checked = current == PanelView.Accounts,
+            ToolTipText = "One row per account with its name, and the service status as a line under the rows.",
+        });
+        _layoutMenu.DropDownItems.Add(new ToolStripSeparator());
         _layoutMenu.DropDownItems.Add(new ToolStripMenuItem(
             "Edit layout…", null, (_, _) => EditLayoutToggled?.Invoke())
         {
@@ -369,6 +396,21 @@ public sealed class TrayIcon : IDisposable
         bandPositionMenu.DropDownItems.Add(_bandPositionTrayItem);
         bandPositionMenu.DropDownItems.Add(_bandPositionLeftItem);
         menu.Items.Add(bandPositionMenu);
+
+        // What the band draws, kept like the position: a preference that
+        // survives the band being switched off.
+        var bandViewMenu = new ToolStripMenuItem("Band shows");
+        _bandViewMetricsItem = new ToolStripMenuItem("Three metrics", null, (_, _) => BandViewSelected?.Invoke(BandView.Metrics))
+        {
+            ToolTipText = "5H, 7D and the model for the tray account.",
+        };
+        _bandViewAccountsItem = new ToolStripMenuItem("All accounts", null, (_, _) => BandViewSelected?.Invoke(BandView.Accounts))
+        {
+            ToolTipText = "Every account's name over its 5H figure and reset time.",
+        };
+        bandViewMenu.DropDownItems.Add(_bandViewMetricsItem);
+        bandViewMenu.DropDownItems.Add(_bandViewAccountsItem);
+        menu.Items.Add(bandViewMenu);
 
         _lockPositionItem = new ToolStripMenuItem("Lock position");
         _lockPositionItem.Click += (_, _) => LockPositionToggled?.Invoke(!_lockPositionItem.Checked);

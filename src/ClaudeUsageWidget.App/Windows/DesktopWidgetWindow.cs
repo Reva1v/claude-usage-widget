@@ -88,6 +88,9 @@ public sealed class DesktopWidgetWindow : Window
     /// The toolbar's Done button, on its way to `App.SetEditingLayout(false)`.
     public event Action? EditDoneRequested;
 
+    /// The hover header's pencil — the same toggle as the tray's Edit layout.
+    public event Action? EditToggleRequested;
+
     /// Which side of the panel the strip is drawn on, and how much of the
     /// window's height currently sits ABOVE the panel because of it.
     ///
@@ -199,6 +202,7 @@ public sealed class DesktopWidgetWindow : Window
         _root.SignInRequested += () => SignInRequested?.Invoke();
         _root.LockToggleRequested += () => PositionLocked = !PositionLocked;
         _root.EditDoneRequested += () => EditDoneRequested?.Invoke();
+        _root.EditToggleRequested += () => EditToggleRequested?.Invoke();
         _root.LayoutEdited += layout => LayoutEdited?.Invoke(layout);
         _root.StatusModeSelected += mode => StatusModeSelected?.Invoke(mode);
         _root.ModelDialSelected += dial => ModelDialSelected?.Invoke(dial);
@@ -297,11 +301,7 @@ public sealed class DesktopWidgetWindow : Window
 
     private void ApplyLayoutAndSize(double side)
     {
-        var data = _settings.Load();
-        var mode = StatusModes.Resolve(data.StatusMode, data.Layout);
-        var modelDial = ModelDials.Resolve(data.ModelDial);
-        var planLine = PlanLines.Resolve(data.PlanLine);
-        var layout = WidgetLayout.Sanitize(data.Layout, mode, modelDial);
+        var (layout, mode, modelDial, planLine) = LayoutResolution.Resolve(_settings.Load(), _accountCount);
 
         var metrics = PanelMetrics.For(layout, _accountCount, side, _root.EditMode, planLine);
         Width = metrics.Width;

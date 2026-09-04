@@ -47,6 +47,14 @@ public static class BandText
             row.Dials[0].Fraction is { } fraction ? UsageMath.PercentText(fraction) : "—",
             row.SessionResetsIn)).ToList();
 
+    /// The band as it was before accounts existed: the tray account's three
+    /// columns — 5H, 7D, the model — label over percentage, no reset times.
+    /// The same columns the tray tooltip lists, so the two never disagree.
+    public static IReadOnlyList<BandEntry> MetricEntries(AccountRow row) =>
+        TrayText.Metrics(row.Dials)
+            .Select(metric => new BandEntry(metric.Label, metric.Value, null))
+            .ToList();
+
     // The band used to flatten an entry into a TrayMetric — name and reset time
     // sharing the top line, percentage below — because the renderer drew
     // exactly two lines of one size each. That put the name beside a number it

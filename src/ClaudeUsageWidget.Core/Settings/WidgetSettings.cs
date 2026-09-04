@@ -47,6 +47,12 @@ public sealed record WidgetSettingsData
     /// default) or "left" (left edge of the taskbar, e.g. where the Widgets
     /// button sits if the user disabled it).
     public string BandPosition { get; init; } = "tray";
+
+    /// What the taskbar band shows: the tray account's three figures, or one
+    /// group per account. NULLABLE: null follows the account count through
+    /// <see cref="BandViews.Resolve"/>, so a single account keeps the band it
+    /// had before accounts existed. Never default it here.
+    public BandView? BandView { get; init; }
     /// Which account the tray icon and its metric describe. Null falls back to
     /// the first account.
     public string? TrayAccountId { get; init; }

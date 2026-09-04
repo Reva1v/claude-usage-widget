@@ -128,6 +128,8 @@ public partial class App : System.Windows.Application
         _trayIcon.AccountSelected += OnAccountSelected;
 
         _trayIcon.EditLayoutToggled += () => SetEditingLayout(!_editingLayout);
+        _trayIcon.PanelViewSelected += OnPanelViewSelected;
+        _trayIcon.BandViewSelected += OnBandViewSelected;
         _trayIcon.AccountAddRequested += OnAccountAddRequested;
         _trayIcon.AccountRenameRequested += OnAccountRenameRequested;
         _trayIcon.AccountRemoveRequested += id => FireAndForget(() => OnAccountRemoveRequestedAsync(id));
@@ -151,6 +153,8 @@ public partial class App : System.Windows.Application
         // through the one method that keeps the flag, the tick and the mode
         // agreeing.
         _widgetWindow.EditDoneRequested += () => SetEditingLayout(false);
+        // The hover header's pencil: the third way into the same toggle.
+        _widgetWindow.EditToggleRequested += () => SetEditingLayout(!_editingLayout);
         _widgetWindow.StatusModeSelected += OnStatusModeSelected;
         _widgetWindow.ModelDialSelected += OnModelDialSelected;
         _widgetWindow.PlanLineSelected += OnPlanLineSelected;
@@ -458,6 +462,7 @@ public partial class App : System.Windows.Application
         var resolvedModelLabel = snapshot is not null && ModelBuckets.Resolve(data.ModelBucket, snapshot) is { } resolvedKey
             ? ModelBuckets.Label(resolvedKey)
             : null;
+        var resolved = LayoutResolution.Resolve(data, _accounts.Count);
 
         _trayIcon!.SyncMenuState(new TrayMenuState(
             data.TrayMetricKey,
@@ -469,7 +474,9 @@ public partial class App : System.Windows.Application
             data.BandPosition,
             resolvedModelLabel,
             data.Accounts,
-            data.TrayAccountId));
+            data.TrayAccountId,
+            PanelViews.Current(resolved.Layout, resolved.Status),
+            BandViews.Resolve(data.BandView, data.Accounts.Count)));
     }
 
     private void OnTrayMetricSelected(string key)
@@ -530,6 +537,23 @@ public partial class App : System.Windows.Application
         var data = _settings!.Load();
         _settings.Save(data with { BandPosition = position });
         _bandWindow?.SetPosition(position);
+        RefreshTrayMenuState();
+    }
+
+    private void OnBandViewSelected(BandView view)
+    {
+        _settings!.Save(_settings.Load() with { BandView = view });
+        RenderTaskbarBand();
+        RefreshTrayMenuState();
+    }
+
+    /// A named view is a preset over the same two settings the toolbar edits;
+    /// the model-dial and plan-line switches ride along unchanged.
+    private void OnPanelViewSelected(PanelView view)
+    {
+        _settings!.Save(LayoutResolution.Apply(_settings.Load(), view));
+        _widgetWindow!.RebuildLayout(_accounts.Count);
+        RenderWidget();
         RefreshTrayMenuState();
     }
 
@@ -597,7 +621,14 @@ public partial class App : System.Windows.Application
         var rows = AccountRow.ForAll(
             data.Accounts, SnapshotsById(), data.ModelBucket, DateTimeOffset.Now);
 
-        _bandWindow.Render(BandText.Entries(rows));
+        // Three metrics of the tray account, or one group per account — the
+        // same rows either way, so the band and the panel never disagree.
+        var trayId = TrayAccount()?.Profile.Id;
+        var trayRow = rows.FirstOrDefault(row => row.AccountId == trayId) ?? rows.FirstOrDefault();
+        var entries = BandViews.Resolve(data.BandView, data.Accounts.Count) == BandView.Metrics && trayRow is not null
+            ? BandText.MetricEntries(trayRow)
+            : BandText.Entries(rows);
+        _bandWindow.Render(entries);
     }
 
     private void RenderWidget()
@@ -735,13 +766,12 @@ public partial class App : System.Windows.Application
         var data = _settings!.Load();
         // Both settings are written back on every save, so a file that predated
         // either stops being ambiguous after the first edit.
-        var mode = StatusModes.Resolve(data.StatusMode, data.Layout);
-        var modelDial = ModelDials.Resolve(data.ModelDial);
+        var current = LayoutResolution.Resolve(data, _accounts.Count);
         _settings.Save(data with
         {
-            Layout = WidgetLayout.Sanitize(layout, mode, modelDial),
-            StatusMode = mode,
-            ModelDial = modelDial,
+            Layout = WidgetLayout.Sanitize(layout, current.Status, current.ModelDial),
+            StatusMode = current.Status,
+            ModelDial = current.ModelDial,
         });
 
         // Changing the layout changes both the panel's size and its grid —
@@ -757,12 +787,15 @@ public partial class App : System.Windows.Application
     private void OnStatusModeSelected(StatusMode mode)
     {
         var data = _settings!.Load();
-        var modelDial = ModelDials.Resolve(data.ModelDial);
+        // Resolved, not `data.Layout`: a file that never saved a layout is
+        // drawing the view for its account count, and that is the layout the
+        // switch must apply to — not the default the file would fall back to.
+        var current = LayoutResolution.Resolve(data, _accounts.Count);
         _settings.Save(data with
         {
             StatusMode = mode,
-            ModelDial = modelDial,
-            Layout = WidgetLayout.Sanitize(data.Layout, mode, modelDial),
+            ModelDial = current.ModelDial,
+            Layout = WidgetLayout.Sanitize(current.Layout, mode, current.ModelDial),
         });
 
         _widgetWindow!.RebuildLayout(_accounts.Count);
@@ -777,12 +810,12 @@ public partial class App : System.Windows.Application
     private void OnModelDialSelected(ModelDial dial)
     {
         var data = _settings!.Load();
-        var mode = StatusModes.Resolve(data.StatusMode, data.Layout);
+        var current = LayoutResolution.Resolve(data, _accounts.Count);
         _settings.Save(data with
         {
             ModelDial = dial,
-            StatusMode = mode,
-            Layout = WidgetLayout.Sanitize(data.Layout, mode, dial),
+            StatusMode = current.Status,
+            Layout = WidgetLayout.Sanitize(current.Layout, current.Status, dial),
         });
 
         _widgetWindow!.RebuildLayout(_accounts.Count);
@@ -826,6 +859,9 @@ public partial class App : System.Windows.Application
 
         var runtime = CreateAccountRuntime(profile);
         _accounts = [.. _accounts, runtime];
+        // A file that never chose a view follows the account count, so the
+        // second account can turn the classic square into rows.
+        _widgetWindow!.RebuildLayout(_accounts.Count);
         RenderWidget();
         RefreshTrayMenuState();
         FireAndForget(() => runtime.Session.OpenLoginWindowAsync());
@@ -871,6 +907,7 @@ public partial class App : System.Windows.Application
         });
         _accounts = _accounts.Where(a => a.Profile.Id != accountId).ToList();
 
+        _widgetWindow!.RebuildLayout(_accounts.Count);
         RenderWidget();
         UpdateTrayTooltip();
         RefreshTrayIcon();

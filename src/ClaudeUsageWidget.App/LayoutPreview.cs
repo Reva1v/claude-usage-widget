@@ -58,6 +58,7 @@ internal static class LayoutPreview
 
         var cases = new (string Name, WidgetLayout Layout, int Accounts)[]
         {
+            ("1-classic", PanelViews.LayoutFor(PanelView.Classic), 1),
             ("1-grid-cell", WidgetLayout.Default, 1),
             ("3-grid-cell", WidgetLayout.Default, 3),
             ("4-grid-cell", WidgetLayout.Default, 4),

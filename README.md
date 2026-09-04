@@ -33,16 +33,20 @@ taskbar's left corner or next to the tray icons:
 
 ## The panel
 
-One row per account, up to four. Each row is the account's name and three
-dials; each dial reads its percentage with the time until that window resets
-underneath.
+Two named views, switched from the tray's **Layout** submenu:
 
-With a single account — the usual case — that is one row, and the panel behaves
-as it always has. Rows follow the order accounts were added, never their usage:
-this is a full picture, not a ranking. An account whose refresh failed keeps its
-row with `n/a` dials rather than vanishing and shifting the rows below it.
+- **Classic** — a 2x2 grid of dials with the service status as the fourth
+  dial and no account name. The default with a single account, which is the
+  usual case.
+- **Account rows** — one row per account, up to four: the account's name and
+  three dials, with the service status as a line under the rows. The default
+  once a second account is added. Rows follow the order accounts were added,
+  never their usage: this is a full picture, not a ranking. An account whose
+  refresh failed keeps its row with `n/a` dials rather than vanishing and
+  shifting the rows below it.
 
-The three dials per row:
+Each dial reads its percentage with the time until that window resets
+underneath. The three usage dials:
 
 - **5H** — the 5-hour session limit
 - **7D** — the 7-day weekly limit
@@ -82,15 +86,20 @@ The tray icon shows a live figure and opens a menu with:
   displays
 - **Model limit** — pick which per-model weekly limit the dial shows
   (appears once the server returns more than one)
-- **Layout → Edit layout…** — edit the panel in place. Cells swap by dragging
-  one onto another, and a strip of buttons appears just outside the panel:
-  **Done**, the two flow directions (accounts, and the dials inside an
-  account), where the account name sits, the subscription-plan line, the
-  status line or dial, the per-model dial, lock and hide
+- **Layout** — **Classic** or **Account rows** (see above), and **Edit
+  layout…** to edit the panel in place. Cells swap by dragging one onto
+  another, and a strip of buttons appears just outside the panel: **Done**,
+  the two flow directions (accounts, and the dials inside an account), where
+  the account name sits, the subscription-plan line, the status line or dial,
+  the per-model dial, lock and hide. Hovering the panel shows a header with
+  the same eye, a pencil that enters this mode, and the lock
 - **Show on desktop** — hide the panel while keeping the tray icon
 - **Taskbar band** — toggle the optional taskbar-docked figure display
 - **Band position** — dock the band near the tray icons or in the taskbar's
   left corner
+- **Band shows** — **Three metrics** (5H, 7D and the model of the tray
+  account; the default with one account) or **All accounts** (each account's
+  name over its 5H figure and reset time; the default with two or more)
 - **Lock position**
 - **Launch at login**
 - **Quit Claude Usage Widget**

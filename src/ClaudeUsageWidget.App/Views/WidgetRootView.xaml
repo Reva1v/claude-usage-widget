@@ -100,6 +100,41 @@
             </StackPanel>
         </Border>
 
+        <!-- Hover header: eye (hide), pencil (edit layout) and lock (position).
+             Visible only while the pointer is over the panel and the edit mode
+             is off — in the mode the strip below carries the same buttons and
+             the top row of cells must stay draggable. WidgetRootView.swift:110-166. -->
+        <Border x:Name="HeaderBorder" VerticalAlignment="Top" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
+                Opacity="0" IsHitTestVisible="False">
+            <Grid x:Name="HeaderGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="EyeButton" Grid.Column="0" Style="{StaticResource IconButtonStyle}"
+                        Foreground="{x:Static views:Theme.DimBrush}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE890;"
+                        ToolTip="Hide widget — bring it back from the tray icon"
+                        Click="EyeButton_Click"/>
+
+                <Button x:Name="PencilButton" Grid.Column="2" Style="{StaticResource IconButtonStyle}"
+                        Foreground="{x:Static views:Theme.DimBrush}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE70F;"
+                        ToolTip="Edit layout — drag a cell onto another to swap them"
+                        Click="PencilButton_Click"/>
+
+                <Button x:Name="LockButton" Grid.Column="4" Style="{StaticResource IconButtonStyle}"
+                        Foreground="{x:Static views:Theme.DimBrush}"
+                        FontFamily="Segoe MDL2 Assets" Content="&#xE785;"
+                        ToolTip="Click to lock the widget position and size"
+                        Click="LockButton_Click"/>
+            </Grid>
+        </Border>
+
         <!-- Edit toolbar: one strip, only while EditMode is on, in a band
              OUTSIDE the rounded panel — above it when the screen has room,
              below it otherwise. The window grows by the band and moves its own

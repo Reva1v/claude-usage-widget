@@ -163,7 +163,7 @@ public sealed record PanelMetrics(
     /// Last content to the status text, and the status text to the bottom edge.
     /// Derived from the band rather than restated, so asserting that it equals
     /// <see cref="TopGap"/> is a check on how the band was built.
-    public double BottomGap => (StatusBand - CaptionLine) / 2;
+    public double BottomGap => Math.Max(0, (StatusBand - CaptionLine) / 2);
 
     /// At the design size a dial is this wide: (170 - 12*2 - 10) / 2.
     private const double BaseDialSize = 68;
@@ -212,7 +212,15 @@ public sealed record PanelMetrics(
         // as the middle term, the top edge, the gap over the text and the gap
         // under it are one number — the padding — and the panel reads the
         // same on all four sides.
-        var statusBand = padding * 2 + CaptionLineHeight * scale;
+        //
+        // With the service status as a DIAL there is no caption to make room
+        // for: the band is the bottom padding alone, and the panel is the plain
+        // rounded square it was before accounts existed. The status line still
+        // exists for trouble — a rate-limit notice, an outage — and then draws
+        // over that padding rather than growing the panel for a line that is
+        // empty almost always.
+        var statusIsCell = layout.Block.Order.Contains(BlockItem.Status);
+        var statusBand = statusIsCell ? padding : padding * 2 + CaptionLineHeight * scale;
 
         // Top padding, the content, then the band: no slack anywhere else, so
         // the grid sits flush under the padding and nothing is centred into a
