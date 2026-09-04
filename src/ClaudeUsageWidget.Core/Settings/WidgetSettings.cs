@@ -53,6 +53,12 @@ public sealed record WidgetSettingsData
     /// <see cref="BandViews.Resolve"/>, so a single account keeps the band it
     /// had before accounts existed. Never default it here.
     public BandView? BandView { get; init; }
+
+    /// The panel's and the tray menu's palette. NULLABLE: null is System —
+    /// follow Windows' app theme — through <see cref="ThemeChoices.Resolve"/>.
+    /// Never default it here.
+    public ThemeChoice? Theme { get; init; }
+
     /// Which account the tray icon and its metric describe. Null falls back to
     /// the first account.
     public string? TrayAccountId { get; init; }
