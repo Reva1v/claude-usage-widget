@@ -99,7 +99,11 @@ public sealed record UsageError(UsageErrorKind Kind, int? RetryAfterSeconds = nu
     };
 }
 
-public sealed class UsageException : Exception
+/// Not sealed: the App layer subclasses it to carry a WebView2-specific cause
+/// (NavigationFailedException) that Core must not know the type of. Every
+/// subclass still reports a UsageError, so `catch (UsageException)` in
+/// UsageStore keeps handling all of them the same way.
+public class UsageException : Exception
 {
     public UsageError Error { get; }
 

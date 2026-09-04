@@ -22,7 +22,9 @@ public sealed record TrayMenuState(
     bool PositionLocked,
     bool TaskbarBandEnabled,
     string BandPosition,
-    string? ResolvedModelLabel);
+    string? ResolvedModelLabel,
+    IReadOnlyList<AccountProfile> Accounts,
+    string? TrayAccountId);
 
 /// <summary>
 /// Иконка приложения в системном трее и её контекстное меню.
@@ -49,6 +51,8 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _bandPositionTrayItem = null!;
     private ToolStripMenuItem _lockPositionItem = null!;
     private ToolStripMenuItem _launchAtLoginItem = null!;
+    private ToolStripMenuItem _accountsMenu = null!;
+    private ToolStripMenuItem _layoutMenu = null!;
 
     /// <summary>Пункт меню "Refresh now".</summary>
     public event Action? RefreshRequested;
@@ -76,6 +80,26 @@ public sealed class TrayIcon : IDisposable
 
     /// <summary>"Lock position" — новое желаемое состояние.</summary>
     public event Action<bool>? LockPositionToggled;
+
+    /// <summary>Accounts — выбран аккаунт для трей-иконки.</summary>
+    public event Action<string>? AccountSelected;
+
+    /// <summary>Accounts — "Add account…".</summary>
+    public event Action? AccountAddRequested;
+
+    /// <summary>Accounts — "Rename…" для этого id.</summary>
+    public event Action<string>? AccountRenameRequested;
+
+    /// <summary>Accounts — "Sign out and remove" для этого id.</summary>
+    public event Action<string>? AccountRemoveRequested;
+
+    /// Raised by the Layout submenu's edit item. The App owns the flag; the
+    /// tray only asks for it to be flipped.
+    public event Action? EditLayoutToggled;
+
+    /// What the tick beside `Edit layout…` should show. Set before the menu is
+    /// opened, like the rest of the Layout submenu's state.
+    public bool EditingLayout { get; set; }
 
     /// <summary>
     /// Меню вот-вот откроется — момент подтянуть свежее состояние
@@ -141,6 +165,9 @@ public sealed class TrayIcon : IDisposable
         // отредактированного settings.json) обязан читаться в меню как
         // SESSION ровно потому же правилу, по которому иконка в этом случае
         // рисует SESSION, а не оставлять все три чекбокса пустыми.
+        SyncAccountsMenu(state.Accounts, state.TrayAccountId);
+        SyncLayoutMenu(state.ShowOnDesktop);
+
         var metricIndex = MetricIndex(state.TrayMetricKey);
         _trayShowsSessionItem.Checked = metricIndex == 0;
         _trayShowsWeekItem.Checked = metricIndex == 1;
@@ -209,6 +236,64 @@ public sealed class TrayIcon : IDisposable
         _ => 0, // "five_hour" и любое нераспознанное значение — сессия по умолчанию
     };
 
+    /// Пересобирается целиком на каждое открытие меню, а не мутируется:
+    /// аккаунты добавляются и удаляются из этого же подменю, и пересборка —
+    /// то, что не даёт галочке, списку и настройкам разъехаться.
+    private void SyncAccountsMenu(IReadOnlyList<AccountProfile> accounts, string? trayAccountId)
+    {
+        foreach (var item in _accountsMenu.DropDownItems.OfType<ToolStripMenuItem>())
+            item.DropDown.Closing -= CancelCloseOnItemClick;
+        _accountsMenu.DropDownItems.Clear();
+
+        // Подменю аккаунтов бессмысленно, пока аккаунт один и добавить второй
+        // нельзя; но «добавить» нужно всегда, поэтому скрываем только сам
+        // список, а не пункт целиком.
+        foreach (var account in accounts)
+        {
+            var item = new ToolStripMenuItem(
+                account.DisplayName, null, (_, _) => AccountSelected?.Invoke(account.Id))
+            {
+                Checked = account.Id == trayAccountId,
+            };
+            var id = account.Id;
+            item.DropDownItems.Add("Rename…", null, (_, _) => AccountRenameRequested?.Invoke(id));
+            item.DropDownItems.Add("Sign out and remove", null, (_, _) => AccountRemoveRequested?.Invoke(id));
+            item.DropDown.Closing += CancelCloseOnItemClick;
+            _accountsMenu.DropDownItems.Add(item);
+        }
+
+        if (accounts.Count > 0) _accountsMenu.DropDownItems.Add(new ToolStripSeparator());
+
+        // Выключен, а не скрыт: пропавший пункт читается как баг, погашенный
+        // с подсказкой — как предел.
+        var atLimit = accounts.Count >= AccountLimits.Max;
+        _accountsMenu.DropDownItems.Add(new ToolStripMenuItem(
+            "Add account…", null, (_, _) => AccountAddRequested?.Invoke())
+        {
+            Enabled = !atLimit,
+            ToolTipText = atLimit ? $"The widget shows at most {AccountLimits.Max} accounts." : null,
+        });
+    }
+
+    /// One item now. Every flow, the name placement and the status live on the
+    /// panel's own toolbar — one editing surface rather than two that have to
+    /// keep agreeing with each other.
+    private void SyncLayoutMenu(bool widgetVisible)
+    {
+        _layoutMenu.DropDownItems.Clear();
+        _layoutMenu.DropDownItems.Add(new ToolStripMenuItem(
+            "Edit layout…", null, (_, _) => EditLayoutToggled?.Invoke())
+        {
+            Checked = EditingLayout,
+            // Disabled while the widget is hidden: a ticked item and an
+            // invisible mode is the trap this closes.
+            Enabled = widgetVisible,
+            ToolTipText = widgetVisible
+                ? "Toolbar on the panel: flows, name, status, lock, hide. Drag a cell onto another to swap them."
+                : "Show the widget on the desktop first.",
+        });
+    }
+
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
@@ -253,6 +338,16 @@ public sealed class TrayIcon : IDisposable
         // пустое подменю, скрытое до первого SyncMenuState.
         _modelLimitMenu = new ToolStripMenuItem("Model limit") { Visible = false };
         menu.Items.Add(_modelLimitMenu);
+
+        // Какой аккаунт описывает трей-иконка. Альтернативой были бы четыре
+        // иконки, но Windows прячет их в переполнение по своему усмотрению.
+        _accountsMenu = new ToolStripMenuItem("Accounts");
+        menu.Items.Add(_accountsMenu);
+
+        // One item: the panel's toolbar is the editing surface, and this is the
+        // way into it.
+        _layoutMenu = new ToolStripMenuItem("Layout");
+        menu.Items.Add(_layoutMenu);
 
         _showOnDesktopItem = new ToolStripMenuItem("Show on desktop");
         _showOnDesktopItem.Click += (_, _) => ShowOnDesktopToggled?.Invoke(!_showOnDesktopItem.Checked);
@@ -338,6 +433,10 @@ public sealed class TrayIcon : IDisposable
 
     private static void OpenUrl(string url)
     {
+        // "-" for the account: the tray's links (repository, issues) are about
+        // the widget itself, not about whichever account the tray shows.
+        WidgetLog.Write("-", "browser-open", $"site=tray url={url}");
+
         // UseShellExecute: true — без него .NET пытается запустить URL как
         // исполняемый файл напрямую и падает с Win32Exception.
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });

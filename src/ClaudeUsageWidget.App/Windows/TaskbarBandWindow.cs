@@ -364,11 +364,23 @@ public sealed class TaskbarBandWindow : Window
         }
     }
 
-    /// <summary>Перерисовывает колонки свежими метриками — источник тот же
-    /// <see cref="TrayMetric"/>, что и у иконки трея (TrayText.Metrics).</summary>
-    public void Render(IReadOnlyList<TrayMetric> metrics)
+    /// <summary>Redraws the columns from fresh data — one
+    /// <see cref="BandEntry"/> per account, from BandText.Entries.</summary>
+    public void Render(IReadOnlyList<BandEntry> entries)
     {
-        _content.SetMetrics(metrics);
+        _content.SetMetrics(entries);
+
+        // Fresh data almost always changes a column's WIDTH — "—" becomes
+        // "0% 1d 3h" — and the window's width is set only by RepositionCore,
+        // which until now ran on the 5-second timer alone. Between the data
+        // arriving and the next tick the band sat with content wider than its
+        // own window, and the rightmost column was cut (the user, 2026-08-26,
+        // «low обрезан»). Only ask for it once the HWND exists: before
+        // EnsureHandle() there is nothing to measure in and nowhere to place
+        // (see the comment below). RepositionCore recomputes DesiredSize
+        // itself and short-circuits when the geometry has not moved a pixel,
+        // so calling it per render costs nothing.
+        if (new WindowInteropHelper(this).Handle != nint.Zero) Reposition();
 
         // Измерение контента НЕ делается здесь (раньше — делалось, сразу
         // после SetMetrics) — оно намеренно перенесено целиком в
@@ -957,30 +969,55 @@ internal sealed class TaskbarBandContent : FrameworkElement
     private const double ColumnSpacingDip = 14;
     private const double ShadowOffsetDip = 1;
 
+    /// Between the percentage and the reset time on the bottom line. Smaller
+    /// than the space between two columns, or the two halves of one account
+    /// stop reading as one thing.
+    private const double PairSpacingDip = 5;
+
     private static readonly SolidColorBrush ShadowBrush = Freeze(new SolidColorBrush(Color.FromArgb(200, 0, 0, 0)));
 
-    private IReadOnlyList<TrayMetric> _metrics = Array.Empty<TrayMetric>();
+    private IReadOnlyList<BandEntry> _entries = Array.Empty<BandEntry>();
     private double[] _columnWidths = Array.Empty<double>();
 
-    public void SetMetrics(IReadOnlyList<TrayMetric> metrics)
+    public void SetMetrics(IReadOnlyList<BandEntry> entries)
     {
-        _metrics = metrics;
+        _entries = entries;
         InvalidateMeasure();
         InvalidateVisual();
     }
 
+    /// One account's column: the name alone on top, the percentage and the
+    /// reset time together underneath — the percentage large, the time in the
+    /// label size beside it, both sitting on one baseline.
+    private readonly record struct Column(
+        FormattedText Name, FormattedText Percent, FormattedText? ResetsIn)
+    {
+        public double BottomWidth =>
+            Percent.Width + (ResetsIn is { } time ? PairSpacingDip + time.Width : 0);
+
+        public double Width => Math.Max(Name.Width, BottomWidth);
+
+        public double Height => Name.Height + LineSpacingDip +
+            Math.Max(Percent.Height, ResetsIn?.Height ?? 0);
+    }
+
+    // System.Drawing.Brush is a namesake here — UseWindowsForms makes it visible.
+    private Column Build(BandEntry entry, System.Windows.Media.Brush brush, double pixelsPerDip) => new(
+        DialText.Format(entry.Name, LabelFontSize, Theme.LabelWeight, brush, pixelsPerDip),
+        DialText.Format(entry.Percent, ValueFontSize, Theme.ValueWeight, brush, pixelsPerDip),
+        entry.ResetsIn is null
+            ? null
+            : DialText.Format(entry.ResetsIn, LabelFontSize, Theme.LabelWeight, brush, pixelsPerDip));
+
     protected override Size MeasureOverride(Size availableSize)
     {
         var pixelsPerDip = DialText.PixelsPerDip(this);
-        var widths = new double[_metrics.Count];
+        var widths = new double[_entries.Count];
         double totalWidth = 0;
 
-        for (var i = 0; i < _metrics.Count; i++)
+        for (var i = 0; i < _entries.Count; i++)
         {
-            var metric = _metrics[i];
-            var labelText = DialText.Format(metric.Label, LabelFontSize, Theme.LabelWeight, Brushes.White, pixelsPerDip);
-            var valueText = DialText.Format(metric.Value, ValueFontSize, Theme.ValueWeight, Brushes.White, pixelsPerDip);
-            var width = Math.Max(labelText.Width, valueText.Width);
+            var width = Build(_entries[i], Brushes.White, pixelsPerDip).Width;
             widths[i] = width;
 
             totalWidth += width;
@@ -1001,24 +1038,42 @@ internal sealed class TaskbarBandContent : FrameworkElement
         var y = ActualHeight / 2;
         var x = 0.0;
 
-        for (var i = 0; i < _metrics.Count; i++)
+        for (var i = 0; i < _entries.Count; i++)
         {
-            var metric = _metrics[i];
+            var entry = _entries[i];
             var width = i < _columnWidths.Length ? _columnWidths[i] : 0;
             var center = new Point(x + width / 2, y);
 
-            // Тень — та же стопка строк, тем же кеглем, сдвинутая на 1 px
-            // по диагонали, рисуется ПЕРВОЙ (белый текст ложится поверх).
-            var labelShadow = DialText.Format(metric.Label, LabelFontSize, Theme.LabelWeight, ShadowBrush, pixelsPerDip);
-            var valueShadow = DialText.Format(metric.Value, ValueFontSize, Theme.ValueWeight, ShadowBrush, pixelsPerDip);
-            DialText.DrawStackCentered(dc, new Point(center.X + ShadowOffsetDip, center.Y + ShadowOffsetDip), LineSpacingDip, labelShadow, valueShadow);
-
-            var labelText = DialText.Format(metric.Label, LabelFontSize, Theme.LabelWeight, Brushes.White, pixelsPerDip);
-            var valueText = DialText.Format(metric.Value, ValueFontSize, Theme.ValueWeight, Brushes.White, pixelsPerDip);
-            DialText.DrawStackCentered(dc, center, LineSpacingDip, labelText, valueText);
+            // The shadow is the same column, same sizes, one pixel down and
+            // right, drawn FIRST — the white text lands on top of it.
+            Draw(dc, Build(entry, ShadowBrush, pixelsPerDip),
+                new Point(center.X + ShadowOffsetDip, center.Y + ShadowOffsetDip));
+            Draw(dc, Build(entry, Brushes.White, pixelsPerDip), center);
 
             x += width + ColumnSpacingDip;
         }
+    }
+
+    private static void Draw(DrawingContext dc, Column column, Point center)
+    {
+        var top = center.Y - column.Height / 2;
+
+        dc.DrawText(column.Name, new Point(center.X - column.Name.Width / 2, top));
+
+        var bottom = top + column.Name.Height + LineSpacingDip;
+        var startX = center.X - column.BottomWidth / 2;
+
+        dc.DrawText(column.Percent, new Point(startX, bottom));
+
+        if (column.ResetsIn is not { } time) return;
+
+        // Centred on the percentage's box, NOT sharing its baseline. A common
+        // baseline is right for two runs of the same size; here the time is
+        // four points smaller, so it hangs at the bottom of the big digits and
+        // reads as sitting too low — which is what it looked like on screen.
+        dc.DrawText(time, new Point(
+            startX + column.Percent.Width + PairSpacingDip,
+            bottom + (column.Percent.Height - time.Height) / 2));
     }
 
     private static SolidColorBrush Freeze(SolidColorBrush brush)

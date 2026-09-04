@@ -56,6 +56,48 @@ public class DialModelTests
     }
 
     [Fact]
+    public void ASpentWeekMakesTheFiveHourDialCountDownToTheWeek()
+    {
+        // Nothing more goes through until the WEEK resets, so counting down to
+        // the next five-hour window says "wait 20 minutes" when the real answer
+        // is "wait three days".
+        var dials = DialModel.All(
+            Snapshot(new() { ["five_hour"] = (30, 1200), ["seven_day"] = (100, 259_200) }), null, Now);
+
+        Assert.Equal("3d 0h", dials[0].Remaining);
+        Assert.Equal("3d 0h", dials[1].Remaining);
+        // The percentage is still the five-hour one — only the countdown moves.
+        Assert.Equal(0.30, dials[0].Fraction!.Value, 10);
+    }
+
+    [Fact]
+    public void AWeekWithRoomLeavesTheFiveHourDialAlone()
+    {
+        var dials = DialModel.All(
+            Snapshot(new() { ["five_hour"] = (30, 1200), ["seven_day"] = (99, 259_200) }), null, Now);
+
+        Assert.Equal("20m", dials[0].Remaining);
+    }
+
+    [Fact]
+    public void ASpentPerModelLimitDoesNotMoveTheFiveHourCountdown()
+    {
+        // The per-model bucket is a seven-day window too, but exhausting it
+        // only closes one model — the five-hour window still decides when the
+        // others may be used again.
+        var dials = DialModel.All(
+            Snapshot(new()
+            {
+                ["five_hour"] = (30, 1200),
+                ["seven_day"] = (40, 259_200),
+                ["seven_day_opus"] = (100, 259_200),
+            }),
+            "seven_day_opus", Now);
+
+        Assert.Equal("20m", dials[0].Remaining);
+    }
+
+    [Fact]
     public void NoModelBucketReadsModelAndIsEmpty()
     {
         var dials = DialModel.All(
