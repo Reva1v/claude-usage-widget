@@ -35,6 +35,10 @@ public sealed class DesktopWidgetWindow : Window
     private readonly DispatcherTimer _persistTimer;
 
     private double _side;
+
+    /// Число строк, под которое сейчас построена сетка. Расходится с
+    /// настройками при добавлении/удалении аккаунта — Render это ловит.
+    private int _accountCount;
     private bool _positionLocked;
 
     private bool _dragging;
@@ -45,8 +49,8 @@ public sealed class DesktopWidgetWindow : Window
     private Point _resizeStartPoint;
     private double _resizeStartSide;
 
-    /// Кнопка-глаз в hover-хедере — окно уже спрятало себя к этому моменту
-    /// (см. <see cref="OnEyeClicked"/>), событие тут чисто для оповещения.
+    /// The toolbar's Hide button — the window has already hidden itself by then
+    /// (see <see cref="OnEyeClicked"/>), so this is a notification only.
     public event Action? HideRequested;
 
     /// Кнопка Sign in в плашке NoCredentials.
@@ -62,6 +66,118 @@ public sealed class DesktopWidgetWindow : Window
             _root.PositionLocked = value;
             PersistPositionLocked(value);
         }
+    }
+
+    /// A drop in edit mode produced a new layout. The App saves it.
+    public event Action<WidgetLayout>? LayoutEdited;
+
+    /// The toolbar's Status button. The App saves the mode and re-sanitizes the
+    /// layout around it.
+    public event Action<StatusMode>? StatusModeSelected;
+
+    /// The toolbar's Model button. Same shape as the status one: the App saves
+    /// the setting and re-sanitizes the layout around it.
+    public event Action<ModelDial>? ModelDialSelected;
+
+    /// The toolbar's Plan button. No Sanitize on the far side — the plan is a
+    /// line under the name and never a cell — but the panel is SIZED for it, so
+    /// the App still rebuilds the layout rather than only repainting.
+    public event Action<PlanLine>? PlanLineSelected;
+
+    /// The toolbar's Done button, on its way to `App.SetEditingLayout(false)`.
+    public event Action? EditDoneRequested;
+
+    /// Which side of the panel the strip is drawn on, and how much of the
+    /// window's height currently sits ABOVE the panel because of it.
+    ///
+    /// That pair is what makes the mode invisible to the panel. The strip lives
+    /// in a band the WINDOW grows by, so the rounded border keeps its size; and
+    /// `Top` moves by the band whenever the band changes, so the border keeps
+    /// its place on screen. The user's report: the panel resized on the way in
+    /// and sat somewhere else on the way out.
+    private bool _stripAbove;
+    private double _stripAbovePad;
+
+    /// Layout edit mode. The view does everything the mode means; the window
+    /// grows by the strip's band, keeps the PANEL where it was, and repaints.
+    public bool EditMode
+    {
+        get => _root.EditMode;
+        set
+        {
+            // Only on a real transition: SetEditingLayout(false) is reached
+            // from three places, and a second "off" would move Top by a band
+            // that is no longer there.
+            if (_root.EditMode == value) return;
+
+            // Above the panel unless the strip would cross the top of the work
+            // area; below is always available, because the window may grow
+            // downwards instead. Decided off the PANEL's top — `_stripAbovePad`
+            // is 0 here, and naming it keeps this true if the order ever
+            // changes — and skipped on the first run, where CenterScreen has
+            // left Left/Top NaN.
+            if (value)
+                _stripAbove = !double.IsNaN(Left) && !double.IsNaN(Top)
+                    && Top + _stripAbovePad - _root.ToolbarReserve >= WorkArea().Top;
+
+            _root.StripAbove = _stripAbove;
+            _root.EditMode = value;
+            // The view has already resized itself around the band. Without this
+            // the strip would be drawn outside the window.
+            Width = _root.Width;
+            Height = _root.Height;
+
+            // Up by the reserve on the way in, back down on the way out, and
+            // nothing at all when the strip is below. There is no remembered
+            // position to restore: the panel never left the place it was in.
+            ApplyStripBand(value && _stripAbove ? _root.ToolbarReserve : 0);
+            if (!value) _stripAbove = false;
+
+            ClampToScreen();
+
+            // Saved the way a finished drag saves one, in the mode as well as
+            // out of it: PersistGeometry writes the PANEL's top-left, so there
+            // is no longer a dishonest coordinate to keep out of settings.
+            SchedulePersistGeometry();
+
+            // The mode's hint lives in the status line, which only SetContent
+            // writes — and the next poll is up to five minutes away. Without
+            // this the hint would appear that late on the way in AND stay that
+            // long on the way out, advertising a mode that is already off.
+            Draw();
+        }
+    }
+
+    /// Moves the window's top so the PANEL's top-left stays put while the band
+    /// above it changes: entering and leaving the mode, and a resize inside it,
+    /// where the reserve scales with the side like every other measurement.
+    private void ApplyStripBand(double abovePad)
+    {
+        if (!double.IsNaN(Top)) Top -= abovePad - _stripAbovePad;
+        _stripAbovePad = abovePad;
+    }
+
+    /// Re-picks the strip's side from where the PANEL is now: above by default,
+    /// below as soon as a strip above would cross the top of the work area.
+    /// Entry decides once; this runs on every drag tick and every resize inside
+    /// the mode, because the panel can be carried to the ceiling while editing
+    /// (the user, 2026-09-04) and the strip must drop under it rather than leave
+    /// the screen. A flip moves the window's Top by the band while the panel
+    /// stays put, so a drag in progress shifts its anchor by the same amount —
+    /// otherwise the next tick would read that jump as mouse travel.
+    private void ReconsiderStripSide()
+    {
+        if (!_root.EditMode || double.IsNaN(Top)) return;
+
+        var reserve = _root.ToolbarReserve;
+        var wantAbove = Top + _stripAbovePad - reserve >= WorkArea().Top;
+        if (wantAbove == _stripAbove) return;
+
+        var before = Top;
+        _stripAbove = wantAbove;
+        _root.StripAbove = wantAbove;
+        ApplyStripBand(wantAbove ? reserve : 0);
+        if (_dragging) _dragAnchor.Y += before - Top;
     }
 
     public DesktopWidgetWindow(SettingsStore settings)
@@ -81,6 +197,11 @@ public sealed class DesktopWidgetWindow : Window
         _root.HideRequested += OnEyeClicked;
         _root.SignInRequested += () => SignInRequested?.Invoke();
         _root.LockToggleRequested += () => PositionLocked = !PositionLocked;
+        _root.EditDoneRequested += () => EditDoneRequested?.Invoke();
+        _root.LayoutEdited += layout => LayoutEdited?.Invoke(layout);
+        _root.StatusModeSelected += mode => StatusModeSelected?.Invoke(mode);
+        _root.ModelDialSelected += dial => ModelDialSelected?.Invoke(dial);
+        _root.PlanLineSelected += line => PlanLineSelected?.Invoke(line);
         Content = _root;
 
         var data = settings.Load();
@@ -88,14 +209,18 @@ public sealed class DesktopWidgetWindow : Window
         _positionLocked = data.PositionLocked;
         _root.PositionLocked = _positionLocked;
 
-        Width = _side;
-        Height = _side;
-        _root.ApplyLayout(_side);
+        // Стартуем с одной строкой; Render пересоберёт сетку, как только
+        // узнает реальное число аккаунтов.
+        _accountCount = data.Accounts.Count > 0 ? data.Accounts.Count : 1;
+        ApplyLayoutAndSize(_side);
 
         if (data.WidgetX is { } x && data.WidgetY is { } y)
         {
             Left = x;
             Top = y;
+            // После присвоения, а не внутри ApplyLayoutAndSize выше: там
+            // Left/Top ещё NaN, и прижимать нечего.
+            ClampToScreen();
         }
         else
         {
@@ -123,18 +248,95 @@ public sealed class DesktopWidgetWindow : Window
     /// <summary>Порт тела WidgetRootView.swift:46-96 + BlockingNotice.swift на
     /// стороне окна: собирает всё, что WidgetRootView нужно для отрисовки, из
     /// сырого состояния стора.</summary>
-    public void Render(UsageState state, UsageSnapshot? last, ServiceStatus status, string? preferredModelKey, DateTimeOffset? retryUntil)
+    /// <param name="rows">По строке на аккаунт, в порядке настроек.</param>
+    /// <param name="state">Состояние ТРЕЙ-аккаунта: плашка и строка статуса
+    /// описывают его, а не все аккаунты сразу — плашка на каждую строку была бы
+    /// отдельным UI, которого дизайн не просил.</param>
+    public void Render(
+        IReadOnlyList<AccountRow> rows, UsageState state, ServiceStatus status, DateTimeOffset? retryUntil)
     {
-        var now = DateTimeOffset.Now;
-        var snapshot = state is UsageState.Ok(var okSnapshot, _) ? okSnapshot : last;
-        var dimmed = state is not UsageState.Ok;
+        // Число строк меняется при добавлении/удалении аккаунта — сетка обязана
+        // быть пересобрана до заполнения, иначе SetContent бросит.
+        if (rows.Count != _accountCount)
+        {
+            _accountCount = rows.Count;
+            ApplyLayoutAndSize(_side);
+        }
 
-        var models = DialModel.All(snapshot, preferredModelKey, now);
-        var statusLine = StatusLine.Text(state, now, retryUntil);
-        var notice = NoticeFor(state);
-
-        _root.SetContent(models, status, dimmed, statusLine, notice);
+        _last = (rows, state, status, retryUntil);
+        Draw();
     }
+
+    /// Последний отрисованный кадр. Пересборка сетки (ресайз, смена числа
+    /// аккаунтов) обнуляет ячейки, а следующий Changed от стора может прийти
+    /// через пять минут — без этого панель всё это время стоит пустой, что и
+    /// выглядело как «при ресайзе теряется информация».
+    private (IReadOnlyList<AccountRow> Rows, UsageState State, ServiceStatus Status, DateTimeOffset? RetryUntil)? _last;
+
+    private void Draw()
+    {
+        if (_last is not { } f) return;
+
+        var dimmed = f.State is not UsageState.Ok;
+        _root.SetContent(
+            f.Rows, f.Status, dimmed,
+            StatusLine.Text(f.State, DateTimeOffset.Now, f.RetryUntil),
+            NoticeFor(f.State));
+    }
+
+    /// Раскладка сменилась в настройках — пересобрать сетку и пересчитать
+    /// размер, не дожидаясь ни ресайза, ни следующего обновления стора.
+    public void RebuildLayout(int accountCount)
+    {
+        _accountCount = Math.Max(accountCount, 0);
+        ApplyLayoutAndSize(_side);
+    }
+
+    private void ApplyLayoutAndSize(double side)
+    {
+        var data = _settings.Load();
+        var mode = StatusModes.Resolve(data.StatusMode, data.Layout);
+        var modelDial = ModelDials.Resolve(data.ModelDial);
+        var planLine = PlanLines.Resolve(data.PlanLine);
+        var layout = WidgetLayout.Sanitize(data.Layout, mode, modelDial);
+
+        var metrics = PanelMetrics.For(layout, _accountCount, side, _root.EditMode, planLine);
+        Width = metrics.Width;
+        Height = metrics.Height;
+        _root.ApplyLayout(layout, mode, modelDial, planLine, _accountCount, side);
+        // A resize inside edit mode scales the strip's band with everything
+        // else — hold the PANEL's top-left still, the same corner a resize
+        // holds outside the mode.
+        ApplyStripBand(_stripAbove ? metrics.ToolbarReserve : 0);
+        // A bigger band may no longer fit above: same rule as a drag.
+        ReconsiderStripSide();
+        // Сетка только что пересобрана и пуста — заполняем её тем же кадром,
+        // не дожидаясь следующего обновления стора.
+        Draw();
+        ClampToScreen();
+    }
+
+    /// Панель перестала быть квадратом и растёт вширь с каждым аккаунтом, а
+    /// сохранённая позиция — от прежнего размера: без этого правый край
+    /// уезжает за границу экрана, и часть циферблатов просто не видна
+    /// (поймано скриншотом на 256 pt и четырёх колонках).
+    private void ClampToScreen()
+    {
+        if (double.IsNaN(Left) || double.IsNaN(Top)) return;
+
+        var area = WorkArea();
+
+        Left = Math.Max(area.Left, Math.Min(Left, area.Right - Width));
+        Top = Math.Max(area.Top, Math.Min(Top, area.Bottom - Height));
+    }
+
+    /// The work area of the screen this window is on. One reader, so the side
+    /// the strip goes on and the clamp that follows cannot disagree about where
+    /// the top of the screen is — they would, on a secondary monitor. Callers
+    /// must have checked Left/Top for NaN: the cast to int does not.
+    private System.Drawing.Rectangle WorkArea() =>
+        System.Windows.Forms.Screen.FromPoint(
+            new System.Drawing.Point((int)Left, (int)Top)).WorkingArea;
 
     /// App-слойный аналог BlockingNotice.make(for:) — Core его не портирует
     /// (см. task-14-brief.md), поэтому правило живёт здесь. NoCredentials
@@ -319,6 +521,10 @@ public sealed class DesktopWidgetWindow : Window
             var delta = pos - _dragAnchor;
             Left += delta.X;
             Top += delta.Y;
+            // A drag INSIDE edit mode: the panel's top-left follows the window's
+            // and PersistGeometry keeps writing the panel's; the only extra is
+            // the strip changing sides when the panel reaches the ceiling.
+            ReconsiderStripSide();
             SchedulePersistGeometry();
             return;
         }
@@ -373,9 +579,7 @@ public sealed class DesktopWidgetWindow : Window
         if (Math.Abs(side - _side) < 0.5) return;
 
         _side = side;
-        Width = side;
-        Height = side;
-        _root.ApplyLayout(side);
+        ApplyLayoutAndSize(side);
     }
 
     private void SchedulePersistGeometry()
@@ -393,8 +597,16 @@ public sealed class DesktopWidgetWindow : Window
 
     private void PersistGeometry()
     {
+        // Before the window has been placed (first run is CenterScreen) Left and
+        // Top are NaN, and a NaN in settings.json is a position nothing reads back.
+        if (double.IsNaN(Left) || double.IsNaN(Top)) return;
+
         var data = _settings.Load();
-        _settings.Save(data with { WidgetX = Left, WidgetY = Top, WidgetSide = _side });
+        // The PANEL's top-left, never the window's. The strip's band belongs to
+        // the mode, and saving the window's top with the band in it is what
+        // moved the panel by a strip's height on every visit to the mode.
+        // Outside the mode the two points are the same.
+        _settings.Save(data with { WidgetX = Left, WidgetY = Top + _stripAbovePad, WidgetSide = _side });
     }
 
     private void PersistWidgetVisible(bool visible)

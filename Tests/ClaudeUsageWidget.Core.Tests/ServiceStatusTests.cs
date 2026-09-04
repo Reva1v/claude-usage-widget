@@ -39,6 +39,30 @@ public class ServiceStatusTests
         Assert.Equal("MAINT", ServiceStatusText.Label(ServiceStatus.Maintenance));
         Assert.Equal("—", ServiceStatusText.Label(ServiceStatus.Unknown));
     }
+
+    [Fact]
+    public void InLineModeTheLineSpeaksEvenWhenTheServiceIsFine()
+    {
+        // A silent line reads as a lost dial — that already happened once.
+        Assert.Equal("service operational", ServiceStatusText.Line(ServiceStatus.Operational, StatusMode.Line));
+        Assert.Equal("service degraded", ServiceStatusText.Line(ServiceStatus.Degraded, StatusMode.Line));
+    }
+
+    [Fact]
+    public void WithADialInEveryBlockTheLineOnlyReportsTrouble()
+    {
+        Assert.Null(ServiceStatusText.Line(ServiceStatus.Operational, StatusMode.Cell));
+        Assert.Equal("service major outage", ServiceStatusText.Line(ServiceStatus.MajorOutage, StatusMode.Cell));
+    }
+
+    [Fact]
+    public void TheLineSpellsOutWhatTheDialAbbreviates()
+    {
+        // Label is cropped to fit inside a 68 pt dial; the line has room for
+        // the word, and "service SLOW" is not a sentence.
+        Assert.Equal("under maintenance", ServiceStatusText.LineLabel(ServiceStatus.Maintenance));
+        Assert.Equal("state unknown", ServiceStatusText.LineLabel(ServiceStatus.Unknown));
+    }
 }
 
 public class StatusDecoderTests

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using ClaudeUsageWidget.App.Tray;
@@ -20,10 +20,18 @@ public partial class App : System.Windows.Application
     private DesktopWidgetWindow? _widgetWindow;
     private TaskbarBandWindow? _bandWindow;
     private SettingsStore? _settings;
-    private ClaudeWebSession? _session;
-    private UsageStore? _usageStore;
     private StatusStore? _statusStore;
     private DispatcherTimer? _refreshTimer;
+
+    /// Edit mode is a session state, not a setting: a widget that starts up in
+    /// edit mode because it was closed in edit mode would be a trap.
+    private bool _editingLayout;
+
+    /// Один AccountRuntime на настроенный аккаунт, в порядке настроек.
+    /// Пересоздаётся целиком при добавлении/удалении аккаунта, а не
+    /// мутируется на месте — так порядок строк на панели и порядок в
+    /// настройках не могут разойтись.
+    private IReadOnlyList<AccountRuntime> _accounts = [];
 
     // UsageStore.hasCredentials — синхронная лямбда, а HasSessionCookieAsync
     // ходит в WebView2 и не может быть синхронной. Блокировать UI-поток
@@ -33,7 +41,11 @@ public partial class App : System.Windows.Application
     // обращении. Вместо этого RefreshAllAsync обновляет это поле асинхронно
     // непосредственно перед вызовом LoadAsync(), а лямбда просто читает уже
     // готовое значение.
-    private volatile bool _hasSessionCookie;
+    ///
+    /// Ключ — id аккаунта: один общий флаг на четыре аккаунта означал бы, что
+    /// залогиненный аккаунт читается как разлогиненный, стоит соседнему
+    /// потерять куку.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _hasSessionCookie = new();
 
     // Отдельно от _hasSessionCookie: становится true, когда сама проверка
     // куки (HasSessionCookieAsync) бросила исключение (например, WebView2
@@ -41,7 +53,9 @@ public partial class App : System.Windows.Application
     // не смогли выяснить, есть кука или нет, а не когда честно выяснили, что
     // её нет. Читается из UpdateTrayTooltip, чтобы такой сбой не потерялся
     // молча в FireAndForget/Debug-выводе — см. комментарий в RefreshAllAsync.
-    private bool _webViewFailing;
+    /// Тоже по аккаунтам: сломаться WebView2 может на одном профиле и работать
+    /// на остальных.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _webViewFailing = new();
 
     /// Именованный мьютекс единственного экземпляра — живёт полем, чтобы GC
     /// не отпустил его на всё время жизни процесса.
@@ -50,6 +64,8 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        LayoutPreview.RunIfRequested();
 
         // Один экземпляр на сессию. Живая отладка (2026-08-06) поймала ДВА
         // одновременно работающих экземпляра (зомби от предыдущих запусков
@@ -73,6 +89,9 @@ public partial class App : System.Windows.Application
         DispatcherUnhandledException += (_, args) =>
         {
             System.Diagnostics.Debug.WriteLine($"Unhandled UI-thread exception: {args.Exception}");
+            // Debug output reaches nobody on a tray widget; the log is the
+            // only place a swallowed exception can be seen afterwards.
+            WidgetLog.Write("-", "unhandled", $"dispatcher {args.Exception.GetType().Name}: {args.Exception.Message}");
             args.Handled = true;
         };
 
@@ -81,8 +100,18 @@ public partial class App : System.Windows.Application
         // закрыл бы процесс сразу после OnStartup, не дождавшись Quit.
         _trayIcon = new TrayIcon();
         _trayIcon.QuitRequested += Shutdown;
-        _trayIcon.RefreshRequested += () => FireAndForget(RefreshAllAsync);
-        _trayIcon.SignInRequested += () => FireAndForget(() => _session!.OpenLoginWindowAsync());
+        // Только трей-аккаунт: ручное обновление всех четырёх — ровно то, за
+        // что этот эндпоинт наказывает лимитом.
+        _trayIcon.RefreshRequested += () => FireAndForget(async () =>
+        {
+            if (TrayAccount() is { } account) await RefreshAccountAsync(account);
+            await _statusStore!.LoadAsync();
+        });
+        _trayIcon.SignInRequested += () => FireAndForget(async () =>
+        {
+            WidgetLog.Write(TrayAccount()?.Profile.DisplayName ?? "-", "sign-in-requested", "source=tray");
+            if (TrayAccount() is { } account) await account.Session.OpenLoginWindowAsync();
+        });
         _trayIcon.TrayMetricSelected += OnTrayMetricSelected;
         _trayIcon.ModelBucketSelected += OnModelBucketSelected;
         _trayIcon.ShowOnDesktopToggled += OnShowOnDesktopToggled;
@@ -90,35 +119,43 @@ public partial class App : System.Windows.Application
         _trayIcon.BandPositionSelected += OnBandPositionSelected;
         _trayIcon.LockPositionToggled += OnLockPositionToggled;
         _trayIcon.MenuOpening += RefreshTrayMenuState;
+        _trayIcon.AccountSelected += OnAccountSelected;
+
+        _trayIcon.EditLayoutToggled += () => SetEditingLayout(!_editingLayout);
+        _trayIcon.AccountAddRequested += OnAccountAddRequested;
+        _trayIcon.AccountRenameRequested += OnAccountRenameRequested;
+        _trayIcon.AccountRemoveRequested += id => FireAndForget(() => OnAccountRemoveRequestedAsync(id));
 
         var settingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "ClaudeUsageWidget", "settings.json");
         _settings = new SettingsStore(settingsPath);
 
-        // "default" — единственный профиль, который этот таск заводит
-        // жёстко; свитч между несколькими AccountProfile — задача будущего
-        // таска (см. WidgetSettingsData.Accounts).
-        var profileFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeUsageWidget", "profiles", "default");
-        _session = new ClaudeWebSession(profileFolder, _settings);
-        _session.SignedIn += OnSignedIn;
-
-        _usageStore = new UsageStore(
-            fetch: _session.FetchUsageAsync,
-            hasCredentials: () => _hasSessionCookie,
-            now: () => DateTimeOffset.Now,
-            loadRetryState: LoadRetryState,
-            saveRetryState: SaveRetryState);
-        _usageStore.Changed += OnStoresChanged;
+        BuildAccounts();
 
         _statusStore = new StatusStore(new StatusApi().FetchAsync);
         _statusStore.Changed += OnStoresChanged;
 
         _widgetWindow = new DesktopWidgetWindow(_settings);
         _widgetWindow.HideRequested += OnWidgetHideRequested;
-        _widgetWindow.SignInRequested += () => FireAndForget(() => _session!.OpenLoginWindowAsync());
+        // The same handler the tray's Layout menu uses: two save paths for one
+        // record is how they drift.
+        _widgetWindow.LayoutEdited += OnLayoutSelected;
+        // The panel's Done button and the tray's Edit layout are one toggle,
+        // through the one method that keeps the flag, the tick and the mode
+        // agreeing.
+        _widgetWindow.EditDoneRequested += () => SetEditingLayout(false);
+        _widgetWindow.StatusModeSelected += OnStatusModeSelected;
+        _widgetWindow.ModelDialSelected += OnModelDialSelected;
+        _widgetWindow.PlanLineSelected += OnPlanLineSelected;
+        _widgetWindow.SignInRequested += () => FireAndForget(async () =>
+        {
+            // The user reported the panel's Sign in button "does nothing"
+            // (2026-09-04) with no login-window line in the log: this line says
+            // whether the click even arrives.
+            WidgetLog.Write(TrayAccount()?.Profile.DisplayName ?? "-", "sign-in-requested", "source=panel");
+            if (TrayAccount() is { } account) await account.Session.OpenLoginWindowAsync();
+        });
 
         // Сервер обновляет свои цифры медленно — совпадает с
         // UsageStore.RefreshIntervalSeconds/StatusStore.RefreshIntervalSeconds,
@@ -160,10 +197,17 @@ public partial class App : System.Windows.Application
     /// независимо от того, что случилось с веб-сессией.
     private async Task StartupAsync()
     {
+        // Окно логина открываем только для трей-аккаунта, даже если куки нет у
+        // нескольких: четыре окна логина разом на старте — это не помощь, а
+        // засада. Остальные покажут пустые циферблаты и войдут по клику из
+        // подменю Accounts.
+        var account = TrayAccount();
+        if (account is null) return;
+
         var hasSession = false;
         try
         {
-            hasSession = await _session!.HasSessionCookieAsync();
+            hasSession = await account.Session.HasSessionCookieAsync();
         }
         catch
         {
@@ -181,7 +225,7 @@ public partial class App : System.Windows.Application
         {
             try
             {
-                await _session!.OpenLoginWindowAsync();
+                await account.Session.OpenLoginWindowAsync();
             }
             catch (Exception ex)
             {
@@ -200,10 +244,38 @@ public partial class App : System.Windows.Application
         // выполниться — тот читает публичный, не завязанный на WebView2
         // эндпоинт status.claude.com, и его судьба никак не связана с
         // состоянием веб-сессии.
+        var accounts = _accounts;
+
+        // Аккаунты разносятся внутри пятиминутного цикла, а не бьют залпом:
+        // PollSchedule.OffsetFor. Ждём только статус сервиса — он общий, и
+        // задерживать его на 225 секунд ради последнего аккаунта незачем.
+        for (var i = 0; i < accounts.Count; i++)
+        {
+            var account = accounts[i];
+            var offset = PollSchedule.OffsetFor(i, accounts.Count);
+            if (offset == TimeSpan.Zero)
+            {
+                await RefreshAccountAsync(account);
+                continue;
+            }
+
+            // Продолжение обязано вернуться на UI-поток: и WebView2, и рендер
+            // по Changed живут на Dispatcher'е.
+            _ = Task.Delay(offset).ContinueWith(
+                _ => FireAndForget(() => RefreshAccountAsync(account)),
+                TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        await _statusStore!.LoadAsync();
+    }
+
+    private async Task RefreshAccountAsync(AccountRuntime account)
+    {
+        var id = account.Profile.Id;
         try
         {
-            _hasSessionCookie = await _session!.HasSessionCookieAsync();
-            _webViewFailing = false;
+            _hasSessionCookie[id] = await account.Session.HasSessionCookieAsync();
+            _webViewFailing[id] = false;
         }
         catch (Exception ex)
         {
@@ -220,21 +292,66 @@ public partial class App : System.Windows.Application
             // превратив в честный Failed(Network(ex.Message)), видимый в
             // строке статуса на панели. UpdateTrayTooltip ниже дополнительно
             // подсвечивает то же самое в тултипе трея, пока сбой не пройдёт.
-            _hasSessionCookie = true;
-            _webViewFailing = true;
-            System.Diagnostics.Debug.WriteLine($"WebView2 session check failed: {ex}");
+            _hasSessionCookie[id] = true;
+            _webViewFailing[id] = true;
+            System.Diagnostics.Debug.WriteLine($"WebView2 session check failed for '{id}': {ex}");
         }
 
-        await Task.WhenAll(_usageStore!.LoadAsync(), _statusStore!.LoadAsync());
+        await account.Store.LoadAsync();
+        ExportUsage(account);
     }
 
-    private void OnSignedIn()
+    /// A side channel for another tool, off by default.
+    ///
+    /// Two ways to switch it on, and their order matters: an account's
+    /// ExportPath is a targeted override and always wins; ExportDirectory in
+    /// the settings turns the export on for ALL accounts at once, each into
+    /// its own file. The reader is another tool, and it wants every account, not
+    /// just the one that once had a path written in by hand.
+    private void ExportUsage(AccountRuntime account)
+    {
+        var data = _settings!.Load();
+
+        // ExportPath comes from the freshly loaded settings, not from
+        // account.Profile: it is set by hand-editing settings.json, and such
+        // an edit must take effect on the next refresh, not after a restart.
+        var path = data.Accounts.FirstOrDefault(a => a.Id == account.Profile.Id)?.ExportPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return;
+
+            // The file name comes from DisplayName, with the id only as a
+            // fallback: the reader wants `personal.widget.json`, not a GUID.
+            // The profile here is current — ReloadAccountProfiles pulls a
+            // rename into the live AccountRuntime.
+            path = Path.Combine(
+                data.ExportDirectory,
+                UsageExport.FileNameFor(account.Profile.DisplayName, account.Profile.Id) + ".widget.json");
+        }
+
+        // Только по свежему успешному ответу: перезаписывать файл последним
+        // хорошим снимком значило бы обновлять его "возраст", ничего не узнав.
+        if (account.Store.CurrentState is not UsageState.Ok(var snapshot, _)) return;
+        // ModelBucket is the same choice the third dial shows; otherwise the
+        // file and the panel would call two different limits by one name.
+        if (UsageExport.Payload(snapshot, DateTimeOffset.Now, account.Profile.DisplayName, data.ModelBucket)
+            is not { } payload) return;
+
+        UsageExportWriter.Write(path, payload);
+    }
+
+    private void OnSignedIn(string accountId)
     {
         // Логин мог пройти под другим аккаунтом — сохранённый id организации
         // от предыдущей сессии не должен пережить новый вход. Порт
         // fetchUsage's onSignedIn-эквивалента в applicationDidFinishLaunching.
-        _session!.ClearCachedOrganization();
-        FireAndForget(RefreshAllAsync);
+        var account = _accounts.FirstOrDefault(a => a.Profile.Id == accountId);
+        if (account is null) return;
+
+        account.Session.ClearCachedOrganization();
+        // Только этот аккаунт: вход в один не повод дёргать claude.ai за
+        // остальные три.
+        FireAndForget(() => RefreshAccountAsync(account));
     }
 
     private void OnWidgetHideRequested()
@@ -245,6 +362,18 @@ public partial class App : System.Windows.Application
         // трея снятую галочку "Show on desktop": глаз на панели меняет то же
         // самое состояние, что и пункт меню, и они обязаны показывать одно и
         // то же, даже если это меню сейчас не открыто.
+        SetEditingLayout(false);
+    }
+
+    /// The flag, the tray's tick and the panel's mode, together. Four callers
+    /// need this — the tray item, the toolbar's Done and Hide buttons, and
+    /// switching the widget off from the tray — and a mode left on behind a
+    /// hidden widget is a ticked item nobody can act on.
+    private void SetEditingLayout(bool editing)
+    {
+        _editingLayout = editing;
+        _trayIcon!.EditingLayout = editing;
+        if (_widgetWindow is not null) _widgetWindow.EditMode = editing;
         RefreshTrayMenuState();
     }
 
@@ -279,12 +408,11 @@ public partial class App : System.Windows.Application
     /// только метрику, выбранную в "Tray shows" (TrayMetricKey).</summary>
     private void RefreshTrayIcon()
     {
-        var now = DateTimeOffset.Now;
-        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
-            ? okSnapshot
-            : _usageStore.LastSnapshot;
+        var account = TrayAccount();
+        if (account is null) return;
+
         var data = _settings!.Load();
-        var models = DialModel.All(snapshot, data.ModelBucket, now);
+        var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now);
         var metrics = TrayText.Metrics(models);
 
         _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value));
@@ -297,9 +425,10 @@ public partial class App : System.Windows.Application
     private void RefreshTrayMenuState()
     {
         var data = _settings!.Load();
-        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
-            ? okSnapshot
-            : _usageStore.LastSnapshot;
+        // Список модельных бакетов берём у трей-аккаунта: выбор "Model limit"
+        // один на виджет, и предлагать в нём то, чего у показываемого аккаунта
+        // нет, было бы враньём.
+        var snapshot = TrayAccount()?.Snapshot;
         var availableBuckets = snapshot is null ? Array.Empty<string>() : ModelBuckets.Available(snapshot);
 
         // То же разрешение бакета, что DialModel.All использует для заголовка
@@ -318,7 +447,9 @@ public partial class App : System.Windows.Application
             _widgetWindow!.PositionLocked,
             data.TaskbarBandEnabled,
             data.BandPosition,
-            resolvedModelLabel));
+            resolvedModelLabel,
+            data.Accounts,
+            data.TrayAccountId));
     }
 
     private void OnTrayMetricSelected(string key)
@@ -352,7 +483,7 @@ public partial class App : System.Windows.Application
         // PersistWidgetVisible ниже: настройка уже сохранена строкой выше.
         if (visible) _widgetWindow!.Show(); else _widgetWindow!.Hide();
 
-        RefreshTrayMenuState();
+        if (!visible) SetEditingLayout(false); else RefreshTrayMenuState();
     }
 
     private void OnLockPositionToggled(bool locked)
@@ -430,36 +561,42 @@ public partial class App : System.Windows.Application
         if (_settings!.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
     }
 
-    /// <summary>Свежие метрики для ленты — тот же DialModel.All/TrayText.Metrics,
-    /// что и у иконки трея и тултипа, просто нарисованные в другом окне.
-    /// Безвредно вызывать и когда лента выключена/ещё не создана.</summary>
+    /// <summary>Fresh data for the band — one BandText entry per account, from
+    /// the same AccountRow list the panel draws. Harmless to call when the band
+    /// is switched off or not created yet.</summary>
     private void RenderTaskbarBand()
     {
         if (_bandWindow is null) return;
 
-        var now = DateTimeOffset.Now;
-        var snapshot = _usageStore!.CurrentState is UsageState.Ok(var okSnapshot, _)
-            ? okSnapshot
-            : _usageStore.LastSnapshot;
         var data = _settings!.Load();
-        var models = DialModel.All(snapshot, data.ModelBucket, now);
-        _bandWindow.Render(TrayText.Metrics(models));
+        var rows = AccountRow.ForAll(
+            data.Accounts, SnapshotsById(), data.ModelBucket, DateTimeOffset.Now);
+
+        _bandWindow.Render(BandText.Entries(rows));
     }
 
     private void RenderWidget()
     {
+        var account = TrayAccount();
+        if (account is null) return;
+
         var data = _settings!.Load();
+        var rows = AccountRow.ForAll(
+            data.Accounts, SnapshotsById(), data.ModelBucket, DateTimeOffset.Now);
+
         _widgetWindow!.Render(
-            _usageStore!.CurrentState,
-            _usageStore.LastSnapshot,
+            rows,
+            account.Store.CurrentState,
             _statusStore!.Status,
-            data.ModelBucket,
-            _usageStore.RetryPausedUntil);
+            account.Store.RetryPausedUntil);
     }
 
     private void UpdateTrayTooltip()
     {
-        if (_webViewFailing)
+        var account = TrayAccount();
+        if (account is null) return;
+
+        if (_webViewFailing.TryGetValue(account.Profile.Id, out var failing) && failing)
         {
             // Простейший честный сигнал наружу для сбоя, который иначе
             // тонет в FireAndForget/Debug-выводе — не модальный MessageBox
@@ -477,12 +614,11 @@ public partial class App : System.Windows.Application
         }
 
         var now = DateTimeOffset.Now;
-        var state = _usageStore!.CurrentState;
-        var snapshot = state is UsageState.Ok(var okSnapshot, _) ? okSnapshot : _usageStore.LastSnapshot;
+        var state = account.Store.CurrentState;
         var data = _settings!.Load();
-        var models = DialModel.All(snapshot, data.ModelBucket, now);
+        var models = DialModel.All(account.Snapshot, data.ModelBucket, now);
         var metrics = TrayText.Metrics(models);
-        var statusLine = StatusLine.Text(state, now, _usageStore.RetryPausedUntil);
+        var statusLine = StatusLine.Text(state, now, account.Store.RetryPausedUntil);
 
         // "5H 42% · 7D 18% · FAB 8%" — тот же разделитель " · ", что и в
         // строке статуса под циферблатами на панели; статус (если есть)
@@ -495,20 +631,244 @@ public partial class App : System.Windows.Application
         _trayIcon!.SetTooltip(statusLine is null ? metricsText : $"{metricsText}\n{statusLine}");
     }
 
-    private UsageRetryState? LoadRetryState()
+    /// Пауза после 429 — персональная для аккаунта: общая заморозила бы опрос
+    /// остальных трёх из-за одного упершегося.
+    private UsageRetryState? LoadRetryState(string accountId)
     {
-        var data = _settings!.Load();
-        return data.RetryPausedUntil is { } until ? new UsageRetryState(until, data.ConsecutiveRateLimits) : null;
+        var account = _settings!.Load().Accounts.FirstOrDefault(a => a.Id == accountId);
+        return account?.RetryPausedUntil is { } until
+            ? new UsageRetryState(until, account.ConsecutiveRateLimits)
+            : null;
     }
 
-    private void SaveRetryState(UsageRetryState? state)
+    private void SaveRetryState(string accountId, UsageRetryState? state)
     {
         var data = _settings!.Load();
         _settings.Save(data with
         {
-            RetryPausedUntil = state?.Until,
-            ConsecutiveRateLimits = state?.ConsecutiveRateLimits ?? 0,
+            Accounts = data.Accounts.Select(a => a.Id == accountId
+                ? a with
+                {
+                    RetryPausedUntil = state?.Until,
+                    ConsecutiveRateLimits = state?.ConsecutiveRateLimits ?? 0,
+                }
+                : a).ToList(),
         });
+    }
+
+    /// Собирает список аккаунтов из настроек. На самом первом запуске файла
+    /// нет вовсе, миграция не срабатывает, и список пуст — тогда заводим один
+    /// аккаунт, чтобы виджету было что показывать и куда логиниться.
+    private void BuildAccounts()
+    {
+        var data = _settings!.Load();
+        if (data.Accounts.Count == 0)
+        {
+            data = data with
+            {
+                Accounts = [new AccountProfile(SettingsMigration.LegacyAccountId, "Claude", null, null, 0)],
+                TrayAccountId = SettingsMigration.LegacyAccountId,
+            };
+            _settings.Save(data);
+        }
+
+        _accounts = data.Accounts.Select(CreateAccountRuntime).ToList();
+    }
+
+    private AccountRuntime CreateAccountRuntime(AccountProfile profile)
+    {
+        // Мигрированный (он же первый) аккаунт остаётся на НЕЯВНОМ профиле
+        // WebView2 — там лежит вход, сделанный до мультиаккаунта, и именем
+        // тот профиль не адресуется. Остальные аккаунты получают именованный
+        // профиль по своему id. Подробности и измерение — в комментарии к
+        // ClaudeWebSession._profileName.
+        var profileName = profile.Id == SettingsMigration.LegacyAccountId ? null : profile.Id;
+        var session = new ClaudeWebSession(profileName, profile.Id, profile.DisplayName, _settings!);
+        session.SignedIn += () => OnSignedIn(profile.Id);
+
+        var store = new UsageStore(
+            fetch: session.FetchUsageAsync,
+            hasCredentials: () => _hasSessionCookie.TryGetValue(profile.Id, out var has) && has,
+            now: () => DateTimeOffset.Now,
+            loadRetryState: () => LoadRetryState(profile.Id),
+            saveRetryState: state => SaveRetryState(profile.Id, state));
+        store.Changed += OnStoresChanged;
+
+        return new AccountRuntime(profile, session, store);
+    }
+
+    /// Аккаунт, к которому привязаны трей-иконка, её тултип и «Refresh now».
+    /// Null только когда аккаунтов нет вообще.
+    private AccountRuntime? TrayAccount()
+    {
+        var id = _settings!.Load().TrayAccountId;
+        return _accounts.FirstOrDefault(a => a.Profile.Id == id) ?? _accounts.FirstOrDefault();
+    }
+
+    private IReadOnlyDictionary<string, UsageSnapshot?> SnapshotsById() =>
+        _accounts.ToDictionary(a => a.Profile.Id, a => a.Snapshot);
+
+    private void OnLayoutSelected(WidgetLayout layout)
+    {
+        var data = _settings!.Load();
+        // Both settings are written back on every save, so a file that predated
+        // either stops being ambiguous after the first edit.
+        var mode = StatusModes.Resolve(data.StatusMode, data.Layout);
+        var modelDial = ModelDials.Resolve(data.ModelDial);
+        _settings.Save(data with
+        {
+            Layout = WidgetLayout.Sanitize(layout, mode, modelDial),
+            StatusMode = mode,
+            ModelDial = modelDial,
+        });
+
+        // Смена раскладки меняет и размер панели, и её сетку — окно
+        // пересобирается целиком, а не перерисовывается.
+        _widgetWindow!.RebuildLayout(_accounts.Count);
+        RenderWidget();
+        RefreshTrayMenuState();
+    }
+
+    /// The status is one decision. Saving the mode and re-sanitizing the layout
+    /// with it is what adds or removes the cell — there is no second switch that
+    /// could disagree.
+    private void OnStatusModeSelected(StatusMode mode)
+    {
+        var data = _settings!.Load();
+        var modelDial = ModelDials.Resolve(data.ModelDial);
+        _settings.Save(data with
+        {
+            StatusMode = mode,
+            ModelDial = modelDial,
+            Layout = WidgetLayout.Sanitize(data.Layout, mode, modelDial),
+        });
+
+        _widgetWindow!.RebuildLayout(_accounts.Count);
+        RenderWidget();
+        RefreshTrayMenuState();
+    }
+
+    /// The model dial is the same one decision in one place: the setting is
+    /// saved and the layout re-sanitized around it, so the cell cannot disagree
+    /// with the switch. Only the CELL goes — the tray tooltip and the taskbar
+    /// band read DialModel.All and keep reporting the percentage.
+    private void OnModelDialSelected(ModelDial dial)
+    {
+        var data = _settings!.Load();
+        var mode = StatusModes.Resolve(data.StatusMode, data.Layout);
+        _settings.Save(data with
+        {
+            ModelDial = dial,
+            StatusMode = mode,
+            Layout = WidgetLayout.Sanitize(data.Layout, mode, dial),
+        });
+
+        _widgetWindow!.RebuildLayout(_accounts.Count);
+        RenderWidget();
+        RefreshTrayMenuState();
+    }
+
+    /// The plan line, on the same one-place path as the two above minus the
+    /// Sanitize: the plan is a line under the account name, never a cell, so
+    /// nothing in `Order` follows it and there is no second switch to keep in
+    /// agreement. RebuildLayout is still needed — the panel is SIZED for the
+    /// line, so switching it changes the geometry and not only the paint.
+    private void OnPlanLineSelected(PlanLine line)
+    {
+        _settings!.Save(_settings.Load() with { PlanLine = line });
+
+        _widgetWindow!.RebuildLayout(_accounts.Count);
+        RenderWidget();
+        RefreshTrayMenuState();
+    }
+
+    private void OnAccountSelected(string accountId)
+    {
+        _settings!.Save(_settings.Load() with { TrayAccountId = accountId });
+        RenderWidget();
+        UpdateTrayTooltip();
+        RefreshTrayIcon();
+        RefreshTrayMenuState();
+    }
+
+    private void OnAccountAddRequested()
+    {
+        var data = _settings!.Load();
+        if (data.Accounts.Count >= AccountLimits.Max) return;
+
+        // Guid — внутри алфавита ProfileName и заведомо не совпадёт с
+        // legacy-id "default", который обязан остаться на неявном профиле.
+        var profile = new AccountProfile(Guid.NewGuid().ToString(), "New account", null, null, 0);
+        _settings.Save(data with { Accounts = [.. data.Accounts, profile] });
+
+        var runtime = CreateAccountRuntime(profile);
+        _accounts = [.. _accounts, runtime];
+        RenderWidget();
+        RefreshTrayMenuState();
+        FireAndForget(() => runtime.Session.OpenLoginWindowAsync());
+    }
+
+    private void OnAccountRenameRequested(string accountId)
+    {
+        var data = _settings!.Load();
+        var account = data.Accounts.FirstOrDefault(a => a.Id == accountId);
+        if (account is null) return;
+
+        var name = RenameWindow.Ask(account.DisplayName);
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        _settings.Save(data with
+        {
+            Accounts = data.Accounts
+                .Select(a => a.Id == accountId ? a with { DisplayName = name.Trim() } : a)
+                .ToList(),
+        });
+        ReloadAccountProfiles();
+        RenderWidget();
+        RefreshTrayMenuState();
+    }
+
+    private async Task OnAccountRemoveRequestedAsync(string accountId)
+    {
+        var runtime = _accounts.FirstOrDefault(a => a.Profile.Id == accountId);
+        if (runtime is null) return;
+
+        // Чистим ДО удаления из настроек: после удаления уже нечему знать,
+        // какой профиль стирать, и следующий аккаунт с тем же id унаследовал бы
+        // чужую сессию.
+        try
+        {
+            await runtime.Session.ClearBrowsingDataAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Clearing browsing data for '{accountId}' failed: {ex}");
+        }
+
+        var data = _settings!.Load();
+        _settings.Save(data with
+        {
+            Accounts = data.Accounts.Where(a => a.Id != accountId).ToList(),
+            TrayAccountId = data.TrayAccountId == accountId ? null : data.TrayAccountId,
+        });
+        _accounts = _accounts.Where(a => a.Profile.Id != accountId).ToList();
+
+        RenderWidget();
+        UpdateTrayTooltip();
+        RefreshTrayIcon();
+        RefreshTrayMenuState();
+    }
+
+    /// Подтягивает изменившиеся поля профиля (пока только DisplayName) в уже
+    /// живые AccountRuntime, не пересоздавая сессии и не теряя загруженные
+    /// снимки.
+    private void ReloadAccountProfiles()
+    {
+        var byId = _settings!.Load().Accounts.ToDictionary(a => a.Id);
+        _accounts = _accounts
+            .Where(a => byId.ContainsKey(a.Profile.Id))
+            .Select(a => a with { Profile = byId[a.Profile.Id] })
+            .ToList();
     }
 
     /// Обёртка над "выстрелил и забыл" для обработчиков кликов/таймера:
@@ -525,6 +885,7 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Unhandled error in fire-and-forget task: {ex}");
+            WidgetLog.Write("-", "unhandled", $"fire-and-forget {ex.GetType().Name}: {ex.Message}");
         }
     }
 

@@ -30,7 +30,28 @@ namespace ClaudeUsageWidget.App.Web;
 /// </summary>
 public sealed class ClaudeWebSession
 {
-    private readonly string _profileFolder;
+    // Имя ПРОФИЛЯ WebView2, а не папка: аккаунты разделены профилями внутри
+    // одной общей user data folder (WebViewEnvironment), иначе на каждый
+    // аккаунт поднимался бы свой набор процессов браузера.
+    //
+    // NULL — особый и нужный случай: «неявный профиль по умолчанию». Именованные
+    // профили WebView2 складывает в `EBWebView\WV2Profile_<имя>`, а профиль,
+    // созданный БЕЗ опций, — в `EBWebView\Default`, и добраться до второго по
+    // имени нельзя никаким `ProfileName` (измерено 2026-08-26, запись в
+    // docs/superpowers/plans/2026-08-26-multi-account-verification/profile-probe.md).
+    // Всё, что было залогинено до мультиаккаунта, лежит именно там — поэтому
+    // мигрированный аккаунт остаётся на неявном профиле и переживает
+    // обновление, а каждый следующий получает именованный.
+    private readonly string? _profileName;
+    private readonly string _accountId;
+
+    // What this account is called in the log. The DisplayName rather than the
+    // id, because the reader of widget.log is a person comparing it against
+    // the names on the panel — a GUID there tells them nothing. A rename does
+    // not reach this copy until the next launch; the log is diagnostic, and
+    // the account it names is still the right one.
+    private readonly string _accountLabel;
+
     private readonly SettingsStore _settings;
 
     // Единственная on-demand среда WebView2 на весь процесс: LoginWindow
@@ -76,10 +97,70 @@ public sealed class ClaudeWebSession
     /// Кука появилась и окно логина закрылось — порт uses site's onSignedIn.
     public event Action? SignedIn;
 
-    public ClaudeWebSession(string profileFolder, SettingsStore settings)
+    public ClaudeWebSession(string? profileName, string accountId, string accountLabel, SettingsStore settings)
     {
-        _profileFolder = profileFolder;
+        _profileName = profileName;
+        _accountId = accountId;
+        _accountLabel = accountLabel;
         _settings = settings;
+    }
+
+    /// Организация у каждого аккаунта своя: до мультиаккаунта это поле лежало
+    /// на верхнем уровне настроек просто потому, что аккаунт был один.
+    private AccountProfile? LoadProfile() =>
+        _settings.Load().Accounts.FirstOrDefault(a => a.Id == _accountId);
+
+    private string? LoadOrganizationId() => LoadProfile()?.OrganizationId;
+
+    private void SaveOrganizationId(string? organizationId)
+    {
+        var data = _settings.Load();
+        _settings.Save(data with
+        {
+            Accounts = data.Accounts
+                .Select(a => a.Id == _accountId ? a with { OrganizationId = organizationId } : a)
+                .ToList(),
+        });
+    }
+
+    /// The three subscription fields, written together in ONE save so the
+    /// sentinel flips atomically: everywhere else, a null capability list means
+    /// "never asked", and a half-written profile would make that a lie.
+    ///
+    /// Raw, never a label. The mapping lives in <see cref="SubscriptionTier"/>,
+    /// and a wrong guess there must be fixable by shipping a new build rather
+    /// than by asking claude.ai for a body that is already on disk.
+    private void SaveSubscriptionFields(OrganizationFields fields)
+    {
+        var data = _settings.Load();
+        _settings.Save(data with
+        {
+            Accounts = data.Accounts
+                .Select(a => a.Id == _accountId
+                    ? a with
+                    {
+                        Capabilities = fields.Capabilities,
+                        RateLimitTier = fields.RateLimitTier,
+                        RavenType = fields.RavenType,
+                    }
+                    : a)
+                .ToList(),
+        });
+    }
+
+    /// One organizations fetch per RUN for the backfill below, whatever it
+    /// found. Without it, an account whose organization has vanished from the
+    /// body would re-fetch on every poll forever: the fields would stay null,
+    /// and null is the condition being tested.
+    private bool _subscriptionFieldsFetched;
+
+    /// Стирает куки и кэш ЭТОГО аккаунта. Нужно для «Remove» в трее: удалить
+    /// аккаунт из настроек, не почистив профиль, значит оставить его залогиненным
+    /// — и следующий аккаунт с тем же id унаследовал бы чужую сессию.
+    public async Task ClearBrowsingDataAsync()
+    {
+        var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
+        await webView.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
     }
 
     /// Порт <c>hasSessionCookie()</c> — sessionKey на домене claude.ai с
@@ -97,7 +178,7 @@ public sealed class ClaudeWebSession
         if (!await HasSessionCookieAsync().ConfigureAwait(true))
             throw new UsageException(UsageError.NoCredentials);
 
-        var organizationId = _settings.Load().OrganizationId;
+        var organizationId = LoadOrganizationId();
         if (string.IsNullOrEmpty(organizationId))
         {
             var body = await FetchPageAsync("https://claude.ai/api/organizations", ct).ConfigureAwait(true);
@@ -105,7 +186,35 @@ public sealed class ClaudeWebSession
             if (string.IsNullOrEmpty(organizationId))
                 throw new UsageException(UsageError.MalformedResponse);
 
-            _settings.Save(_settings.Load() with { OrganizationId = organizationId });
+            SaveOrganizationId(organizationId);
+            RecordSubscription(body, organizationId);
+        }
+        else if (LoadProfile()?.Capabilities is null && !_subscriptionFieldsFetched)
+        {
+            // The organization was picked before this release, so the plan
+            // fields were never stored — one extra fetch of the ORGANIZATIONS
+            // endpoint fills them in. Deliberately not the usage endpoint: that
+            // is the one the 429 budget is spent on, and this list is cheap and
+            // changes about never. Bounded to once per run by the flag, and to
+            // once ever by the fields it writes.
+            _subscriptionFieldsFetched = true;
+            try
+            {
+                var body = await FetchPageAsync("https://claude.ai/api/organizations", ct)
+                    .ConfigureAwait(true);
+                RecordSubscription(body, organizationId);
+            }
+            catch (UsageException ex)
+            {
+                // The plan line is decoration; the dials are the product. This
+                // fetch is the ONLY reason an account that polled fine before
+                // the upgrade now touches a second endpoint, and letting it
+                // through would mean a blip — or worse, a 429, which UsageStore
+                // answers by pausing the whole account — failing a poll for the
+                // sake of a label. Logged and dropped; the flag above already
+                // means it is not retried before the next launch.
+                WidgetLog.Write(_accountLabel, "organization", $"backfill-failed {ex.Error.Kind}");
+            }
         }
 
         try
@@ -124,9 +233,29 @@ public sealed class ClaudeWebSession
         }
     }
 
+    /// Stores the picked organization's subscription fields and logs the same
+    /// line the shape probe already wrote, now with the label those fields
+    /// produce — so `widget.log` shows what the panel decided and off what.
+    ///
+    /// One key, `organization`, for the pick and the backfill alike: it is what
+    /// anyone greps.
+    private void RecordSubscription(string body, string organizationId)
+    {
+        var fields = OrganizationPicker.Fields(body, organizationId);
+        var label = SubscriptionTier.Label(fields.Capabilities, fields.RateLimitTier, fields.RavenType);
+
+        WidgetLog.Write(_accountLabel, "organization",
+            $"{OrganizationPicker.Describe(body, organizationId)} tier={label}");
+        SaveSubscriptionFields(fields);
+    }
+
     public void ClearCachedOrganization()
     {
-        _settings.Save(_settings.Load() with { OrganizationId = null });
+        // The subscription fields stay. They describe the SUBSCRIPTION, not the
+        // organization id that died with the session, and the pick that follows
+        // overwrites them from a fresh body anyway — clearing here would only
+        // blank the plan line for as long as the account is signed out.
+        SaveOrganizationId(null);
     }
 
     /// Повторный вызов, пока окно логина ещё открыто (или ещё только
@@ -137,17 +266,36 @@ public sealed class ClaudeWebSession
     {
         if (_loginWindow is { } existing)
         {
+            // Activate() cannot steal the foreground from another process
+            // (Windows' foreground lock): an open window behind everything
+            // else is what "the button does nothing" can also look like.
+            WidgetLog.Write(_accountLabel, "login-window", "reuse existing");
             existing.Show();
             existing.Activate();
             return Task.FromResult(existing);
         }
+        // Only a task that is STILL RUNNING is shared. This used to be
+        // `_openLoginWindowTask ??= CreateLoginWindowAsync()`, which kept a
+        // COMPLETED task forever: once the WebView2 environment is up, the
+        // await inside CreateLoginWindowAsync continues synchronously, the
+        // method runs through its finally (which clears the field) before
+        // `??=` stores the finished task over that null — and every later
+        // call handed back a window that had long been closed. Measured
+        // 2026-09-04: eight panel clicks, eight `still opening
+        // status=RanToCompletion` lines, no window. The first call at start-up
+        // worked only because the environment was not ready yet, so the await
+        // yielded and the finally ran after the assignment.
+        if (_openLoginWindowTask is { IsCompleted: false } pending)
+        {
+            WidgetLog.Write(_accountLabel, "login-window", "still opening");
+            return pending;
+        }
 
-        // `??=` присваивает синхронно, до какого-либо await внутри
-        // CreateLoginWindowAsync — конкурирующий вызов, попавший сюда же на
-        // том же UI-потоке во время await EnsureEnvironmentAsync() ниже,
-        // увидит уже не-null _openLoginWindowTask и получит ту же задачу
-        // вместо того, чтобы начать создавать второе окно с нуля.
-        return _openLoginWindowTask ??= CreateLoginWindowAsync();
+        // A concurrent call on the same UI thread during the await inside
+        // (auto-open at start-up racing a tray click) sees the running task
+        // above and shares it instead of creating a second window.
+        _openLoginWindowTask = CreateLoginWindowAsync();
+        return _openLoginWindowTask;
     }
 
     private async Task<LoginWindow> CreateLoginWindowAsync()
@@ -155,12 +303,18 @@ public sealed class ClaudeWebSession
         try
         {
             var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
-            var window = new LoginWindow(environment);
+            // Тот же профиль, что читает фетч — см. инвариант в CreateFetchWebViewAsync.
+            var window = new LoginWindow(environment, _profileName, _accountLabel);
             window.SignedIn += OnLoginWindowSignedIn;
             window.Closed += OnLoginWindowClosed;
             _loginWindow = window;
             window.Show();
             return window;
+        }
+        catch (Exception ex)
+        {
+            WidgetLog.Write(_accountLabel, "login-window", $"create-failed {ex.GetType().Name}: {ex.Message}");
+            throw;
         }
         finally
         {
@@ -187,13 +341,51 @@ public sealed class ClaudeWebSession
     // Page-fetch: порт WebPageJSONFetcher.
     // ------------------------------------------------------------------
 
+    /// One retry on a transient navigation failure — and a log line for EVERY
+    /// failure, the successful retry included.
+    ///
+    /// The panel only ever shows the last error, so a `Claude.ai navigation
+    /// failed: Unknown.` that came and went used to leave no trace at all.
+    /// The log is the only place that shows whether it was a single blip or
+    /// the network being down.
     private async Task<string> FetchPageAsync(string url, CancellationToken ct)
     {
+        var path = new Uri(url).AbsolutePath;
+
+        // The gate is held across BOTH attempts: the shared fetch webview
+        // serves one navigation at a time, and releasing it for the
+        // three-second pause would let another request in halfway through
+        // our retry.
         await _fetchGate.WaitAsync(ct).ConfigureAwait(true);
         try
         {
-            return await RunWithFetchWebViewAsync(
-                webView => NavigateAndReadAsync(webView, url, ct)).ConfigureAwait(true);
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    var body = await RunWithFetchWebViewAsync(
+                        webView => NavigateAndReadAsync(webView, url, ct)).ConfigureAwait(true);
+                    if (attempt > 1)
+                        WidgetLog.Write(_accountLabel, "retry-ok", $"path={path} attempt={attempt}");
+                    return body;
+                }
+                catch (NavigationFailedException ex)
+                {
+                    // http=0 means "it never got as far as a status": the
+                    // navigation failed at the transport. Any other value here
+                    // is a code the branch above did not classify — log it, do
+                    // not guess.
+                    WidgetLog.Write(_accountLabel, "nav-failed",
+                        $"path={path} status={ex.Status} http={ex.HttpStatusCode} attempt={attempt}");
+
+                    // The second attempt is the last. Non-transient statuses
+                    // (DNS, certificate) fail identically three seconds later
+                    // and only double the noise.
+                    if (attempt >= 2 || !NavigationRetryPolicy.IsTransient(ex.Status.ToString())) throw;
+
+                    await Task.Delay(NavigationRetryPolicy.RetryDelay, ct).ConfigureAwait(true);
+                }
+            }
         }
         finally
         {
@@ -237,6 +429,11 @@ public sealed class ClaudeWebSession
 
     private void ResetFetchWebView()
     {
+        // Rare and always a symptom: the engine died, or a fetch hit a dead
+        // one. Cheap to log, and it is the line that explains a burst of
+        // failures that otherwise look unrelated.
+        WidgetLog.Write(_accountLabel, "webview-reset", "reason=fetch-webview-dead");
+
         _fetchWebViewTask = null;
         try
         {
@@ -252,7 +449,8 @@ public sealed class ClaudeWebSession
         _hiddenHost = null;
     }
 
-    private static async Task<string> NavigateAndReadAsync(CoreWebView2 webView, string url, CancellationToken ct)
+    // Not static: it logs under the account's name.
+    private async Task<string> NavigateAndReadAsync(CoreWebView2 webView, string url, CancellationToken ct)
     {
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -270,11 +468,23 @@ public sealed class ClaudeWebSession
         {
             try
             {
-                if (!args.IsSuccess)
+                // Status codes BEFORE IsSuccess. A 4xx on a top-level navigation
+                // lands in Chromium's error page, and WebView2 then reports
+                // IsSuccess=false with WebErrorStatus.Unknown — while
+                // HttpStatusCode still carries the code. Measured 2026-09-04:
+                // one account's session had expired, the server answered
+                // 403 application/json on every poll, and the IsSuccess check
+                // sitting first turned "sign in again" into "navigation
+                // failed: Unknown" for days. HttpStatusCode is 0 only when no
+                // HTTP exchange happened at all — that, and only that, is a
+                // transport failure.
+                if (args.HttpStatusCode != 0 && args.HttpStatusCode is < 200 or >= 300)
                 {
-                    tcs.TrySetException(
-                        new UsageException(UsageError.Network($"Claude.ai navigation failed: {args.WebErrorStatus}.")));
-                    return;
+                    // Once for ANY non-2xx, before the codes are sorted out
+                    // below: 401/403/429 each take their own path, and without
+                    // this line the log would not show that an answer arrived.
+                    WidgetLog.Write(_accountLabel, "nav-http",
+                        $"path={new Uri(url).AbsolutePath} http={args.HttpStatusCode} success={args.IsSuccess} status={args.WebErrorStatus}");
                 }
 
                 // Семантика статусов — порт webView(_:didFinish:) в
@@ -289,10 +499,21 @@ public sealed class ClaudeWebSession
                     tcs.TrySetException(new UsageException(UsageError.RateLimited(null)));
                     return;
                 }
-                if (args.HttpStatusCode is < 200 or >= 300)
+                if (args.HttpStatusCode is < 200 or >= 300 && args.HttpStatusCode != 0)
                 {
                     tcs.TrySetException(
                         new UsageException(UsageError.Network($"Claude.ai returned HTTP {args.HttpStatusCode}.")));
+                    return;
+                }
+
+                if (!args.IsSuccess)
+                {
+                    // Its own type rather than a bare UsageException:
+                    // FetchPageAsync has to tell "the navigation never
+                    // happened" (worth retrying) from "the server answered
+                    // badly" (not), and a message string is no way to decide
+                    // that. What the user sees is unchanged.
+                    tcs.TrySetException(new NavigationFailedException(args.WebErrorStatus, args.HttpStatusCode));
                     return;
                 }
 
@@ -360,14 +581,10 @@ public sealed class ClaudeWebSession
         return _environmentTask ??= CreateEnvironmentAsync();
     }
 
-    private async Task<CoreWebView2Environment> CreateEnvironmentAsync()
-    {
-        Directory.CreateDirectory(_profileFolder);
-        // browserExecutableFolder=null → системный Edge/WebView2 Runtime;
-        // options=null → значения по умолчанию. userDataFolder — единственное,
-        // что нужно задать явно: это и есть профиль из AccountProfile.
-        return await CoreWebView2Environment.CreateAsync(userDataFolder: _profileFolder).ConfigureAwait(true);
-    }
+    private static Task<CoreWebView2Environment> CreateEnvironmentAsync() =>
+        // Среда теперь одна на процесс: разделяет аккаунты ProfileName на
+        // контроллере, а не отдельная папка на каждый.
+        WebViewEnvironment.SharedAsync();
 
     private Task<CoreWebView2> EnsureFetchWebViewAsync()
     {
@@ -427,7 +644,32 @@ public sealed class ClaudeWebSession
         exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow;
         Win32.SetWindowLongPtr(hwnd, Win32.GwlExStyle, (nint)exStyle);
 
-        var controller = await environment.CreateCoreWebView2ControllerAsync(hwnd).ConfigureAwait(true);
+        // ИНВАРИАНТ: контроллер логина и контроллер фетча одного аккаунта
+        // обязаны создаваться с ОДНИМ И ТЕМ ЖЕ ProfileName. Разойдутся — вход
+        // пройдёт успешно, а циферблаты этого аккаунта останутся пустыми
+        // навсегда, и никакой ошибки не будет. Поэтому имя не только задаётся,
+        // но и читается обратно ниже.
+        CoreWebView2Controller controller;
+        if (_profileName is null)
+        {
+            controller = await environment.CreateCoreWebView2ControllerAsync(hwnd).ConfigureAwait(true);
+        }
+        else
+        {
+            var options = environment.CreateCoreWebView2ControllerOptions();
+            options.ProfileName = _profileName;
+            controller = await environment.CreateCoreWebView2ControllerAsync(hwnd, options).ConfigureAwait(true);
+
+            // ProfileName регистронезависим — он ложится в путь на диске.
+            if (!string.Equals(controller.CoreWebView2.Profile.ProfileName, _profileName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"WebView2 gave profile '{controller.CoreWebView2.Profile.ProfileName}' " +
+                    $"for account '{_accountId}', expected '{_profileName}'.");
+            }
+        }
+
         controller.IsVisible = false;
         // В поле, не в локальную переменную — см. doc-comment у
         // _fetchController: без сильной ссылки GC финализирует обёртку
@@ -445,6 +687,12 @@ public sealed class ClaudeWebSession
             // УЖЕ заменённого движка (ретрай успел пересоздать) — иначе оно
             // снесло бы свежий контроллер и скрытый хост под ним.
             if (!ReferenceEquals(_fetchController, controller)) return;
+
+            // Logged for EVERY kind, including the ones that do not trigger a
+            // reset below: which kinds actually occur here is the open
+            // question this log is meant to answer.
+            WidgetLog.Write(_accountLabel, "webview-process-failed", $"kind={args.ProcessFailedKind}");
+
             if (args.ProcessFailedKind is CoreWebView2ProcessFailedKind.BrowserProcessExited
                 or CoreWebView2ProcessFailedKind.RenderProcessExited
                 or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
@@ -452,7 +700,64 @@ public sealed class ClaudeWebSession
                 ResetFetchWebView();
             }
         };
-        return controller.CoreWebView2;
+
+        // Diagnostics for a navigation that fails as WebErrorStatus.Unknown with
+        // http=0 (seen twice in a row on one account, 2026-09-04): the docs say
+        // only "an unknown error", so the log records what a failed page load
+        // can hide. A JSON body served as an attachment turns the navigation
+        // into a DOWNLOAD, which never completes as a page; a redirect or a
+        // non-JSON answer shows up as a resource line. Nothing here fires on a
+        // healthy 200 application/json poll, so the file stays small.
+        var core = controller.CoreWebView2;
+        core.DownloadStarting += (_, args) =>
+        {
+            var op = args.DownloadOperation;
+            WidgetLog.Write(_accountLabel, "nav-download",
+                $"uri={op.Uri} mime={op.MimeType} disposition={op.ContentDisposition}");
+            // A fetch that became a file is a failed fetch: cancel it rather
+            // than drop a stray .json into Downloads on every poll.
+            args.Cancel = true;
+            args.Handled = true;
+        };
+        core.WebResourceResponseReceived += (_, args) =>
+        {
+            if (!args.Request.Uri.Contains("/api/organizations", StringComparison.Ordinal)) return;
+            var headers = args.Response.Headers;
+            var type = headers.Contains("content-type") ? headers.GetHeader("content-type") : "-";
+            var disposition = headers.Contains("content-disposition") ? headers.GetHeader("content-disposition") : "-";
+            if (args.Response.StatusCode == 200 &&
+                type.StartsWith("application/json", StringComparison.OrdinalIgnoreCase)) return;
+            WidgetLog.Write(_accountLabel, "resource",
+                $"path={new Uri(args.Request.Uri).AbsolutePath} http={args.Response.StatusCode} type={type} disposition={disposition}");
+        };
+        core.NavigationStarting += (_, args) =>
+        {
+            if (args.IsRedirected) WidgetLog.Write(_accountLabel, "nav-redirect", $"to={args.Uri}");
+        };
+        return core;
+    }
+}
+
+/// The navigation never happened at all — no answer from the server, only a
+/// reason code from WebView2.
+///
+/// Derives from UsageException and carries the same UsageError.Network as
+/// before: to UsageStore (and to the panel's status line) this is still an
+/// ordinary network error. All that changed is that FetchPageAsync can now
+/// recognise it and decide whether to retry.
+internal sealed class NavigationFailedException : UsageException
+{
+    public CoreWebView2WebErrorStatus Status { get; }
+
+    /// 0 when no HTTP exchange happened; otherwise the code WebView2 saw on
+    /// the way into its error page, kept for the log.
+    public int HttpStatusCode { get; }
+
+    public NavigationFailedException(CoreWebView2WebErrorStatus status, int httpStatusCode = 0)
+        : base(UsageError.Network($"Claude.ai navigation failed: {status}."))
+    {
+        Status = status;
+        HttpStatusCode = httpStatusCode;
     }
 }
 

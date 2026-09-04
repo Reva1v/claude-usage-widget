@@ -27,6 +27,30 @@ public static class ServiceStatusText
         ServiceStatus.Unknown => "—",
         _ => throw new ArgumentOutOfRangeException(nameof(status)),
     };
+
+    /// The word for the status LINE, which has room for it — `Label` is the
+    /// abbreviation that has to fit inside a 68 pt dial.
+    public static string LineLabel(ServiceStatus status) => status switch
+    {
+        ServiceStatus.Operational => "operational",
+        ServiceStatus.Degraded => "degraded",
+        ServiceStatus.PartialOutage => "partial outage",
+        ServiceStatus.MajorOutage => "major outage",
+        ServiceStatus.Maintenance => "under maintenance",
+        ServiceStatus.Unknown => "state unknown",
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
+
+    /// The service part of the status line, or null for silence.
+    ///
+    /// In `Line` mode it always speaks, including when the service is fine: the
+    /// line is the only place the state appears, and a line that falls silent
+    /// reads as a lost dial. In `Cell` mode the dial carries the good news and
+    /// the line stays for trouble only.
+    public static string? Line(ServiceStatus status, StatusMode mode) =>
+        mode == StatusMode.Cell && status == ServiceStatus.Operational
+            ? null
+            : $"service {LineLabel(status)}";
 }
 
 public static class ServiceStatusParser

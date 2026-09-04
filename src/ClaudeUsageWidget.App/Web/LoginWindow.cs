@@ -1,8 +1,18 @@
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using WebView2Control = Microsoft.Web.WebView2.Wpf.WebView2;
+// UseWindowsForms makes System.Windows.Forms globally visible and every one of
+// these has a namesake there.
+using TextBox = System.Windows.Controls.TextBox;
+using Button = System.Windows.Controls.Button;
+using TextBlock = System.Windows.Controls.TextBlock;
+using Grid = System.Windows.Controls.Grid;
+using RowDefinition = System.Windows.Controls.RowDefinition;
+using DockPanel = System.Windows.Controls.DockPanel;
+using Dock = System.Windows.Controls.Dock;
 
 namespace ClaudeUsageWidget.App.Web;
 
@@ -16,7 +26,19 @@ namespace ClaudeUsageWidget.App.Web;
 public sealed class LoginWindow : Window
 {
     private readonly CoreWebView2Environment _environment;
+
+    // Профиль того аккаунта, в который входим. Обязан совпадать с профилем
+    // фетч-контроллера этой же сессии, иначе кука ляжет не туда, откуда её
+    // потом читают, — молча.
+    private readonly string? _profileName;
+
+    // Named in the title and the hint: with several accounts the sign-in page
+    // itself looks identical for every one of them, and the user asked
+    // (2026-09-04) how to tell which profile the window was about to sign in.
+    private readonly string _accountLabel;
+
     private readonly WebView2Control _webView = new();
+    private readonly TextBox _linkBox = new() { VerticalContentAlignment = VerticalAlignment.Center };
     private readonly DispatcherTimer _cookiePollTimer;
     private bool _signedIn;
 
@@ -33,15 +55,22 @@ public sealed class LoginWindow : Window
     /// itself.
     public event Action? SignedIn;
 
-    public LoginWindow(CoreWebView2Environment environment)
+    public LoginWindow(CoreWebView2Environment environment, string? profileName, string accountLabel)
     {
         _environment = environment;
+        _profileName = profileName;
+        _accountLabel = accountLabel;
 
-        Title = "Sign in to Claude.ai";
+        // Logged at construction rather than at Show(): the only caller shows
+        // the window immediately, and an exception between the two would
+        // otherwise leave a login attempt with no trace at all.
+        WidgetLog.Write(_accountLabel, "login-window", "open");
+
+        Title = $"Sign in to Claude.ai — account \"{_accountLabel}\"";
         Width = 1000;
         Height = 720;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Content = _webView;
+        Content = BuildLayout();
 
         // Опрос, а не событие: у CoreWebView2CookieManager, в отличие от
         // WKHTTPCookieStoreObserver в оригинале, нет колбэка на изменение
@@ -88,12 +117,92 @@ public sealed class LoginWindow : Window
         {
             _closed = true;
             _cookiePollTimer.Stop();
+            // signedIn separates "the cookie arrived and we closed ourselves"
+            // from "the user gave up and closed the window", which is the
+            // difference between a sign-in that worked and one that did not.
+            WidgetLog.Write(_accountLabel, "login-window", $"closed signedIn={_signedIn}");
         };
+    }
+
+    /// A hint line, a paste box, and the browser under them.
+    ///
+    /// The box exists for magic-link sign-in: the link arrives by e-mail, and
+    /// clicking it there opens the DEFAULT browser, which signs THAT browser in
+    /// and leaves this one — the only one the widget reads cookies from —
+    /// logged out. The link is also typically single-use, so opening it in the
+    /// wrong browser burns it. Pasting it here keeps request and redemption in
+    /// the same cookie jar.
+    private Grid BuildLayout()
+    {
+        _linkBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter) NavigateToPastedLink();
+        };
+
+        var open = new Button { Content = "Open", Padding = new Thickness(12, 2, 12, 2), Margin = new Thickness(6, 0, 0, 0) };
+        open.Click += (_, _) => NavigateToPastedLink();
+
+        var bar = new DockPanel { Margin = new Thickness(8, 0, 8, 8) };
+        DockPanel.SetDock(open, Dock.Right);
+        bar.Children.Add(open);
+        bar.Children.Add(_linkBox);
+
+        var hint = new TextBlock
+        {
+            Text = $"This window signs in the widget account \"{_accountLabel}\". "
+                 + "Signing in with a magic link? Request it on this page, then paste the link from the e-mail here — "
+                 + "opening it in your normal browser signs that browser in, not this one.",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(8, 8, 8, 4),
+            Opacity = 0.75,
+        };
+
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition());
+        Grid.SetRow(hint, 0);
+        Grid.SetRow(bar, 1);
+        Grid.SetRow(_webView, 2);
+        root.Children.Add(hint);
+        root.Children.Add(bar);
+        root.Children.Add(_webView);
+        return root;
+    }
+
+    /// Https only, and no host allow-list: magic-link e-mails routinely go
+    /// through a tracking redirector, and Microsoft-federated accounts pass
+    /// through login.microsoftonline.com — an allow-list of claude.ai would
+    /// reject exactly the links this box exists for.
+    private void NavigateToPastedLink()
+    {
+        var raw = _linkBox.Text?.Trim();
+        if (string.IsNullOrEmpty(raw)) return;
+
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            _linkBox.ToolTip = "That is not an https link.";
+            return;
+        }
+
+        _linkBox.ToolTip = null;
+        _webView.CoreWebView2?.Navigate(uri.ToString());
     }
 
     private async Task InitializeAsync()
     {
-        await _webView.EnsureCoreWebView2Async(_environment).ConfigureAwait(true);
+        // null — неявный профиль по умолчанию, ровно как у фетч-контроллера
+        // этой же сессии; см. комментарий к ClaudeWebSession._profileName.
+        if (_profileName is null)
+        {
+            await _webView.EnsureCoreWebView2Async(_environment).ConfigureAwait(true);
+        }
+        else
+        {
+            var controllerOptions = _environment.CreateCoreWebView2ControllerOptions();
+            controllerOptions.ProfileName = _profileName;
+            await _webView.EnsureCoreWebView2Async(_environment, controllerOptions).ConfigureAwait(true);
+        }
         if (_closed) return;
         var core = _webView.CoreWebView2;
 

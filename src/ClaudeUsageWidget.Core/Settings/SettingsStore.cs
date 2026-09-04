@@ -10,7 +10,14 @@ namespace ClaudeUsageWidget.Core;
 /// instead.
 public sealed class SettingsStore
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
+    /// Enums as their NAMES, not their ordinals: this file is meant to be
+    /// hand-edited, and `"Flow": 2` is not something anyone can read or write
+    /// on purpose. Used for reading too, so a name written by hand round-trips.
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        WriteIndented = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
 
     private readonly string _path;
 
@@ -28,7 +35,12 @@ public sealed class SettingsStore
         try
         {
             var json = File.ReadAllText(_path);
-            return JsonSerializer.Deserialize<WidgetSettingsData>(json) ?? new WidgetSettingsData();
+            var raw = JsonSerializer.Deserialize<WidgetSettingsData>(json, SerializerOptions)
+                      ?? new WidgetSettingsData();
+            // Deliberately inside the try: a first run has no file at all, and
+            // an absent file must stay an empty account list rather than
+            // become a phantom `default` account with no cookies behind it.
+            return SettingsMigration.Apply(raw);
         }
         catch
         {

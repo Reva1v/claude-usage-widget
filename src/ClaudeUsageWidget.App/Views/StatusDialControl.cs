@@ -9,6 +9,7 @@ using Point = System.Windows.Point;
 using Cursor = System.Windows.Input.Cursor;
 using Cursors = System.Windows.Input.Cursors;
 using Brushes = System.Windows.Media.Brushes;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 
 namespace ClaudeUsageWidget.App.Views;
 
@@ -89,6 +90,10 @@ public sealed class StatusDialControl : DialControlBase
         DialText.DrawStackCentered(dc, center, 1, labelText, valueText);
     }
 
+    /// Armed by a press on this dial, disarmed by the release, by a lost
+    /// capture or by a release outside the square.
+    private bool _armed;
+
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         // Событие останавливается здесь, а не всплывает к
@@ -98,11 +103,44 @@ public sealed class StatusDialControl : DialControlBase
         // NSWindow.mouseDown вообще о нём узнаёт.
         e.Handled = true;
         base.OnMouseLeftButtonDown(e);
+
+        // A press is not a click. The capture is what makes the release
+        // arrive here even if the cursor has left the dial by then, so the
+        // "released somewhere else" case can be told apart from a real click.
+        _armed = CaptureMouse();
+    }
+
+    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        base.OnMouseLeftButtonUp(e);
+
+        var armed = _armed;
+        _armed = false;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        if (!armed) return;
+
+        // Press and release on the SAME dial. A press that travelled off the
+        // control before the release is a slip or a drag, not a click, and
+        // this panel lives right above the notification area.
+        var point = e.GetPosition(this);
+        if (point.X < 0 || point.Y < 0 || point.X > ActualWidth || point.Y > ActualHeight) return;
+
         OpenStatusPage();
+    }
+
+    protected override void OnLostMouseCapture(MouseEventArgs e)
+    {
+        base.OnLostMouseCapture(e);
+        _armed = false;
     }
 
     private static void OpenStatusPage()
     {
+        // "-" for the account: the status page is service-wide and this
+        // control belongs to no account in particular.
+        WidgetLog.Write("-", "browser-open", $"site=status-dial url={StatusUrl}");
+
         // UseShellExecute: true — без него .NET пытается запустить URL как
         // исполняемый файл напрямую и падает с Win32Exception (тот же приём,
         // что и в Tray/TrayIcon.cs).

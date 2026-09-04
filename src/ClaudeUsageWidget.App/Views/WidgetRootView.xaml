@@ -49,35 +49,24 @@
         </Style>
     </UserControl.Resources>
 
-    <!-- Background="Transparent", а не пусто: Panel без Background не
-         участвует в hit-тестировании по своим "пустым" пикселям, а
-         MouseEnter/MouseLeave (нужны для hover-хедера) должны надёжно
-         срабатывать по всему квадрату side x side, а не только там, где
-         что-то реально закрашено внутри. -->
+    <!-- Background="Transparent", not absent: a Panel without a Background does
+         not hit-test on its own empty pixels, and edit mode has to see a press
+         anywhere on the square — including the padding, where a press must NOT
+         reach the window's drag. -->
     <Grid x:Name="RootGrid" Background="Transparent">
         <!-- Панель: тёмный полупрозрачный фон со скруглением, внутри — сетка
-             2x2 из циферблатов. Порядок детей в Grid — это и порядок
-             отрисовки (z-order), как overlay-цепочка в WidgetRootView.swift. -->
-        <Border x:Name="PanelBorder" Background="{x:Static views:Theme.PanelBackgroundBrush}">
-            <!-- Auto-размер строк/колонок: сетка ужимается ровно до контента
-                 (2 * dialSize + gap), а не растягивается по звёздам — так
-                 зазор между циферблатами задаётся простыми Margin на
-                 правом/нижнем циферблатах, без пересчёта звёздных долей. -->
-            <Grid x:Name="DialGrid" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+             циферблатов ПО СТРОКЕ НА АККАУНТ. Порядок детей в Grid — это и
+             порядок отрисовки (z-order), как overlay-цепочка в
+             WidgetRootView.swift.
 
-                <views:DialControl x:Name="SessionDial" Grid.Row="0" Grid.Column="0"/>
-                <views:DialControl x:Name="WeekDial" Grid.Row="0" Grid.Column="1"/>
-                <views:DialControl x:Name="ModelDial" Grid.Row="1" Grid.Column="0"/>
-                <views:StatusDialControl x:Name="StatusDial" Grid.Row="1" Grid.Column="1"/>
-            </Grid>
+             Сетка пуста в разметке и строится в ApplyLayout: число строк
+             равно числу настроенных аккаунтов и меняется в рантайме
+             (добавление/удаление аккаунта), а четыре именованных циферблата
+             в XAML были той самой зашитой раскладкой 2x2, которую это
+             заменяет. Статус сервиса больше не циферблат: он общий на все
+             аккаунты и уехал в строку статуса. -->
+        <Border x:Name="PanelBorder" Background="{x:Static views:Theme.PanelBackgroundBrush}">
+            <Grid x:Name="DialGrid" HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
 
         <!-- Плашка поверх циферблатов, когда их цифрам нельзя доверять
@@ -111,29 +100,28 @@
             </StackPanel>
         </Border>
 
-        <!-- Hover-хедер: глаз (скрыть) и замок (лок позиции). Виден только
-             при наведении на панель — WidgetRootView.swift:110-166. -->
-        <Border x:Name="HeaderBorder" VerticalAlignment="Top" Background="{x:Static views:Theme.OverlayBackgroundBrush}"
-                Opacity="0" IsHitTestVisible="False">
-            <Grid x:Name="HeaderGrid">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+        <!-- Edit toolbar: one strip, only while EditMode is on, in a band
+             OUTSIDE the rounded panel — above it when the screen has room,
+             below it otherwise. The window grows by the band and moves its own
+             top to match, so the panel keeps the size and the position it has
+             with the mode off; overlaying it is what the deleted hover header
+             got wrong, and reserving space INSIDE it is what the user saw as
+             the panel resizing and then sitting elsewhere.
 
-                <Button x:Name="EyeButton" Grid.Column="0" Style="{StaticResource IconButtonStyle}"
-                        Foreground="{x:Static views:Theme.DimBrush}"
-                        FontFamily="Segoe MDL2 Assets" Content="&#xE890;"
-                        ToolTip="Hide widget — bring it back from the tray icon"
-                        Click="EyeButton_Click"/>
+             The buttons ride on a rounded pill of the panel's own background,
+             because outside the panel there is nothing behind them: dim glyphs
+             on bare wallpaper are a strip you cannot find. The pill is sized to
+             the button row and padded out of the band's existing gap, so it
+             costs no geometry.
 
-                <Button x:Name="LockButton" Grid.Column="2" Style="{StaticResource IconButtonStyle}"
-                        Foreground="{x:Static views:Theme.DimBrush}"
-                        FontFamily="Segoe MDL2 Assets" Content="&#xE785;"
-                        ToolTip="Click to lock the widget position and size"
-                        Click="LockButton_Click"/>
-            </Grid>
+             Alignment, padding and corners come from LayoutToolbar (the side is
+             not known here), and the row/column counts from Core's
+             ToolbarMetrics, so what is drawn and what the window grew by cannot
+             disagree. -->
+        <Border x:Name="ToolbarPill" Background="{x:Static views:Theme.PanelBackgroundBrush}"
+                VerticalAlignment="Top" HorizontalAlignment="Center"
+                Visibility="Collapsed">
+            <Grid x:Name="EditToolbar"/>
         </Border>
 
         <!-- Строка статуса — молчит, пока всё в порядке (StatusLine.Text
@@ -142,5 +130,12 @@
                    FontFamily="{x:Static views:Theme.FontFamily}" FontWeight="{x:Static views:Theme.CaptionWeight}"
                    Foreground="{x:Static views:Theme.DimBrush}"
                    Visibility="Collapsed" IsHitTestVisible="False"/>
+
+        <!-- Edit-mode chrome: dashed cell outlines, the drag ghost, the target
+             highlight. A layer of its own so the normal layout never moves,
+             and a Canvas rather than the AdornerLayer because
+             RenderTargetBitmap does not draw adorners — the offscreen preview
+             would render every edit-mode PNG with the chrome missing. -->
+        <Canvas x:Name="EditLayer" IsHitTestVisible="False"/>
     </Grid>
 </UserControl>

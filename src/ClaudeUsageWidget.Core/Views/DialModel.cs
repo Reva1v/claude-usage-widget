@@ -24,10 +24,24 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     public static IReadOnlyList<DialModel> All(UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now)
     {
         var modelKey = snapshot is null ? null : ModelBuckets.Resolve(preferredModelKey, snapshot);
+
+        var fiveHour = Make("five_hour", "5H", snapshot, now);
+        var sevenDay = Make("seven_day", "7D", snapshot, now);
+
+        // A spent week makes the five-hour window the wrong thing to wait for:
+        // nothing more goes through until the WEEK resets, and a dial counting
+        // down twenty minutes answers a question nobody is asking. The
+        // percentage stays the five-hour one — only the countdown moves.
+        //
+        // The per-model bucket is a seven-day window too and deliberately does
+        // NOT do this: exhausting it closes one model, and the five-hour window
+        // still decides when the others may be used again.
+        if (IsSpent(sevenDay)) fiveHour = fiveHour with { Remaining = sevenDay.Remaining };
+
         return
         [
-            Make("five_hour", "5H", snapshot, now),
-            Make("seven_day", "7D", snapshot, now),
+            fiveHour,
+            sevenDay,
             Make(
                 modelKey ?? "",
                 modelKey is not null ? ModelBuckets.Label(modelKey) : "MODEL",
@@ -35,6 +49,55 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
                 now),
         ];
     }
+
+    /// `UsageMath.Fraction` clamps at 1, so anything the server reports at or
+    /// above 100 lands exactly here.
+    private static bool IsSpent(DialModel dial) => dial.Fraction >= 1;
+}
+
+/// One account's line on the panel: its three dials plus the 5H reset time,
+/// which at twelve dials no longer fits inside a dial centre.
+/// <param name="PlanLabel">The subscription plan, ready to draw — the view is
+/// handed the words, never the tier strings to map. Null means the fields have
+/// not been fetched for this account yet, which is NOT the same as a free plan
+/// and must draw nothing.</param>
+public sealed record AccountRow(
+    string AccountId,
+    string DisplayName,
+    IReadOnlyList<DialModel> Dials,
+    string? SessionResetsIn,
+    string? PlanLabel = null)
+{
+    /// Rows in settings order, always — the panel is a full picture, never a
+    /// ranking. An account with no snapshot keeps its row with `n/a` dials
+    /// rather than disappearing and shifting the rows below it.
+    public static IReadOnlyList<AccountRow> ForAll(
+        IReadOnlyList<AccountProfile> accounts,
+        IReadOnlyDictionary<string, UsageSnapshot?> snapshots,
+        string? preferredModelKey,
+        DateTimeOffset now) =>
+        accounts.Select(account =>
+        {
+            snapshots.TryGetValue(account.Id, out var snapshot);
+            var dials = DialModel.All(snapshot, preferredModelKey, now);
+            // Read off the dial rather than recomputed from the bucket: the
+            // band shows one time per account, and it must be the time the
+            // panel shows, including where a spent week moved it.
+            return new AccountRow(
+                account.Id, account.DisplayName, dials, dials[0].Remaining, PlanLabelFor(account));
+        }).ToList();
+
+    /// The plan, or null while nothing has been fetched for this account.
+    ///
+    /// `SubscriptionTier.Label` answers "what plan is this", and its answer for
+    /// an organization that claims nothing is Free — correct there and wrong
+    /// here, because an account whose fields were never read claims nothing for
+    /// a different reason. All three absent is the sentinel: the picker fills
+    /// the capability list (empty at worst) for any organization it found.
+    private static string? PlanLabelFor(AccountProfile account) =>
+        account.Capabilities is null && account.RateLimitTier is null && account.RavenType is null
+            ? null
+            : SubscriptionTier.Label(account.Capabilities, account.RateLimitTier, account.RavenType);
 }
 
 /// The line under the dials. Null means everything is fine and the widget
