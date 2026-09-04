@@ -262,7 +262,14 @@ public partial class App : System.Windows.Application
             // Продолжение обязано вернуться на UI-поток: и WebView2, и рендер
             // по Changed живут на Dispatcher'е.
             _ = Task.Delay(offset).ContinueWith(
-                _ => FireAndForget(() => RefreshAccountAsync(account)),
+                _ =>
+                {
+                    // The account may have been removed while this waited: its
+                    // profile is already cleared, and a poll now would only log a
+                    // sign-in failure for a row that no longer exists.
+                    if (!_accounts.Contains(account)) return;
+                    FireAndForget(() => RefreshAccountAsync(account));
+                },
                 TaskScheduler.FromCurrentSynchronizationContext());
         }
 
@@ -635,7 +642,7 @@ public partial class App : System.Windows.Application
     /// остальных трёх из-за одного упершегося.
     private UsageRetryState? LoadRetryState(string accountId)
     {
-        var account = _settings!.Load().Accounts.FirstOrDefault(a => a.Id == accountId);
+        var account = _settings!.Load().Account(accountId);
         return account?.RetryPausedUntil is { } until
             ? new UsageRetryState(until, account.ConsecutiveRateLimits)
             : null;
@@ -643,17 +650,11 @@ public partial class App : System.Windows.Application
 
     private void SaveRetryState(string accountId, UsageRetryState? state)
     {
-        var data = _settings!.Load();
-        _settings.Save(data with
+        _settings!.Save(_settings.Load().WithAccount(accountId, a => a with
         {
-            Accounts = data.Accounts.Select(a => a.Id == accountId
-                ? a with
-                {
-                    RetryPausedUntil = state?.Until,
-                    ConsecutiveRateLimits = state?.ConsecutiveRateLimits ?? 0,
-                }
-                : a).ToList(),
-        });
+            RetryPausedUntil = state?.Until,
+            ConsecutiveRateLimits = state?.ConsecutiveRateLimits ?? 0,
+        }));
     }
 
     /// Собирает список аккаунтов из настроек. На самом первом запуске файла
@@ -811,18 +812,13 @@ public partial class App : System.Windows.Application
     private void OnAccountRenameRequested(string accountId)
     {
         var data = _settings!.Load();
-        var account = data.Accounts.FirstOrDefault(a => a.Id == accountId);
+        var account = data.Account(accountId);
         if (account is null) return;
 
         var name = RenameWindow.Ask(account.DisplayName);
         if (string.IsNullOrWhiteSpace(name)) return;
 
-        _settings.Save(data with
-        {
-            Accounts = data.Accounts
-                .Select(a => a.Id == accountId ? a with { DisplayName = name.Trim() } : a)
-                .ToList(),
-        });
+        _settings.Save(data.WithAccount(accountId, a => a with { DisplayName = name.Trim() }));
         ReloadAccountProfiles();
         RenderWidget();
         RefreshTrayMenuState();

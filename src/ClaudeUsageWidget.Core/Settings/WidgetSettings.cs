@@ -86,6 +86,15 @@ public sealed record WidgetSettingsData
 
     public IReadOnlyList<AccountProfile> Accounts { get; init; } = [];
 
+    /// The account with this id, or null when there is none.
+    public AccountProfile? Account(string id) => Accounts.FirstOrDefault(a => a.Id == id);
+
+    /// A copy with one account rewritten, everything else untouched. An id
+    /// that is no longer in the list (removed while a poll was in flight)
+    /// changes nothing rather than resurrecting the account.
+    public WidgetSettingsData WithAccount(string id, Func<AccountProfile, AccountProfile> update) =>
+        this with { Accounts = Accounts.Select(a => a.Id == id ? update(a) : a).ToList() };
+
     /// Legacy single-account fields, from before there was an account list.
     /// Read once by <see cref="SettingsMigration"/> and cleared on the first
     /// save; never written again. Do not read them anywhere else — the live

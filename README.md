@@ -128,7 +128,7 @@ Off by default. Set `ExportDirectory` in
 figures to `<ExportDirectory>\<account name>.widget.json` after each successful
 refresh — the name lowercased, with anything outside `a-z 0-9 _ -` turned into
 `-`. A single account's `ExportPath` still overrides the directory for that
-account. Keys in this file are PascalCase, as written.
+account. Keys in this file are camelCase, as shown.
 
 ```json
 { "fiveHour": 62, "sevenDay": 30, "atMs": 1787748230070,

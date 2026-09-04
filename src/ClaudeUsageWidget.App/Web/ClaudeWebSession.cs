@@ -37,8 +37,8 @@ public sealed class ClaudeWebSession
     // NULL — особый и нужный случай: «неявный профиль по умолчанию». Именованные
     // профили WebView2 складывает в `EBWebView\WV2Profile_<имя>`, а профиль,
     // созданный БЕЗ опций, — в `EBWebView\Default`, и добраться до второго по
-    // имени нельзя никаким `ProfileName` (измерено 2026-08-26, запись в
-    // docs/superpowers/plans/2026-08-26-multi-account-verification/profile-probe.md).
+    // имени нельзя никаким `ProfileName` (измерено 2026-08-26 на живом
+    // WebView2 Runtime).
     // Всё, что было залогинено до мультиаккаунта, лежит именно там — поэтому
     // мигрированный аккаунт остаётся на неявном профиле и переживает
     // обновление, а каждый следующий получает именованный.
@@ -107,20 +107,13 @@ public sealed class ClaudeWebSession
 
     /// Организация у каждого аккаунта своя: до мультиаккаунта это поле лежало
     /// на верхнем уровне настроек просто потому, что аккаунт был один.
-    private AccountProfile? LoadProfile() =>
-        _settings.Load().Accounts.FirstOrDefault(a => a.Id == _accountId);
+    private AccountProfile? LoadProfile() => _settings.Load().Account(_accountId);
 
     private string? LoadOrganizationId() => LoadProfile()?.OrganizationId;
 
     private void SaveOrganizationId(string? organizationId)
     {
-        var data = _settings.Load();
-        _settings.Save(data with
-        {
-            Accounts = data.Accounts
-                .Select(a => a.Id == _accountId ? a with { OrganizationId = organizationId } : a)
-                .ToList(),
-        });
+        _settings.Save(_settings.Load().WithAccount(_accountId, a => a with { OrganizationId = organizationId }));
     }
 
     /// The three subscription fields, written together in ONE save so the
@@ -132,20 +125,12 @@ public sealed class ClaudeWebSession
     /// than by asking claude.ai for a body that is already on disk.
     private void SaveSubscriptionFields(OrganizationFields fields)
     {
-        var data = _settings.Load();
-        _settings.Save(data with
+        _settings.Save(_settings.Load().WithAccount(_accountId, a => a with
         {
-            Accounts = data.Accounts
-                .Select(a => a.Id == _accountId
-                    ? a with
-                    {
-                        Capabilities = fields.Capabilities,
-                        RateLimitTier = fields.RateLimitTier,
-                        RavenType = fields.RavenType,
-                    }
-                    : a)
-                .ToList(),
-        });
+            Capabilities = fields.Capabilities,
+            RateLimitTier = fields.RateLimitTier,
+            RavenType = fields.RavenType,
+        }));
     }
 
     /// One organizations fetch per RUN for the backfill below, whatever it
@@ -644,31 +629,11 @@ public sealed class ClaudeWebSession
         exStyle |= Win32.WsExNoActivate | Win32.WsExToolWindow;
         Win32.SetWindowLongPtr(hwnd, Win32.GwlExStyle, (nint)exStyle);
 
-        // ИНВАРИАНТ: контроллер логина и контроллер фетча одного аккаунта
-        // обязаны создаваться с ОДНИМ И ТЕМ ЖЕ ProfileName. Разойдутся — вход
-        // пройдёт успешно, а циферблаты этого аккаунта останутся пустыми
-        // навсегда, и никакой ошибки не будет. Поэтому имя не только задаётся,
-        // но и читается обратно ниже.
-        CoreWebView2Controller controller;
-        if (_profileName is null)
-        {
-            controller = await environment.CreateCoreWebView2ControllerAsync(hwnd).ConfigureAwait(true);
-        }
-        else
-        {
-            var options = environment.CreateCoreWebView2ControllerOptions();
-            options.ProfileName = _profileName;
-            controller = await environment.CreateCoreWebView2ControllerAsync(hwnd, options).ConfigureAwait(true);
-
-            // ProfileName регистронезависим — он ложится в путь на диске.
-            if (!string.Equals(controller.CoreWebView2.Profile.ProfileName, _profileName,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    $"WebView2 gave profile '{controller.CoreWebView2.Profile.ProfileName}' " +
-                    $"for account '{_accountId}', expected '{_profileName}'.");
-            }
-        }
+        // The same profile the login window uses, through the one helper that
+        // keeps the two identical — see the invariant on WebViewEnvironment.
+        var controller = await WebViewEnvironment
+            .CreateControllerAsync(environment, hwnd, _profileName, _accountId)
+            .ConfigureAwait(true);
 
         controller.IsVisible = false;
         // В поле, не в локальную переменную — см. doc-comment у

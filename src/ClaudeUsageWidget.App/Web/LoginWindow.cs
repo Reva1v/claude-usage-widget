@@ -191,20 +191,14 @@ public sealed class LoginWindow : Window
 
     private async Task InitializeAsync()
     {
-        // null — неявный профиль по умолчанию, ровно как у фетч-контроллера
-        // этой же сессии; см. комментарий к ClaudeWebSession._profileName.
-        if (_profileName is null)
-        {
-            await _webView.EnsureCoreWebView2Async(_environment).ConfigureAwait(true);
-        }
-        else
-        {
-            var controllerOptions = _environment.CreateCoreWebView2ControllerOptions();
-            controllerOptions.ProfileName = _profileName;
-            await _webView.EnsureCoreWebView2Async(_environment, controllerOptions).ConfigureAwait(true);
-        }
+        // The same profile as this account's fetch controller, through the one
+        // helper that keeps the two identical — see the invariant on
+        // WebViewEnvironment. Null options mean the implicit default profile.
+        await _webView.EnsureCoreWebView2Async(
+            _environment, WebViewEnvironment.ControllerOptionsFor(_environment, _profileName)).ConfigureAwait(true);
         if (_closed) return;
         var core = _webView.CoreWebView2;
+        WebViewEnvironment.VerifyProfile(core, _profileName, _accountLabel);
 
         // Порт сброса browsing data перед логином — ClaudeWebSession.swift:200-209.
         // Отклонённый Turnstile-челлендж переживает пересоздание окна и
