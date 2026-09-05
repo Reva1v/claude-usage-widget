@@ -81,8 +81,15 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
             return;
         }
 
-        // 60 % track over the panel, inset by the menu's own padding, 4 px radius.
-        var rect = new Rectangle(4, 0, e.Item.Width - 8, e.Item.Height);
+        // 60 % track over the panel, 4 px radius, inset evenly.
+        //
+        // The width comes from the MENU, not from the item: WinForms lays an
+        // item out a few pixels wider than the window it sits in, so insetting
+        // the item's own width left an even margin on the left and none on the
+        // right (the user, 2026-09-05).
+        var width = e.Item.Owner?.ClientRectangle.Width ?? e.Item.Width;
+        const int inset = 3;
+        var rect = new Rectangle(inset, 0, width - inset * 2, e.Item.Height);
         if (rect.Width <= 0 || rect.Height <= 0) return;
 
         using var path = Rounded(rect, 4);

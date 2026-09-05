@@ -92,6 +92,16 @@ internal static class MenuPreview
         Save(menu, Path.Combine(dir, "menu.png"));
         SaveZoom(menu, Path.Combine(dir, "menu-zoom.png"));
 
+        // One row selected, so the hover highlight is in the picture: it is
+        // drawn by the renderer and nothing else shows whether it sits evenly
+        // in the row.
+        if (menu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(i => i.Text == "Layout") is { } hovered)
+        {
+            hovered.Select();
+            Application.DoEvents();
+            Save(menu, Path.Combine(dir, "menu-hover.png"));
+        }
+
         // The submenu's own window, and how far its left edge sits from the
         // parent menu's right edge: the gap the user sees.
         if (menu.Items.OfType<ToolStripMenuItem>().FirstOrDefault(i => i.Text == "Accounts") is { } accounts)
