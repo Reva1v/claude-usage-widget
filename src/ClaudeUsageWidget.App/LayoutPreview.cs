@@ -314,7 +314,7 @@ internal static class LayoutPreview
         LayoutPass(view);
 
         // Default's LaidOut is [Name, 5H, 7D, Model] over a 2x2 grid, so 0 and 3
-        // are opposite corners: the name and the OPUS dial change places, which
+        // are opposite corners: the name and the FABLE dial change places, which
         // no eye can mistake for "nothing happened". SetContent runs again
         // because BuildGrid discarded the visuals along with the hosts.
         var swapped = WidgetLayout.Default with { Block = BlockLayout.Default.SwapCells(0, 3) };
@@ -335,9 +335,9 @@ internal static class LayoutPreview
     /// `CellHit.Cell`. With the name Above, `LaidOut` is the three DIALS while
     /// `Order[0]` is still the name.
     ///
-    /// So cell 0 is 5H and cell 2 is OPUS: the ghost is a 60% copy of the 5H
+    /// So cell 0 is 5H and cell 2 is FABLE: the ghost is a 60% copy of the 5H
     /// dial parked at the MIDPOINT of the two, and the solid target outline sits
-    /// on OPUS. The name line above the dials carries no dashed outline at all —
+    /// on FABLE. The name line above the dials carries no dashed outline at all —
     /// it is not a laid-out cell and was never registered as a host. The
     /// confusion this would catch reads as chrome on the name line, a target on
     /// the middle dial, or no chrome whatsoever.
@@ -473,7 +473,7 @@ internal static class LayoutPreview
 
     /// The panel with the model dial switched off. Three cells where the
     /// default has four, so the block is a 2x2 grid with a hole — the name, 5H
-    /// and 7D, and no third dial. What the eye checks: no empty ring where OPUS
+    /// and 7D, and no third dial. What the eye checks: no empty ring where FABLE
     /// was, and the panel the same WIDTH as the default (the grid shape does not
     /// change, only what fills it).
     private static void RenderModelHidden(
@@ -658,6 +658,8 @@ internal static class LayoutPreview
         {
             ["five_hour"] = new(five, now.AddMinutes(72)),
             ["seven_day"] = new(seven, now.AddDays(3)),
-            ["seven_day_opus"] = new(model, now.AddDays(3)),
+            // Fable, not Opus: it is first in ModelBuckets.Preference, so it is
+            // the dial a current account actually shows.
+            ["seven_day_fable"] = new(model, now.AddDays(3)),
         });
 }

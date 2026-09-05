@@ -42,13 +42,13 @@ internal static class MenuPreview
         using var tray = new TrayIcon();
         tray.SyncMenuState(new TrayMenuState(
             TrayMetricKey: "five_hour",
-            AvailableModelBuckets: ["seven_day_opus", "seven_day_fable"],
+            AvailableModelBuckets: ["seven_day_fable", "seven_day_opus"],
             SelectedModelBucket: null,
             ShowOnDesktop: true,
             PositionLocked: false,
             TaskbarBandEnabled: true,
             BandPosition: "tray",
-            ResolvedModelLabel: "OPUS",
+            ResolvedModelLabel: "FABLE",
             Accounts:
             [
                 new AccountProfile("a1", "personal", null, null, 0),
