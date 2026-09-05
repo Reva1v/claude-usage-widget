@@ -5,8 +5,9 @@
 [![License](https://img.shields.io/github/license/Reva1v/claude-usage-widget?color=yellow)](LICENSE)
 
 A Windows desktop widget showing Claude Code subscription limits and Claude's
-own service status, as four dials in a square panel pinned to the bottom of
-the desktop.
+own service status, as dials in a panel pinned to the bottom of the desktop —
+one square of four dials for a single account, a row per account for several.
+Dark and light, following Windows or pinned to either.
 
 This is a Windows port (C#/.NET 8 + WPF) of
 [TadelUnso/claude-usage-widget](https://github.com/TadelUnso/claude-usage-widget),
@@ -33,17 +34,27 @@ taskbar's left corner or next to the tray icons:
 
 ## The panel
 
-Two named views, switched from the tray's **Layout** submenu:
+Two named views, switched from the tray's **Layout** submenu.
 
-- **Classic** — a 2x2 grid of dials with the service status as the fourth
-  dial and no account name. The default with a single account, which is the
-  usual case.
-- **Account rows** — one row per account, up to four: the account's name and
-  three dials, with the service status as a line under the rows. The default
-  once a second account is added. Rows follow the order accounts were added,
-  never their usage: this is a full picture, not a ranking. An account whose
-  refresh failed keeps its row with `n/a` dials rather than vanishing and
-  shifting the rows below it.
+**Classic** — a 2x2 grid of dials with the service status as the fourth dial
+and no account name. The default with a single account, which is the usual
+case. Both palettes below; the theme is a tray setting and follows Windows by
+default.
+
+<p align="center">
+  <img src="assets/themes.png" width="540" alt="The classic panel in the dark and light themes">
+</p>
+
+**Account rows** — one row per account, up to four: the account's name and
+three dials, with the service status as a line under the rows. The default
+once a second account is added. Rows follow the order accounts were added,
+never their usage: this is a full picture, not a ranking. An account whose
+refresh failed keeps its row with `n/a` dials rather than vanishing and
+shifting the rows below it.
+
+<p align="center">
+  <img src="assets/account-rows.png" width="380" alt="The panel with one row per account">
+</p>
 
 Each dial reads its percentage with the time until that window resets
 underneath. The three usage dials:
@@ -69,7 +80,14 @@ limitations below).
 
 ## Tray icon
 
-The tray icon shows a live figure and opens a menu with:
+The tray icon shows a live figure and opens a menu drawn in the widget's own
+palette, which follows the theme with everything else:
+
+<p align="center">
+  <img src="assets/tray-menu.png" width="600" alt="The tray menu in the dark and light themes">
+</p>
+
+The menu has:
 
 - **Claude Usage Widget vX.Y.Z — GitHub** — opens the repository
 - **Report an Issue**
@@ -186,8 +204,10 @@ with it.
 default panel size and the per-cycle request count stops being polite to an
 undocumented endpoint. It is one constant (`AccountLimits.Max`) if you disagree.
 
-**The screenshots above show the single-account panel.** They predate the
-per-account rows.
+**The panel screenshots are rendered, not photographed.** `CUW_RENDER_PREVIEW`
+draws them offscreen (see Development), so they show the panel exactly as it
+paints rather than whatever wallpaper was behind it that day. The desktop shot
+at the top is a real screenshot.
 
 **The per-model dial depends on your plan.** A separate weekly limit for a
 specific model is a Max and Team Premium arrangement. On Pro and Team
