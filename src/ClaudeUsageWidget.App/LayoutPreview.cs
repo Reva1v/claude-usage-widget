@@ -569,11 +569,14 @@ internal static class LayoutPreview
         content.SetMetrics(entries, ThemeKind.Dark);
         content.Measure(new Size(double.PositiveInfinity, TaskbarHeight));
 
+        // The plate stands in for the taskbar, and on a real one the figures
+        // never sit against an edge — there is a corner or a tray icon beside
+        // them. 28 px each side is roughly what that looks like.
         var plate = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(0x20, 0x20, 0x20)),
             Child = content,
-            Width = content.DesiredSize.Width + 24,
+            Width = content.DesiredSize.Width + 56,
             Height = TaskbarHeight,
         };
 
