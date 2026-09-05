@@ -69,11 +69,15 @@ public sealed record Palette(
         Info: Color.FromRgb(0x8A, 0xB4, 0xE6));
 
     /// The same hues one step darker and more saturated: the dark pastels
-    /// wash out on an off-white panel. Starting values from the spec; tuned
-    /// on the preview PNGs.
+    /// wash out on an off-white panel.
+    ///
+    /// Track is the unfilled part of a dial, and it is darker than the spec's
+    /// first guess (#D3D8E3): against this panel that was a contrast ratio of
+    /// 1.3 and the rings all but vanished (the user, 2026-09-05). #B7BECC is
+    /// 1.7, the same as the dark theme's track against its own panel.
     public static readonly Palette Light = new(
         Panel: Color.FromRgb(0xF3, 0xF5, 0xF9),
-        Track: Color.FromRgb(0xD3, 0xD8, 0xE3),
+        Track: Color.FromRgb(0xB7, 0xBE, 0xCC),
         Text: Color.FromRgb(0x26, 0x2B, 0x3A),
         Dim: Color.FromRgb(0x6C, 0x73, 0x88),
         Accent: Color.FromRgb(0x4E, 0x9A, 0x4C),
