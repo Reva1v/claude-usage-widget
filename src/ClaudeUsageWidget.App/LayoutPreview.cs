@@ -7,6 +7,8 @@ using ClaudeUsageWidget.App.Windows;
 using ClaudeUsageWidget.Core;
 using Size = System.Windows.Size;
 using Rect = System.Windows.Rect;
+// WinForms has a HorizontalAlignment of its own; this file means WPF's.
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
 // UseWindowsForms makes System.Windows.Forms and System.Drawing globally
 // visible — Border and Color have namesakes there.
 using Border = System.Windows.Controls.Border;
@@ -553,31 +555,39 @@ internal static class LayoutPreview
     /// taskbar is covered — so it needs the same offscreen treatment as the
     /// panel. The dark plate stands in for a taskbar: the text is white with a
     /// shadow and would be invisible on a transparent PNG.
-    /// Both band views, each on a plate the colour of the taskbar it docks to:
-    /// the three metrics of one account, and one group per account.
+    /// Both band views, each on a strip the colour and height of the taskbar
+    /// it docks to, and at the end of the taskbar it would sit at: the three
+    /// metrics at the left corner, the per-account groups beside the tray.
+    /// A strip the full width of the picture is what makes it read as a
+    /// taskbar rather than as a floating black box.
     private static void RenderBand(string dir, IReadOnlyList<AccountRow> rows)
     {
-        SaveBand(dir, "band-metrics.png", BandText.MetricEntries(rows[0]));
-        SaveBand(dir, "band.png", BandText.Entries(rows));
+        SaveBand(dir, "band-metrics.png", BandText.MetricEntries(rows[0]), HorizontalAlignment.Left);
+        SaveBand(dir, "band.png", BandText.Entries(rows), HorizontalAlignment.Right);
     }
 
-    private static void SaveBand(string dir, string name, IReadOnlyList<BandEntry> entries)
+    private static void SaveBand(
+        string dir, string name, IReadOnlyList<BandEntry> entries, HorizontalAlignment align)
     {
         const double TaskbarHeight = 40;
+        const double StripWidth = 560;
 
-        var content = new TaskbarBandContent();
+        var content = new TaskbarBandContent
+        {
+            HorizontalAlignment = align,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         content.SetMetrics(entries, ThemeKind.Dark);
         content.Measure(new Size(double.PositiveInfinity, TaskbarHeight));
 
-        // The plate stands in for the taskbar, and on a real one the figures
-        // never sit against an edge — there is a corner or a tray icon beside
-        // them. 28 px each side is roughly what that looks like.
         var plate = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(0x20, 0x20, 0x20)),
             Child = content,
-            Width = content.DesiredSize.Width + 56,
+            Width = StripWidth,
             Height = TaskbarHeight,
+            // The clearance the figures keep from the end of a real taskbar.
+            Padding = new Thickness(18, 0, 18, 0),
         };
 
         LayoutPass(plate);

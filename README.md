@@ -25,7 +25,7 @@ taskbar's left corner or next to the tray icons. It shows one account's three
 figures, or every account's 5-hour window, whichever you pick:
 
 <p align="center">
-  <img src="assets/taskbar-band.png" width="320" alt="The taskbar band in both of its views">
+  <img src="assets/taskbar-band.png" width="560" alt="The taskbar band at the left corner and beside the tray, in both of its views">
 </p>
 
 
