@@ -16,10 +16,19 @@ internal static class MenuChrome
         FontFamily.Families.Any(f => f.Name == "Segoe UI Variable Text") ? "Segoe UI Variable Text" : "Segoe UI",
         9f, GraphicsUnit.Point);
 
-    /// Breathing room around the item stack, and inside every item — WinForms'
-    /// own defaults are tighter than the panel this menu belongs to.
-    private static readonly Padding MenuPadding = new(6, 6, 6, 6);
-    private static readonly Padding ItemPadding = new(12, 6, 12, 6);
+    /// Vertical only, and small. A Windows 11 menu row is about 28 px at 96
+    /// DPI; WinForms' own row measures 20, so 4 above and below lands on it.
+    ///
+    /// Horizontal padding is 2, not the 12 this started with: an item's width
+    /// includes it, and WinForms places a submenu off the ITEM's right edge
+    /// while the menu window is only as wide as its text column — so every
+    /// pixel of horizontal item padding became a pixel of gap between the menu
+    /// and its submenu (23 px at padding 12, 3 px at 2 — measured with
+    /// CUW_RENDER_MENU; moving the submenu from its Opened handler does not
+    /// stick, WinForms recomputes the position). The text's own inset comes
+    /// from the image gutter, which is wide enough on its own.
+    private static readonly Padding MenuPadding = new(2, 2, 2, 2);
+    private static readonly Padding ItemPadding = new(2, 4, 2, 4);
 
     /// Font, padding and the renderer, once, before the first Show — item
     /// heights are measured with whatever font is set at that moment.

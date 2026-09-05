@@ -74,6 +74,7 @@ public partial class App : System.Windows.Application
         Theme.PublishResources();
 
         LayoutPreview.RunIfRequested();
+        Tray.MenuPreview.RunIfRequested();
 
         // One instance per session. Live debugging (2026-08-06) caught TWO
         // instances running at once (zombies from earlier `dotnet run`
