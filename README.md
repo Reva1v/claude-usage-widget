@@ -17,7 +17,7 @@ flow, refresh cycle and settings persistence are all reimplemented for
 Windows.
 
 <p align="center">
-  <img src="assets/widget.png" width="300" alt="Claude Usage Widget's panel">
+  <img src="assets/widget.png" width="356" alt="Claude Usage Widget's panel">
 </p>
 
 The optional taskbar band — transparent, just the figures, docked to the
@@ -39,7 +39,7 @@ case. Both palettes below; the theme is a tray setting and follows Windows by
 default.
 
 <p align="center">
-  <img src="assets/themes.png" width="540" alt="The classic panel in the dark and light themes">
+  <img src="assets/themes.png" width="660" alt="The classic panel in the dark and light themes">
 </p>
 
 **Account rows** — one row per account, up to four: the account's name and
@@ -50,7 +50,7 @@ refresh failed keeps its row with `n/a` dials rather than vanishing and
 shifting the rows below it.
 
 <p align="center">
-  <img src="assets/account-rows.png" width="380" alt="The panel with one row per account">
+  <img src="assets/account-rows.png" width="500" alt="The panel with one row per account">
 </p>
 
 Each dial reads its percentage with the time until that window resets
@@ -204,7 +204,8 @@ undocumented endpoint. It is one constant (`AccountLimits.Max`) if you disagree.
 **Every screenshot here is rendered, not photographed.** `CUW_RENDER_PREVIEW`
 and `CUW_RENDER_MENU` draw them offscreen (see Development), so they show the
 widget exactly as it paints — no wallpaper, no cursor, and identical every
-time. The panel is translucent in real use; the background behind it in these
+time. The panel pictures are drawn at twice the pixel density and shown at
+half their width, which is what keeps them sharp on a 2x display. The panel is translucent in real use; the background behind it in these
 pictures is a flat gradient standing in for a desktop.
 
 **The per-model dial depends on your plan.** A separate weekly limit for a

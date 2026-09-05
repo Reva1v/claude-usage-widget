@@ -155,6 +155,11 @@ internal static class LayoutPreview
 
         RenderBand(dir, AccountRow.ForAll(accounts, snapshots, null, now));
 
+        RenderHero(dir, "hero-classic.png", PanelViews.LayoutFor(PanelView.Classic), StatusMode.Cell,
+            accounts.Take(1).ToList(), snapshots, now, 300);
+        RenderHero(dir, "hero-rows.png", WidgetLayout.Default, StatusMode.Line,
+            accounts.Take(3).ToList(), snapshots, now, 260);
+
     }
 
     /// Edit-mode chrome offscreen. `UpdateLayout` first and the mode second:
@@ -555,6 +560,30 @@ internal static class LayoutPreview
     /// taskbar is covered — so it needs the same offscreen treatment as the
     /// panel. The dark plate stands in for a taskbar: the text is white with a
     /// shadow and would be invisible on a transparent PNG.
+    /// The pictures the README uses, at a larger panel size and twice the
+    /// pixel density: shown at half their width they stay sharp on an
+    /// ordinary display and on a 2x one, which is the one thing a screenshot
+    /// scaled up by the browser can never be.
+    private static void RenderHero(
+        string dir,
+        string name,
+        WidgetLayout layout,
+        StatusMode statusMode,
+        IReadOnlyList<AccountProfile> accounts,
+        IReadOnlyDictionary<string, UsageSnapshot?> snapshots,
+        DateTimeOffset now,
+        double side)
+    {
+        var view = new WidgetRootView();
+        view.ApplyLayout(layout, statusMode, ModelDial.Shown, PlanLine.Hidden, accounts.Count, side);
+        view.SetContent(
+            AccountRow.ForAll(accounts, snapshots, null, now),
+            ServiceStatus.Operational, dimmed: false, statusLine: null, notice: null);
+
+        LayoutPass(view);
+        Save(view, Path.Combine(dir, name), 2);
+    }
+
     /// Both band views, each on a strip the colour and height of the taskbar
     /// it docks to, and at the end of the taskbar it would sit at: the three
     /// metrics at the left corner, the per-account groups beside the tray.
@@ -604,10 +633,18 @@ internal static class LayoutPreview
         element.UpdateLayout();
     }
 
-    private static void Save(FrameworkElement element, string path)
+    private static void Save(FrameworkElement element, string path) => Save(element, path, 1);
+
+    /// <param name="scale">Pixels per DIP. WPF draws vectors, so 2 gives a
+    /// genuinely sharper picture rather than an enlarged one — which is what
+    /// a README wants: a browser asked to show a 300 px image at 300 px is
+    /// fine until the reader has a 2x display, and one asked to enlarge a
+    /// small image is soft on every display.</param>
+    private static void Save(FrameworkElement element, string path, double scale)
     {
         var bmp = new RenderTargetBitmap(
-            (int)Math.Ceiling(element.Width), (int)Math.Ceiling(element.Height), 96, 96, PixelFormats.Pbgra32);
+            (int)Math.Ceiling(element.Width * scale), (int)Math.Ceiling(element.Height * scale),
+            96 * scale, 96 * scale, PixelFormats.Pbgra32);
         bmp.Render(element);
 
         var encoder = new PngBitmapEncoder();
