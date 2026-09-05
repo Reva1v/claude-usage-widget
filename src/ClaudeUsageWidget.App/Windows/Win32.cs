@@ -222,6 +222,19 @@ internal static class Win32
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(nint hwnd, uint dwAttribute, out uint pvAttribute, int cbAttribute);
 
+    /// DWMWA_WINDOW_CORNER_PREFERENCE / DWMWCP_ROUND — the Windows 11 (build
+    /// 22000+) way to ask DWM for rounded corners on a window we don't own the
+    /// frame of. Used by the tray menu (MenuChrome); on Windows 10 the call
+    /// simply returns a failure HRESULT and the menu stays square.
+    public const int DwmwaWindowCornerPreference = 33;
+    public const int DwmwcpRound = 2;
+
+    /// PreserveSig — the HRESULT comes back as the return value instead of
+    /// being turned into a COMException: a rounded corner is cosmetic, and the
+    /// caller ignores the failure rather than handling an exception.
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    public static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
+
     /// true if DWM genuinely isn't painting this window. A failed query is
     /// read as "not cloaked": better to err on the side of trusting the
     /// window is real than to ignore an actual fullscreen game.

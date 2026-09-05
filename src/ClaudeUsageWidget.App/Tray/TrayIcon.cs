@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using ClaudeUsageWidget.App.Views;
 using ClaudeUsageWidget.App.Windows;
 using ClaudeUsageWidget.Core;
 
@@ -44,6 +45,10 @@ public sealed class TrayIcon : IDisposable
     private readonly NotifyIcon _notifyIcon;
     private Icon? _currentIcon;
     private bool _disposed;
+
+    /// Built in BuildMenu, before the menu is handed to MenuChrome; kept so a
+    /// theme change can repaint the open-next-time menu without rebuilding it.
+    private WidgetMenuRenderer _renderer = null!;
 
     private ToolStripMenuItem _trayShowsSessionItem = null!;
     private ToolStripMenuItem _trayShowsWeekItem = null!;
@@ -135,6 +140,12 @@ public sealed class TrayIcon : IDisposable
     public TrayIcon()
     {
         Menu = BuildMenu();
+
+        // Icons need Menu.DeviceDpi, so they come after the property is set —
+        // not from inside BuildMenu, where Menu is still null.
+        ApplyMenuIcons();
+        Theme.Changed += OnThemeChanged;
+
         Menu.Opening += (_, _) => MenuOpening?.Invoke();
 
         _notifyIcon = new NotifyIcon
@@ -229,6 +240,10 @@ public sealed class TrayIcon : IDisposable
             });
         }
 
+        // Rebuilt items are new objects: without this they would carry
+        // WinForms' own padding next to items that carry ours.
+        MenuChrome.StyleItems(_modelLimitMenu.DropDownItems, _renderer);
+
         _showOnDesktopItem.Checked = state.ShowOnDesktop;
         _taskbarBandItem.Checked = state.TaskbarBandEnabled;
         _bandPositionLeftItem.Checked = state.BandPosition == "left";
@@ -298,6 +313,12 @@ public sealed class TrayIcon : IDisposable
             Enabled = !atLimit,
             ToolTipText = atLimit ? $"The widget shows at most {AccountLimits.Max} accounts." : null,
         });
+
+        // Same reason as in SyncMenuState: these items were created after
+        // MenuChrome.Attach ran, so their spacing is set here. The per-account
+        // Rename/Sign out dropdowns are already filled at this point, so the
+        // recursion reaches them too.
+        MenuChrome.StyleItems(_accountsMenu.DropDownItems, _renderer);
     }
 
     /// The two named views, then the editor. Every flow, the name placement
@@ -332,11 +353,14 @@ public sealed class TrayIcon : IDisposable
                 ? "Toolbar on the panel: flows, name, status, lock, hide. Drag a cell onto another to swap them."
                 : "Show the widget on the desktop first.",
         });
+
+        MenuChrome.StyleItems(_layoutMenu.DropDownItems, _renderer);
     }
 
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
+        _renderer = new WidgetMenuRenderer(Theme.Current);
 
         // Order and separators — like the macOS menu (ClaudeUsageWidgetApp.swift:33-58):
         // GitHub/issues first, then refresh/sign-in, then toggles, then quit.
@@ -470,7 +494,71 @@ public sealed class TrayIcon : IDisposable
                 submenu.DropDown.Closing += CancelCloseOnItemClick;
         }
 
+        // Last, with every item in place: the font decides the item heights,
+        // and they are measured the first time the menu is shown.
+        MenuChrome.Attach(menu, _renderer);
+
+        // These three submenus are empty until the first SyncMenuState, so
+        // Attach's own recursion cannot reach their dropdown windows — the
+        // containers persist, only their items are rebuilt, so hooking them up
+        // once here is enough.
+        MenuChrome.StyleDropDown(_modelLimitMenu.DropDown, _renderer);
+        MenuChrome.StyleDropDown(_accountsMenu.DropDown, _renderer);
+        MenuChrome.StyleDropDown(_layoutMenu.DropDown, _renderer);
+
         return menu;
+    }
+
+    /// <summary>
+    /// Segoe MDL2 icons for the top-level items; submenus stay text. Dim
+    /// glyphs at the menu's DPI, regenerated when the palette changes.
+    /// </summary>
+    ///
+    /// The glyphs are written as escapes rather than as the characters
+    /// themselves: they are private-use codepoints that show up as empty boxes
+    /// in most editors and diffs, and a stray edit there would be invisible.
+    private void ApplyMenuIcons()
+    {
+        var dim = Theme.Current.Dim;
+        var ink = System.Drawing.Color.FromArgb(dim.R, dim.G, dim.B);
+
+        // DeviceDpi is the menu's DPI at creation time; the glyphs are not
+        // re-rendered when the window is dragged to a monitor with another
+        // scale (the tray menu is short-lived and reopens near the tray).
+        var px = (int)Math.Round(16 * Menu.DeviceDpi / 96.0);
+        System.Drawing.Bitmap G(string glyph) => MenuGlyphs.Render(glyph, ink, px);
+
+        var byText = Menu.Items.OfType<ToolStripMenuItem>().ToDictionary(i => i.Text ?? "", i => i);
+        void Set(string text, string glyph)
+        {
+            if (byText.TryGetValue(text, out var item)) item.Image = G(glyph);
+        }
+
+        Set($"Claude Usage Widget v{CoreInfo.Version} — GitHub", "\uE774");
+        Set("Report an Issue", "\uEBE8");
+        Set("Refresh now", "\uE72C");
+        Set("Sign in to Claude.ai…", "\uE77B");
+        Set("Tray shows", "\uE7C4");
+        Set("Accounts", "\uE716");
+        Set("Layout", "\uE80A");
+        Set("Theme", "\uE790");
+        Set("Show on desktop", "\uE7F4");
+        Set("Taskbar band", "\uE90E");
+        Set("Band position", "\uE8A0");
+        Set("Band shows", "\uE7B3");
+        Set("Lock position", "\uE72E");
+        Set("Launch at login", "\uE7E8");
+        Set("Quit Claude Usage Widget", "\uE8BB");
+    }
+
+    /// The menu is not rebuilt on a theme change: the renderer reads the new
+    /// palette on its next paint, and only the cached icon bitmaps have to be
+    /// redrawn in the new dim colour.
+    private void OnThemeChanged()
+    {
+        _renderer.Palette = Theme.Current;
+        ApplyMenuIcons();
+        Menu.Invalidate();
     }
 
     /// ItemClicked is the only close reason we suppress; it doesn't delay
@@ -516,6 +604,8 @@ public sealed class TrayIcon : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
+        Theme.Changed -= OnThemeChanged;
 
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
