@@ -534,7 +534,7 @@ internal static class LayoutPreview
         const double TaskbarHeight = 40;
 
         var content = new TaskbarBandContent();
-        content.SetMetrics(BandText.Entries(rows));
+        content.SetMetrics(BandText.Entries(rows), ThemeKind.Dark);
         content.Measure(new Size(double.PositiveInfinity, TaskbarHeight));
 
         var plate = new Border

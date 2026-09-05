@@ -451,7 +451,7 @@ public partial class App : System.Windows.Application
         var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now);
         var metrics = TrayText.Metrics(models);
 
-        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value));
+        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value, SystemTheme.TaskbarKind));
     }
 
     /// <summary>Pulls the current state into the tray menu (checkboxes,
@@ -666,7 +666,7 @@ public partial class App : System.Windows.Application
         var entries = BandViews.Resolve(data.BandView, data.Accounts.Count) == BandView.Metrics && trayRow is not null
             ? BandText.MetricEntries(trayRow)
             : BandText.Entries(rows);
-        _bandWindow.Render(entries);
+        _bandWindow.Render(entries, SystemTheme.TaskbarKind);
     }
 
     private void RenderWidget()

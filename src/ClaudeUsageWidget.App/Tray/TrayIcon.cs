@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using ClaudeUsageWidget.App.Windows;
 using ClaudeUsageWidget.Core;
 
 namespace ClaudeUsageWidget.App.Tray;
@@ -142,7 +143,7 @@ public sealed class TrayIcon : IDisposable
             Visible = true,
         };
 
-        SetIcon(TrayIconRenderer.Render(null));
+        SetIcon(TrayIconRenderer.Render(null, SystemTheme.TaskbarKind));
         SetTooltip("Claude Usage Widget");
     }
 

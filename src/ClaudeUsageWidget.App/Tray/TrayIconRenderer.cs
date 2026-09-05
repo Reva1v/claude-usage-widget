@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Windows.Forms;
+using ClaudeUsageWidget.Core;
 
 namespace ClaudeUsageWidget.App.Tray;
 
@@ -9,7 +10,7 @@ namespace ClaudeUsageWidget.App.Tray;
 /// Draws the tray's live digit — the value of the selected metric without
 /// the "%" sign (on an icon the size of
 /// <see cref="SystemInformation.SmallIconSize"/> the percent sign squeezes
-/// the digits themselves into illegibility), white on transparent,
+/// the digits themselves into illegibility), ink on transparent,
 /// GDI+ → <see cref="Icon.FromHandle"/>.
 /// </summary>
 ///
@@ -17,8 +18,8 @@ namespace ClaudeUsageWidget.App.Tray;
 /// that used to live in TrayIcon.CreateRingIcon (a port of the
 /// monochrome-ring from <c>ClaudeUsageWidgetApp.swift:17-30</c>; there it's
 /// a template image that macOS itself tints for the light/dark menu bar —
-/// the Win32 tray has no such auto-tinting, and the vast majority of tray
-/// panels are dark, so white is hardcoded directly, not black).
+/// the Win32 tray has no such auto-tinting, so the caller passes in the
+/// taskbar's own light/dark mode and the ink follows it directly).
 public static class TrayIconRenderer
 {
     /// <summary>
@@ -29,9 +30,14 @@ public static class TrayIconRenderer
     /// TrayIcon.CreateRingIcon used to have — see
     /// TrayIcon.SetIcon/Dispose).
     /// </summary>
-    public static Icon Render(string? valueText)
+    public static Icon Render(string? valueText, ThemeKind taskbar)
     {
         var size = SystemInformation.SmallIconSize;
+
+        // White on Windows' dark taskbar, near-black on its light one — the
+        // taskbar's own mode, never the widget's theme: the icon is drawn onto
+        // the taskbar and readability there is the only thing that matters.
+        var ink = taskbar == ThemeKind.Light ? Color.FromArgb(0x1B, 0x1B, 0x1B) : Color.White;
 
         using var bitmap = new Bitmap(size.Width, size.Height);
         using (var g = Graphics.FromImage(bitmap))
@@ -46,11 +52,11 @@ public static class TrayIconRenderer
             var digits = DigitsOnly(valueText);
             if (digits is null)
             {
-                DrawRing(g, size);
+                DrawRing(g, size, ink);
             }
             else
             {
-                DrawDigits(g, size, digits);
+                DrawDigits(g, size, digits, ink);
             }
         }
 
@@ -74,14 +80,14 @@ public static class TrayIconRenderer
         return digits.Any(char.IsDigit) ? digits : null;
     }
 
-    private static void DrawRing(Graphics g, Size size)
+    private static void DrawRing(Graphics g, Size size, Color ink)
     {
-        using var pen = new Pen(Color.White, 2f);
+        using var pen = new Pen(ink, 2f);
         const float inset = 2f;
         g.DrawEllipse(pen, inset, inset, size.Width - inset * 2, size.Height - inset * 2);
     }
 
-    private static void DrawDigits(Graphics g, Size size, string digits)
+    private static void DrawDigits(Graphics g, Size size, string digits, Color ink)
     {
         using var format = new StringFormat
         {
@@ -90,8 +96,9 @@ public static class TrayIconRenderer
         };
 
         using var font = FitFont(g, digits, size);
+        using var brush = new SolidBrush(ink);
         var rect = new RectangleF(0, 0, size.Width, size.Height);
-        g.DrawString(digits, font, Brushes.White, rect, format);
+        g.DrawString(digits, font, brush, rect, format);
     }
 
     /// <summary>

@@ -372,9 +372,9 @@ public sealed class TaskbarBandWindow : Window
 
     /// <summary>Redraws the columns from fresh data — one
     /// <see cref="BandEntry"/> per account, from BandText.Entries.</summary>
-    public void Render(IReadOnlyList<BandEntry> entries)
+    public void Render(IReadOnlyList<BandEntry> entries, ThemeKind taskbar)
     {
-        _content.SetMetrics(entries);
+        _content.SetMetrics(entries, taskbar);
 
         // Fresh data almost always changes a column's WIDTH — "—" becomes
         // "0% 1d 3h" — and the window's width is set only by RepositionCore,
@@ -1002,14 +1002,29 @@ internal sealed class TaskbarBandContent : FrameworkElement
     /// stop reading as one thing.
     private const double PairSpacingDip = 5;
 
-    private static readonly SolidColorBrush ShadowBrush = Freeze(new SolidColorBrush(Color.FromArgb(200, 0, 0, 0)));
+    // White on Windows' dark taskbar, near-black on its light one — the same
+    // taskbar-mode rule TrayIconRenderer follows, kept in sync via
+    // App.OnSystemThemeChanged.
+    private static readonly SolidColorBrush DarkInk = Freeze(new SolidColorBrush(Color.FromRgb(0x1B, 0x1B, 0x1B)));
+    private static readonly SolidColorBrush DarkShadow = Freeze(new SolidColorBrush(Color.FromArgb(200, 0, 0, 0)));
+    private static readonly SolidColorBrush LightShadow = Freeze(new SolidColorBrush(Color.FromArgb(160, 255, 255, 255)));
 
     private IReadOnlyList<BandEntry> _entries = Array.Empty<BandEntry>();
     private double[] _columnWidths = Array.Empty<double>();
+    private ThemeKind _taskbar = ThemeKind.Dark;
 
-    public void SetMetrics(IReadOnlyList<BandEntry> entries)
+    private SolidColorBrush Ink => _taskbar == ThemeKind.Light ? DarkInk : (SolidColorBrush)Brushes.White;
+
+    /// Ink on a light taskbar needs a light shadow to stay visible (the same
+    /// reason DarkShadow exists for the dark taskbar's white ink) — otherwise
+    /// the shadow becomes indistinguishable from the near-black text it sits
+    /// behind.
+    private SolidColorBrush Shadow => _taskbar == ThemeKind.Light ? LightShadow : DarkShadow;
+
+    public void SetMetrics(IReadOnlyList<BandEntry> entries, ThemeKind taskbar)
     {
         _entries = entries;
+        _taskbar = taskbar;
         InvalidateMeasure();
         InvalidateVisual();
     }
@@ -1073,10 +1088,10 @@ internal sealed class TaskbarBandContent : FrameworkElement
             var center = new Point(x + width / 2, y);
 
             // The shadow is the same column, same sizes, one pixel down and
-            // right, drawn FIRST — the white text lands on top of it.
-            Draw(dc, Build(entry, ShadowBrush, pixelsPerDip),
+            // right, drawn FIRST — the ink lands on top of it.
+            Draw(dc, Build(entry, Shadow, pixelsPerDip),
                 new Point(center.X + ShadowOffsetDip, center.Y + ShadowOffsetDip));
-            Draw(dc, Build(entry, Brushes.White, pixelsPerDip), center);
+            Draw(dc, Build(entry, Ink, pixelsPerDip), center);
 
             x += width + ColumnSpacingDip;
         }
