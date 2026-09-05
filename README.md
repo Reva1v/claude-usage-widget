@@ -17,18 +17,15 @@ flow, refresh cycle and settings persistence are all reimplemented for
 Windows.
 
 <p align="center">
-  <img src="assets/widget3.png" width="202" alt="Claude Usage Widget on the Windows desktop">
+  <img src="assets/widget.png" width="300" alt="Claude Usage Widget's panel">
 </p>
 
 The optional taskbar band — transparent, just the figures, docked to the
-taskbar's left corner or next to the tray icons:
+taskbar's left corner or next to the tray icons. It shows one account's three
+figures, or every account's 5-hour window, whichever you pick:
 
 <p align="center">
-  <img src="assets/taskbar-band2.png" alt="Taskbar band showing 5H, 7D and per-model usage">
-</p>
-
-<p align="center">
-  <img src="assets/taskbar-band3.png" alt="Taskbar band docked next to the tray icons">
+  <img src="assets/taskbar-band.png" width="320" alt="The taskbar band in both of its views">
 </p>
 
 
@@ -204,10 +201,11 @@ with it.
 default panel size and the per-cycle request count stops being polite to an
 undocumented endpoint. It is one constant (`AccountLimits.Max`) if you disagree.
 
-**The panel screenshots are rendered, not photographed.** `CUW_RENDER_PREVIEW`
-draws them offscreen (see Development), so they show the panel exactly as it
-paints rather than whatever wallpaper was behind it that day. The desktop shot
-at the top is a real screenshot.
+**Every screenshot here is rendered, not photographed.** `CUW_RENDER_PREVIEW`
+and `CUW_RENDER_MENU` draw them offscreen (see Development), so they show the
+widget exactly as it paints — no wallpaper, no cursor, and identical every
+time. The panel is translucent in real use; the background behind it in these
+pictures is a flat gradient standing in for a desktop.
 
 **The per-model dial depends on your plan.** A separate weekly limit for a
 specific model is a Max and Team Premium arrangement. On Pro and Team

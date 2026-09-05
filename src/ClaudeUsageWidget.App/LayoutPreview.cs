@@ -553,12 +553,20 @@ internal static class LayoutPreview
     /// taskbar is covered — so it needs the same offscreen treatment as the
     /// panel. The dark plate stands in for a taskbar: the text is white with a
     /// shadow and would be invisible on a transparent PNG.
+    /// Both band views, each on a plate the colour of the taskbar it docks to:
+    /// the three metrics of one account, and one group per account.
     private static void RenderBand(string dir, IReadOnlyList<AccountRow> rows)
+    {
+        SaveBand(dir, "band-metrics.png", BandText.MetricEntries(rows[0]));
+        SaveBand(dir, "band.png", BandText.Entries(rows));
+    }
+
+    private static void SaveBand(string dir, string name, IReadOnlyList<BandEntry> entries)
     {
         const double TaskbarHeight = 40;
 
         var content = new TaskbarBandContent();
-        content.SetMetrics(BandText.Entries(rows), ThemeKind.Dark);
+        content.SetMetrics(entries, ThemeKind.Dark);
         content.Measure(new Size(double.PositiveInfinity, TaskbarHeight));
 
         var plate = new Border
@@ -571,7 +579,7 @@ internal static class LayoutPreview
 
         LayoutPass(plate);
 
-        Save(plate, Path.Combine(dir, "band.png"));
+        Save(plate, Path.Combine(dir, name));
     }
 
     /// Measure, arrange, settle — at the element's own declared size, which
