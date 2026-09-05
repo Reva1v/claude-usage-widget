@@ -118,20 +118,16 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
         DrawTick(e);
     }
 
-    /// A checked item shows the tick INSTEAD of its icon: with ShowCheckMargin
-    /// off both the check and the image land in the same slot, and WinForms
-    /// paints the image last. Drawing the tick here rather than merely skipping
-    /// the image keeps the item from coming out blank should a WinForms build
-    /// take the other branch and never call OnRenderItemCheck at all — at worst
-    /// the same pixels are painted twice.
+    /// A checked item shows the tick INSTEAD of its icon. ToolStripMenuItem.OnPaint
+    /// draws the check whenever CheckState isn't Unchecked — with ShowCheckMargin
+    /// off it just moves it into the image rectangle — and then draws the Image
+    /// over it unconditionally; suppressing the image here is what leaves the tick
+    /// visible. Suppressing rather than redrawing the tick matters: two passes of
+    /// the same anti-aliased glyph composite into a heavier one than the radio
+    /// items in the submenus get, which have no image at all.
     protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e)
     {
-        if (e.Item is ToolStripMenuItem { Checked: true })
-        {
-            DrawTick(e);
-            return;
-        }
-
+        if (e.Item is ToolStripMenuItem { Checked: true }) return;
         base.OnRenderItemImage(e);
     }
 
