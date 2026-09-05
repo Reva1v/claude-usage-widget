@@ -93,6 +93,10 @@ The tray icon shows a live figure and opens a menu with:
   the account name sits, the subscription-plan line, the status line or dial,
   the per-model dial, lock and hide. Hovering the panel shows a header with
   the same eye, a pencil that enters this mode, and the lock
+- **Theme** — **System** (follows Windows' app theme, the default), **Dark**
+  or **Light**. The panel and this menu switch at once, no restart. The tray
+  icon's digits and the taskbar band follow the taskbar's own colour instead,
+  so they stay readable whatever the theme.
 - **Show on desktop** — hide the panel while keeping the tray icon
 - **Taskbar band** — toggle the optional taskbar-docked figure display
 - **Band position** — dock the band near the tray icons or in the taskbar's
@@ -248,7 +252,7 @@ covering it — this does not depend on the state of anyone's desktop.
 $env:CUW_RENDER_PREVIEW = "$env:TEMP\cuw-layouts"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-329 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
+336 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
 
 ## Architecture
 
