@@ -85,10 +85,12 @@ internal static class MenuPreview
         foreach (var item in menu.Items.OfType<ToolStripItem>())
         {
             var label = item is ToolStripSeparator ? "———" : item.Text;
-            report.AppendLine($"  h={item.Height,3}  w={item.Width,4}  x={item.Bounds.X,3}  {label}");
+            report.AppendLine(
+                $"  h={item.Height,3}  w={item.Width,4}  content={item.ContentRectangle}  pad={item.Padding}  {label}");
         }
 
         Save(menu, Path.Combine(dir, "menu.png"));
+        SaveZoom(menu, Path.Combine(dir, "menu-zoom.png"));
 
         // The submenu's own window, and how far its left edge sits from the
         // parent menu's right edge: the gap the user sees.
@@ -112,6 +114,44 @@ internal static class MenuPreview
 
         menu.Close();
         owner.Close();
+    }
+
+    /// The first few rows at 4x, with a red line across the middle of each one:
+    /// a couple of pixels of vertical drift in the text is invisible at 1x and
+    /// obvious here, and the line is the answer to "is it centred".
+    private static void SaveZoom(ToolStrip strip, string path)
+    {
+        const int rows = 3;
+        const int zoom = 4;
+
+        var items = strip.Items.OfType<ToolStripItem>().Take(rows).ToList();
+        if (items.Count == 0) return;
+
+        var height = items.Sum(i => i.Height);
+        using var full = new Bitmap(Math.Max(strip.Width, 1), Math.Max(strip.Height, 1));
+        strip.DrawToBitmap(full, new Rectangle(0, 0, full.Width, full.Height));
+
+        using var zoomed = new Bitmap(full.Width * zoom, height * zoom);
+        using (var g = Graphics.FromImage(zoomed))
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            g.DrawImage(full,
+                new Rectangle(0, 0, zoomed.Width, zoomed.Height),
+                new Rectangle(0, 0, full.Width, height),
+                GraphicsUnit.Pixel);
+
+            using var pen = new Pen(Color.Red, 1);
+            var y = 0;
+            foreach (var item in items)
+            {
+                var middle = (y + item.Height / 2.0) * zoom;
+                g.DrawLine(pen, 0, (float)middle, zoomed.Width, (float)middle);
+                y += item.Height;
+            }
+        }
+
+        zoomed.Save(path, ImageFormat.Png);
     }
 
     /// DrawToBitmap rather than a screen grab: the menu is shown off-screen on

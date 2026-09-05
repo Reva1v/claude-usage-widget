@@ -94,7 +94,21 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
     protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
     {
         e.TextColor = e.Item.Enabled ? Text : Dim;
+        e.TextRectangle = CenteredInRow(e.TextRectangle, e.Item);
         base.OnRenderItemText(e);
+    }
+
+    /// Vertical padding on a menu item grows the row from the BOTTOM: WinForms
+    /// puts the content at top + Padding.Top and lets the rest of the height
+    /// fall away below it, so a row padded 4 and 4 draws its text about 3 px
+    /// above the middle (measured at 4x with CUW_RENDER_MENU). Recentring the
+    /// rectangle against the row's own height puts text, icons and ticks on
+    /// one line whatever the padding, the font or the DPI.
+    private static Rectangle CenteredInRow(Rectangle box, ToolStripItem item)
+    {
+        if (box.Height <= 0 || box.Height >= item.Height) return box;
+
+        return box with { Y = (item.Height - box.Height) / 2 };
     }
 
     protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
@@ -128,7 +142,12 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
     protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e)
     {
         if (e.Item is ToolStripMenuItem { Checked: true }) return;
-        base.OnRenderItemImage(e);
+        if (e.Image is null) return;
+
+        // Drawn here rather than through the base renderer so the icon takes
+        // the same recentring as the text — see CenteredInRow.
+        var box = CenteredInRow(e.ImageRectangle, e.Item);
+        e.Graphics.DrawImage(e.Image, box.X, box.Y, box.Width, box.Height);
     }
 
     private void DrawTick(ToolStripItemImageRenderEventArgs e)
@@ -139,6 +158,7 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
         // E73E — CheckMark in Segoe MDL2 Assets. Written as an escape because
         // the glyph is a private-use codepoint that shows as an empty box (or
         // nothing) in most editors and diffs.
+        box = CenteredInRow(box, e.Item);
         var glyph = MenuGlyphs.Render("\uE73E", Accent, box.Height);
         var x = box.X + (box.Width - glyph.Width) / 2;
         var y = box.Y + (box.Height - glyph.Height) / 2;
