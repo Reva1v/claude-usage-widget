@@ -27,7 +27,21 @@ public sealed class RenameWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ShowInTaskbar = false;
 
-        _input = new TextBox { Text = current, Margin = new Thickness(12, 12, 12, 6) };
+        // The dialog is modal and short-lived, so it takes the palette once and
+        // never subscribes to Theme.Changed. Opaque, not the panel's translucent
+        // brush: this is an ordinary window over the desktop, not the glass.
+        Background = Views.Theme.Current.PanelOpaqueBrush;
+        Foreground = Views.Theme.Current.TextBrush;
+
+        _input = new TextBox
+        {
+            Text = current,
+            Margin = new Thickness(12, 12, 12, 6),
+            Background = Views.Theme.Current.PanelOpaqueBrush,
+            Foreground = Views.Theme.Current.TextBrush,
+            BorderBrush = Views.Theme.Current.TrackBrush,
+            CaretBrush = Views.Theme.Current.TextBrush,
+        };
         _input.SelectAll();
 
         var ok = new Button { Content = "Rename", IsDefault = true, Width = 90, Margin = new Thickness(6) };

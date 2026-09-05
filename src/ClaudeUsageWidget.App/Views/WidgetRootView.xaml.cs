@@ -249,6 +249,42 @@ public partial class WidgetRootView : UserControl
         BuildToolbar();
         RefreshToolbar();
         RefreshHeaderLock();
+
+        // Only while the panel is on screen: the handler list is static, and a
+        // view that was replaced must not keep repainting from it.
+        Loaded += (_, _) => Theme.Changed += ApplyThemeColours;
+        Unloaded += (_, _) => Theme.Changed -= ApplyThemeColours;
+    }
+
+    /// Everything this class assigned from the palette by hand — the toolbar
+    /// glyphs, the header's lock, the edit-mode outlines and the account
+    /// labels — reads the palette again. The XAML parts follow their
+    /// DynamicResource keys on their own and the dials repaint themselves.
+    /// Nothing here measures or arranges: a swap repaints, it never moves the
+    /// panel or rebuilds the grid.
+    private void ApplyThemeColours()
+    {
+        foreach (var button in _toolbarButtons) button.Foreground = Theme.DimBrush;
+
+        // Both lock glyphs are written as a LOCAL Foreground, which outranks
+        // the XAML DynamicResource, so they have to be re-stated by hand.
+        RefreshToolbar();
+        RefreshHeaderLock();
+
+        foreach (var block in _blocks)
+        {
+            if (block.Name is { } name) name.Foreground = Theme.TextBrush;
+            if (block.Plan is { } plan) plan.Foreground = Theme.DimBrush;
+        }
+
+        // The outlines carry a frozen brush and RefreshEditChrome redraws only
+        // when the bounds moved — which a repaint never does. Forgetting the
+        // remembered bounds is what makes it rebuild them in the new colour.
+        if (_editMode)
+        {
+            _chromeBounds.Clear();
+            RefreshEditChrome();
+        }
     }
 
     /// Glyphs are Segoe MDL2 Assets, the font the deleted eye and lock already

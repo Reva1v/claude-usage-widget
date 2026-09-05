@@ -18,6 +18,16 @@ public abstract class DialControlBase : FrameworkElement
     /// The dial's design size, at which the stroke widths and fonts are defined.
     protected const double DesignSize = 68;
 
+    /// Both dials read the palette inside OnRender, so a repaint is the whole
+    /// theme change. The handler lives only while the control is on screen:
+    /// the grid is rebuilt on every layout change, and a static event would
+    /// otherwise keep every discarded dial alive.
+    protected DialControlBase()
+    {
+        Loaded += (_, _) => Theme.Changed += InvalidateVisual;
+        Unloaded += (_, _) => Theme.Changed -= InvalidateVisual;
+    }
+
     /// A WPF screen grows downward along Y, so cos/sin in ordinary degrees
     /// already give clockwise motion — exactly what's needed for the angle
     /// from DialGeometry.AngleDegrees (−90° = 12 o'clock, then clockwise).
