@@ -26,7 +26,8 @@ public sealed record TrayMenuState(
     IReadOnlyList<AccountProfile> Accounts,
     string? TrayAccountId,
     PanelView? PanelView,
-    BandView BandView);
+    BandView BandView,
+    ThemeChoice Theme);
 
 /// <summary>
 /// The application's icon in the system tray and its context menu.
@@ -57,6 +58,9 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _layoutMenu = null!;
     private ToolStripMenuItem _bandViewMetricsItem = null!;
     private ToolStripMenuItem _bandViewAccountsItem = null!;
+    private ToolStripMenuItem _themeSystemItem = null!;
+    private ToolStripMenuItem _themeDarkItem = null!;
+    private ToolStripMenuItem _themeLightItem = null!;
 
     /// <summary>The "Refresh now" menu item.</summary>
     public event Action? RefreshRequested;
@@ -106,6 +110,9 @@ public sealed class TrayIcon : IDisposable
 
     /// "Band shows" — what the taskbar band draws.
     public event Action<BandView>? BandViewSelected;
+
+    /// Theme — System / Dark / Light.
+    public event Action<ThemeChoice>? ThemeSelected;
 
     /// What the tick beside `Edit layout…` should show. Set before the menu is
     /// opened, like the rest of the Layout submenu's state.
@@ -179,6 +186,9 @@ public sealed class TrayIcon : IDisposable
         SyncLayoutMenu(state.ShowOnDesktop, state.PanelView);
         _bandViewMetricsItem.Checked = state.BandView == BandView.Metrics;
         _bandViewAccountsItem.Checked = state.BandView == BandView.Accounts;
+        _themeSystemItem.Checked = state.Theme == ThemeChoice.System;
+        _themeDarkItem.Checked = state.Theme == ThemeChoice.Dark;
+        _themeLightItem.Checked = state.Theme == ThemeChoice.Light;
 
         var metricIndex = MetricIndex(state.TrayMetricKey);
         _trayShowsSessionItem.Checked = metricIndex == 0;
@@ -377,6 +387,20 @@ public sealed class TrayIcon : IDisposable
         // way into it.
         _layoutMenu = new ToolStripMenuItem("Layout");
         menu.Items.Add(_layoutMenu);
+
+        // A look setting, like Layout, so it sits beside it. System follows
+        // Windows' "Default app mode" live.
+        var themeMenu = new ToolStripMenuItem("Theme");
+        _themeSystemItem = new ToolStripMenuItem("System", null, (_, _) => ThemeSelected?.Invoke(ThemeChoice.System))
+        {
+            ToolTipText = "Follow Windows' app theme.",
+        };
+        _themeDarkItem = new ToolStripMenuItem("Dark", null, (_, _) => ThemeSelected?.Invoke(ThemeChoice.Dark));
+        _themeLightItem = new ToolStripMenuItem("Light", null, (_, _) => ThemeSelected?.Invoke(ThemeChoice.Light));
+        themeMenu.DropDownItems.Add(_themeSystemItem);
+        themeMenu.DropDownItems.Add(_themeDarkItem);
+        themeMenu.DropDownItems.Add(_themeLightItem);
+        menu.Items.Add(themeMenu);
 
         _showOnDesktopItem = new ToolStripMenuItem("Show on desktop");
         _showOnDesktopItem.Click += (_, _) => ShowOnDesktopToggled?.Invoke(!_showOnDesktopItem.Checked);

@@ -135,6 +135,7 @@ public partial class App : System.Windows.Application
         _trayIcon.EditLayoutToggled += () => SetEditingLayout(!_editingLayout);
         _trayIcon.PanelViewSelected += OnPanelViewSelected;
         _trayIcon.BandViewSelected += OnBandViewSelected;
+        _trayIcon.ThemeSelected += OnThemeSelected;
         _trayIcon.AccountAddRequested += OnAccountAddRequested;
         _trayIcon.AccountRenameRequested += OnAccountRenameRequested;
         _trayIcon.AccountRemoveRequested += id => FireAndForget(() => OnAccountRemoveRequestedAsync(id));
@@ -145,6 +146,12 @@ public partial class App : System.Windows.Application
         _settings = new SettingsStore(settingsPath);
 
         BuildAccounts();
+
+        // The palette before any window exists, and live tracking of Windows'
+        // switch for as long as the app runs.
+        ApplyTheme();
+        SystemTheme.Changed += OnSystemThemeChanged;
+        SystemTheme.Start(Dispatcher);
 
         _statusStore = new StatusStore(new StatusApi().FetchAsync);
         _statusStore.Changed += OnStoresChanged;
@@ -481,7 +488,8 @@ public partial class App : System.Windows.Application
             data.Accounts,
             data.TrayAccountId,
             PanelViews.Current(resolved.Layout, resolved.Status),
-            BandViews.Resolve(data.BandView, data.Accounts.Count)));
+            BandViews.Resolve(data.BandView, data.Accounts.Count),
+            data.Theme ?? ThemeChoice.System));
     }
 
     private void OnTrayMetricSelected(string key)
@@ -550,6 +558,31 @@ public partial class App : System.Windows.Application
         _settings!.Save(_settings.Load() with { BandView = view });
         RenderTaskbarBand();
         RefreshTrayMenuState();
+    }
+
+    /// The one place the theme setting meets the system: everything that
+    /// draws reads Theme.Current, so this is a resolve and an Apply.
+    private void ApplyTheme()
+    {
+        var choice = _settings!.Load().Theme;
+        Theme.Apply(ThemeChoices.Resolve(choice, SystemTheme.AppsKind));
+    }
+
+    private void OnThemeSelected(ThemeChoice choice)
+    {
+        _settings!.Save(_settings.Load() with { Theme = choice });
+        ApplyTheme();
+        RefreshTrayMenuState();
+    }
+
+    /// Already on the dispatcher — SystemTheme hops before raising. The
+    /// taskbar-mode consumers (icon digits, band text) redraw here too; the
+    /// theme itself only changes when the setting is System.
+    private void OnSystemThemeChanged()
+    {
+        ApplyTheme();
+        RefreshTrayIcon();
+        RenderTaskbarBand();
     }
 
     /// A named view is a preset over the same two settings the toolbar edits;
@@ -954,6 +987,7 @@ public partial class App : System.Windows.Application
         // A static event — not unsubscribing means keeping App alive in
         // SystemEvents' subscribers longer than needed.
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemTheme.Stop();
         _refreshTimer?.Stop();
 
         // NotifyIcon visually outlives the process until the next mouse
