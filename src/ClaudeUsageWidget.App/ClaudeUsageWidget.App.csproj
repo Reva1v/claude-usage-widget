@@ -20,7 +20,7 @@
     <!-- The exe's icon (Start menu/Explorer/taskbar). It does not set the tray
          icon — that one is drawn dynamically with a live number (TrayIconRenderer). -->
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
-    <Version>0.2.5</Version>
+    <Version>0.2.6</Version>
     <AssemblyTitle>Claude Usage Widget</AssemblyTitle>
     <!-- WFAC010 suggests ApplicationHighDpiMode/SetHighDpiMode — APIs from the
          WinForms-application world. Here the host process is WPF, WinForms is used
