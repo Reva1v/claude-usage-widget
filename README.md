@@ -244,12 +244,21 @@ dotnet test
 ```
 
 Set `CUW_RENDER_PREVIEW` to a directory and the app renders every layout
-combination to PNG there and exits instead of starting. The panel sits behind
-application windows on purpose, so a desktop screenshot shows whatever is
-covering it — this does not depend on the state of anyone's desktop.
+combination to PNG there — once per palette, into `dark\` and `light\` — and
+exits instead of starting. The panel sits behind application windows on
+purpose, so a desktop screenshot shows whatever is covering it — this does not
+depend on the state of anyone's desktop.
 
 ```powershell
 $env:CUW_RENDER_PREVIEW = "$env:TEMP\cuw-layouts"; dotnet run --project src/ClaudeUsageWidget.App
+```
+
+`CUW_RENDER_MENU` does the same for the tray menu: it shows the menu offscreen
+and writes `menu.png`, `submenu.png` and a `metrics.txt` of the measurements
+(row height, menu size, the gap before a submenu) for both palettes.
+
+```powershell
+$env:CUW_RENDER_MENU = "$env:TEMP\cuw-menu"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
 336 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
