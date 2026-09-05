@@ -74,6 +74,31 @@ internal static class LayoutPreview
                   Block = BlockLayout.Default with { Flow = LayoutFlow.Grid, Name = NamePlacement.Hidden } }, 2),
         };
 
+        // Every case in both palettes, into a folder each: the light values
+        // are judged against the same PNGs the dark ones are, and a repaint
+        // that only works in one theme shows up here rather than on the
+        // desktop.
+        foreach (var kind in new[] { ThemeKind.Dark, ThemeKind.Light })
+        {
+            Theme.Apply(kind);
+            var themeDir = Path.Combine(dir, kind.ToString().ToLowerInvariant());
+            Directory.CreateDirectory(themeDir);
+            RenderAll(themeDir, accounts, snapshots, cases, now);
+        }
+
+        Environment.Exit(0);
+    }
+
+    /// Everything the preview draws, into one directory. Called once per
+    /// palette; nothing in here depends on which one is active — the views
+    /// read Theme.Current as they paint.
+    private static void RenderAll(
+        string dir,
+        AccountProfile[] accounts,
+        Dictionary<string, UsageSnapshot?> snapshots,
+        (string Name, WidgetLayout Layout, int Accounts)[] cases,
+        DateTimeOffset now)
+    {
         foreach (var (name, layout, count) in cases)
         {
             var view = new WidgetRootView();
@@ -128,7 +153,6 @@ internal static class LayoutPreview
 
         RenderBand(dir, AccountRow.ForAll(accounts, snapshots, null, now));
 
-        Environment.Exit(0);
     }
 
     /// Edit-mode chrome offscreen. `UpdateLayout` first and the mode second:
