@@ -27,14 +27,31 @@ internal static class MenuGlyphs
 
         var bitmap = new Bitmap(sizePx, sizePx);
         using (var g = Graphics.FromImage(bitmap))
-        using (var font = new Font("Segoe MDL2 Assets", sizePx * 0.72f, GraphicsUnit.Pixel))
+        using (var family = new FontFamily("Segoe MDL2 Assets"))
         using (var brush = new SolidBrush(ink))
-        using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+        using (var path = new GraphicsPath())
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             g.Clear(Color.Transparent);
-            g.DrawString(glyph, font, brush, new RectangleF(0, 0, sizePx, sizePx), format);
+
+            // The glyph as an outline, then moved so its OWN bounding box is
+            // centred in the bitmap. Drawing the string centred instead lands
+            // it a pixel or so high: a text layout centres the font's line box
+            // — ascent, descent and internal leading included — and an icon
+            // glyph does not fill that box symmetrically.
+            path.AddString(glyph, family, (int)FontStyle.Regular, sizePx * 0.72f,
+                PointF.Empty, StringFormat.GenericTypographic);
+
+            var bounds = path.GetBounds();
+            if (bounds.Width > 0 && bounds.Height > 0)
+            {
+                using var move = new Matrix();
+                move.Translate(
+                    (sizePx - bounds.Width) / 2 - bounds.X,
+                    (sizePx - bounds.Height) / 2 - bounds.Y);
+                path.Transform(move);
+                g.FillPath(brush, path);
+            }
         }
 
         Cache[key] = bitmap;

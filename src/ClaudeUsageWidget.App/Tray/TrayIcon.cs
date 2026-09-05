@@ -546,6 +546,9 @@ public sealed class TrayIcon : IDisposable
         Set("Taskbar band", "\uE90E");
         Set("Band position", "\uE8A0");
         Set("Band shows", "\uE7B3");
+        // E99A is a robot — the bot item only exists on the personal branch,
+        // and Set skips a caption the menu does not have.
+        Set("Telegram bot", "\uE99A");
         Set("Lock position", "\uE72E");
         Set("Launch at login", "\uE7E8");
         Set("Quit Claude Usage Widget", "\uE8BB");

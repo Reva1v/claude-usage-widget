@@ -111,6 +111,21 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
         return box with { Y = (item.Height - box.Height) / 2 };
     }
 
+    /// The same for something drawn in the gutter — an icon or a tick — which
+    /// also has to sit in the middle of that column rather than at whatever
+    /// offset WinForms laid it out at. The gutter is the drop-down's own left
+    /// padding: ToolStripDropDownMenu widens it to hold the image margin, so
+    /// Padding.Left IS the column.
+    private static Rectangle CenteredInGutter(Rectangle box, ToolStripItem item)
+    {
+        box = CenteredInRow(box, item);
+
+        var gutter = item.Owner?.Padding.Left ?? 0;
+        if (gutter <= box.Width) return box;
+
+        return box with { X = (gutter - box.Width) / 2 };
+    }
+
     protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
     {
         // ToolStripArrowRenderEventArgs.Item is nullable (the arrow can be
@@ -146,7 +161,7 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
 
         // Drawn here rather than through the base renderer so the icon takes
         // the same recentring as the text — see CenteredInRow.
-        var box = CenteredInRow(e.ImageRectangle, e.Item);
+        var box = CenteredInGutter(e.ImageRectangle, e.Item);
         e.Graphics.DrawImage(e.Image, box.X, box.Y, box.Width, box.Height);
     }
 
@@ -158,7 +173,7 @@ internal sealed class WidgetMenuRenderer : ToolStripProfessionalRenderer
         // E73E — CheckMark in Segoe MDL2 Assets. Written as an escape because
         // the glyph is a private-use codepoint that shows as an empty box (or
         // nothing) in most editors and diffs.
-        box = CenteredInRow(box, e.Item);
+        box = CenteredInGutter(box, e.Item);
         var glyph = MenuGlyphs.Render("\uE73E", Accent, box.Height);
         var x = box.X + (box.Width - glyph.Width) / 2;
         var y = box.Y + (box.Height - glyph.Height) / 2;
