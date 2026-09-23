@@ -918,6 +918,9 @@ public partial class App : System.Windows.Application
         // second account can turn the classic square into rows.
         _widgetWindow!.RebuildLayout(_accounts.Count);
         RenderWidget();
+        // The band names every account and picks its shape by the count; no
+        // store change follows until the new account's first poll.
+        RenderTaskbarBand();
         RefreshTrayMenuState();
         // The same line the tray and the panel write before their own
         // OpenLoginWindowAsync. Without it this was the only route into the
@@ -941,6 +944,7 @@ public partial class App : System.Windows.Application
         _settings.Save(data.WithAccount(accountId, a => a with { DisplayName = name.Trim() }));
         ReloadAccountProfiles();
         RenderWidget();
+        RenderTaskbarBand();
         RefreshTrayMenuState();
     }
 
@@ -971,6 +975,7 @@ public partial class App : System.Windows.Application
 
         _widgetWindow!.RebuildLayout(_accounts.Count);
         RenderWidget();
+        RenderTaskbarBand();
         UpdateTrayTooltip();
         RefreshTrayIcon();
         RefreshTrayMenuState();
