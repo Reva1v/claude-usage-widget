@@ -18,6 +18,12 @@ public static class PanelOpacities
     public static double Resolve(double? saved) =>
         saved is { } value && !double.IsNaN(value) ? Math.Clamp(value, 0.0, 1.0) : Default;
 
+    /// The alpha the panel background is painted with. A layered WPF window lets the mouse
+    /// through every pixel whose alpha is 0, so at 0 the empty panel area stopped being
+    /// hovered and the toolbar never appeared; one step out of 255 is invisible and keeps
+    /// the area hit-testable. The setting itself (and the menu tick) stays the user's value.
+    public static double Painted(double opacity) => Math.Max(opacity, 1.0 / 255);
+
     /// Whether a saved value is one of the presets — the menu ticks the step
     /// only when the value really is that step, never the nearest one.
     public static bool IsPreset(double value, double preset) => Math.Abs(value - preset) < 0.005;

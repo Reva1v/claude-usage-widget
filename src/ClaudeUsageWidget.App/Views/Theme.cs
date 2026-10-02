@@ -56,7 +56,7 @@ public static class Theme
         Kind = kind;
         Current = Palette.For(kind);
         PanelOpacity = panelOpacity;
-        PanelBackgroundBrush = Current.PanelBrush(panelOpacity);
+        PanelBackgroundBrush = Current.PanelBrush(PanelOpacities.Painted(panelOpacity));
         PanelBackgroundBrush.Freeze();
         PublishResources();
         Changed?.Invoke();
