@@ -54,16 +54,30 @@ public sealed class ClaudeWebSession
 
     private readonly SettingsStore _settings;
 
+    /// The name to put in front of a PERSON — the login window's title and its
+    /// hint. Read from settings rather than taken from <see cref="_accountLabel"/>,
+    /// which is a snapshot from construction: the log can live with that (see
+    /// above), a window cannot. It said `account "New account"` for an account
+    /// the panel and the tray had been calling `shared` for the best part of an
+    /// hour (the owner, 2026-09-08). One read per window, not per log line.
+    private string CurrentLabel => _settings.Load().Account(_accountId)?.DisplayName ?? _accountLabel;
+
     // The single on-demand WebView2 environment for the whole process:
     // LoginWindow obtains the same one through EnsureEnvironmentAsync, so the
     // cookie obtained at sign-in lands in the very profile that
     // HasSessionCookieAsync/FetchUsageAsync later read.
     private Task<CoreWebView2Environment>? _environmentTask;
 
-    // The hidden CoreWebView2 for fetching JSON pages — one for the whole
-    // session; a separate webview per request is not created, instead
-    // accesses to this one are serialized through _fetchGate below.
+    // The hidden CoreWebView2 for fetching JSON pages — one per account at a
+    // time; a separate webview per request is not created, instead accesses
+    // to this one are serialized through _fetchGate below. It lives only while
+    // something uses it: _idle closes it a short while after the last use, and
+    // the next fetch creates it again (see FetchIdleLease).
     private Task<CoreWebView2>? _fetchWebViewTask;
+
+    // Every use of the fetch webview holds this; the last one out starts the
+    // idle delay that closes it.
+    private readonly FetchIdleLease _idle = new();
     private Window? _hiddenHost;
 
     // CRITICAL to hold a strong reference to the controller, not only to its
@@ -119,38 +133,60 @@ public sealed class ClaudeWebSession
         _settings.Save(_settings.Load().WithAccount(_accountId, a => a with { OrganizationId = organizationId }));
     }
 
-    /// The three subscription fields, written together in ONE save so the
-    /// sentinel flips atomically: everywhere else, a null capability list means
-    /// "never asked", and a half-written profile would make that a lie.
+    /// The three subscription fields plus the stamp that says when they were
+    /// read, written together in ONE save so the sentinel flips atomically:
+    /// everywhere else, a null capability list means "never asked", and a
+    /// half-written profile would make that a lie.
+    ///
+    /// The stamp is written even when the body carried no matching organization:
+    /// it records the ASK, not the answer, and that is what keeps a vanished
+    /// organization to one re-read an hour instead of one per poll. The FIELDS
+    /// are merged rather than assigned — see
+    /// <see cref="SubscriptionRefresh.Merge"/>: a refresh that learned nothing
+    /// must not blank what the last good one stored.
     ///
     /// Raw, never a label. The mapping lives in <see cref="SubscriptionTier"/>,
     /// and a wrong guess there must be fixable by shipping a new build rather
     /// than by asking claude.ai for a body that is already on disk.
     private void SaveSubscriptionFields(OrganizationFields fields)
     {
-        _settings.Save(_settings.Load().WithAccount(_accountId, a => a with
+        _settings.Save(_settings.Load().WithAccount(_accountId, a =>
         {
-            Capabilities = fields.Capabilities,
-            RateLimitTier = fields.RateLimitTier,
-            RavenType = fields.RavenType,
+            // Against the record as it is NOW, inside the one update the save
+            // writes — not against a copy read before the await.
+            var merged = SubscriptionRefresh.Merge(
+                new OrganizationFields(a.Capabilities, a.RateLimitTier, a.RavenType), fields);
+
+            return a with
+            {
+                Capabilities = merged.Capabilities,
+                RateLimitTier = merged.RateLimitTier,
+                RavenType = merged.RavenType,
+                SubscriptionFetchedAt = DateTimeOffset.Now,
+            };
         }));
     }
 
-    /// One organizations fetch per RUN for the backfill below, whatever it
-    /// found. Without it, an account whose organization has vanished from the
-    /// body would re-fetch on every poll forever: the fields would stay null,
-    /// and null is the condition being tested.
-    private bool _subscriptionFieldsFetched;
+    /// One FAILED organizations fetch per RUN, and no more — whatever it threw.
+    /// A failure stores nothing, so the cadence stamp cannot bound the retry:
+    /// without this latch an account whose organizations endpoint is broken, or
+    /// whose WebView has died, would hit it on every poll for the whole
+    /// session. A SUCCESSFUL fetch needs no flag: the stamp it writes is what
+    /// the cadence reads.
+    private bool _subscriptionFetchFailed;
 
     /// Clears cookies and cache for THIS account. Needed for "Remove" in the
     /// tray: removing an account from settings without cleaning its profile
     /// would leave it signed in — and the next account with the same id would
     /// inherit someone else's session.
-    public async Task ClearBrowsingDataAsync()
-    {
-        var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
-        await webView.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
-    }
+    public Task ClearBrowsingDataAsync() =>
+        // Through the same wrapper as every other use: it holds the idle
+        // lease, so the webview this creates is closed again afterwards.
+        RunWithFetchWebViewAsync(async webView =>
+        {
+            await webView.Profile.ClearBrowsingDataAsync().ConfigureAwait(true);
+            return true;
+        });
 
     /// Port of <c>hasSessionCookie()</c> — sessionKey on the claude.ai domain
     /// with a non-empty value.
@@ -178,15 +214,23 @@ public sealed class ClaudeWebSession
             SaveOrganizationId(organizationId);
             RecordSubscription(body, organizationId);
         }
-        else if (LoadProfile()?.Capabilities is null && !_subscriptionFieldsFetched)
+        // No profile, no refresh: the save below updates the account BY ID, so
+        // for an account no longer in settings (removed from the tray while a
+        // poll was in flight) it would write neither the fields nor the stamp —
+        // and an unstamped branch runs again on every poll.
+        else if (!_subscriptionFetchFailed && LoadProfile() is { } profile &&
+                 SubscriptionRefresh.ShouldRefresh(profile.SubscriptionFetchedAt, DateTimeOffset.Now))
         {
-            // The organization was picked before this release, so the plan
-            // fields were never stored — one extra fetch of the ORGANIZATIONS
-            // endpoint fills them in. Deliberately not the usage endpoint: that
-            // is the one the 429 budget is spent on, and this list is cheap and
-            // changes about never. Bounded to once per run by the flag, and to
-            // once ever by the fields it writes.
-            _subscriptionFieldsFetched = true;
+            // One extra fetch of the ORGANIZATIONS endpoint, on a cadence: the
+            // fields it fills describe a subscription that can CHANGE, so a
+            // stale "Team" would keep the panel wrong and keep the launcher
+            // hiding Fable for an account that has left Team. Deliberately not
+            // the usage endpoint: that is the one the 429 budget is spent on,
+            // and this list is cheap and changes about never.
+            //
+            // Bounded by the stamp RecordSubscription writes — including when
+            // the body told it nothing, which advances the stamp and KEEPS the
+            // fields already stored rather than blanking them.
             try
             {
                 var body = await FetchPageAsync("https://claude.ai/api/organizations", ct)
@@ -200,9 +244,24 @@ public sealed class ClaudeWebSession
                 // the upgrade now touches a second endpoint, and letting it
                 // through would mean a blip — or worse, a 429, which UsageStore
                 // answers by pausing the whole account — failing a poll for the
-                // sake of a label. Logged and dropped; the flag above already
-                // means it is not retried before the next launch.
-                WidgetLog.Write(_accountLabel, "organization", $"backfill-failed {ex.Error.Kind}");
+                // sake of a label. Logged and dropped, and latched: no stamp was
+                // written, so without the latch the next poll would try again.
+                _subscriptionFetchFailed = true;
+                WidgetLog.Write(_accountLabel, "organization", $"refresh-failed {ex.Error.Kind}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Anything that is not a UsageException — a disposed or dead
+                // WebView — still reaches the caller: that poll has failed and
+                // UsageStore, not this branch, decides what that means. Latched
+                // on the way out, because nothing was stored and the cadence
+                // stamp therefore cannot bound the retry.
+                //
+                // Cancellation is excluded on purpose: a poll called off at
+                // shutdown says nothing about the endpoint, and latching it
+                // would disable the refresh for the rest of the run.
+                _subscriptionFetchFailed = true;
+                throw;
             }
         }
 
@@ -231,6 +290,19 @@ public sealed class ClaudeWebSession
     private void RecordSubscription(string body, string organizationId)
     {
         var fields = OrganizationPicker.Fields(body, organizationId);
+        if (SubscriptionRefresh.LearnedNothing(fields))
+        {
+            // Not a plan, and not a Free one either: the body would not parse,
+            // or the stored organization is no longer in it. Labelling it would
+            // write `tier=Free` into the log as if it had been learned. The save
+            // still happens — it keeps the fields and advances only the stamp,
+            // which is what bounds the retry to the cadence.
+            WidgetLog.Write(_accountLabel, "organization",
+                $"refresh-unparsed {OrganizationPicker.Describe(body, organizationId)}");
+            SaveSubscriptionFields(fields);
+            return;
+        }
+
         var label = SubscriptionTier.Label(fields.Capabilities, fields.RateLimitTier, fields.RavenType);
 
         WidgetLog.Write(_accountLabel, "organization",
@@ -293,7 +365,7 @@ public sealed class ClaudeWebSession
         {
             var environment = await EnsureEnvironmentAsync().ConfigureAwait(true);
             // The same profile that the fetch reads — see the invariant in CreateFetchWebViewAsync.
-            var window = new LoginWindow(environment, _profileName, _accountLabel);
+            var window = new LoginWindow(environment, _profileName, CurrentLabel);
             window.SignedIn += OnLoginWindowSignedIn;
             window.Closed += OnLoginWindowClosed;
             _loginWindow = window;
@@ -346,6 +418,9 @@ public sealed class ClaudeWebSession
         // three-second pause would let another request in halfway through
         // our retry.
         await _fetchGate.WaitAsync(ct).ConfigureAwait(true);
+        // The lease, too, spans both attempts: the retry pause must not start
+        // the idle countdown that closes the webview.
+        _idle.Enter();
         try
         {
             for (var attempt = 1; ; attempt++)
@@ -378,6 +453,7 @@ public sealed class ClaudeWebSession
         }
         finally
         {
+            ExitIdleLease();
             _fetchGate.Release();
         }
     }
@@ -389,18 +465,67 @@ public sealed class ClaudeWebSession
     /// instead of returning the same error until the application restarts.
     private async Task<T> RunWithFetchWebViewAsync<T>(Func<CoreWebView2, Task<T>> action)
     {
-        for (var attempt = 0; ; attempt++)
+        _idle.Enter();
+        try
         {
-            var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
-            try
+            for (var attempt = 0; ; attempt++)
             {
-                return await action(webView).ConfigureAwait(true);
-            }
-            catch (Exception ex) when (attempt == 0 && IsWebViewDead(ex))
-            {
-                ResetFetchWebView();
+                var webView = await EnsureFetchWebViewAsync().ConfigureAwait(true);
+                try
+                {
+                    // Back from the idle wait (see ExitIdleLease): the page is
+                    // in use again.
+                    if (webView.MemoryUsageTargetLevel != CoreWebView2MemoryUsageTargetLevel.Normal)
+                        webView.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
+
+                    return await action(webView).ConfigureAwait(true);
+                }
+                catch (Exception ex) when (attempt == 0 && IsWebViewDead(ex))
+                {
+                    ResetFetchWebView();
+                }
             }
         }
+        finally
+        {
+            ExitIdleLease();
+        }
+    }
+
+    /// The last user out lowers the idle webview's memory target and starts
+    /// the delay after which it is closed — unless a use comes in first.
+    ///
+    /// Low, not closed at once: one refresh runs the cookie check, then the
+    /// organizations and usage pages, as separate uses. The docs pair Low with
+    /// an inactive webview and Normal with an active one, hence the flip back
+    /// in RunWithFetchWebViewAsync.
+    private void ExitIdleLease()
+    {
+        if (_idle.Exit() is not { } token) return;
+
+        if (_fetchWebViewTask is { IsCompletedSuccessfully: true } ready)
+        {
+            try
+            {
+                ready.Result.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
+            }
+            catch (Exception ex) when (IsWebViewDead(ex))
+            {
+                // The next use finds it dead and recreates it; the idle close
+                // below tears it down even sooner.
+                WidgetLog.Write(_accountLabel, "webview-idle", "low-memory-skipped dead");
+            }
+        }
+
+        // Back on the UI thread, where every other touch of these fields runs.
+        _ = Task.Delay(FetchIdleLease.Delay).ContinueWith(
+            _ =>
+            {
+                if (_idle.ShouldRelease(token)) CloseFetchWebView();
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     /// Forms of WebView2 death after which the cached CoreWebView2 is
@@ -422,7 +547,20 @@ public sealed class ClaudeWebSession
         // one. Cheap to log, and it is the line that explains a burst of
         // failures that otherwise look unrelated.
         WidgetLog.Write(_accountLabel, "webview-reset", "reason=fetch-webview-dead");
+        CloseFetchWebView();
+    }
 
+    /// Closes the fetch controller and its hidden host; the next use creates
+    /// both again. The dead-webview reset and the idle release share it. No
+    /// log line for the idle path: it runs after every refresh, and the log
+    /// only carries what is worth reading.
+    ///
+    /// With the last controller of the environment closed, the WebView2
+    /// browser process exits on its own (BrowserProcessExited, kind Normal,
+    /// ~0.3 s later — measured with a scratch user data folder), and the next
+    /// controller on the same environment starts a new one.
+    private void CloseFetchWebView()
+    {
         _fetchWebViewTask = null;
         try
         {

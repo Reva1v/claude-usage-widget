@@ -105,4 +105,64 @@ public class SubscriptionTierTests
         Assert.Equal("Free", SubscriptionTier.Label([], null, null));
         Assert.Equal("Free", SubscriptionTier.Label(null, "", ""));
     }
+
+    [Fact]
+    public void LabelOrNullIsNullWhileNothingWasFetched() =>
+        // "We have not asked yet" is not a plan. Label answers Free here — the
+        // right answer to a different question — so the sentinel is its own
+        // method, read by the panel's plan line and by the usage export alike.
+        Assert.Null(SubscriptionTier.LabelOrNull(null, null, null));
+
+    [Fact]
+    public void LabelOrNullNeedsAllThreeAbsentToSaySoFar()
+    {
+        // One field present is an answer, and the guard must be AND, not OR: a
+        // body carrying only raven_type still says Team, and an OR guard would
+        // throw that away as "never asked".
+        Assert.Equal("Team", SubscriptionTier.LabelOrNull(null, null, "team"));
+        Assert.Equal("Free", SubscriptionTier.LabelOrNull([], null, null));
+    }
+
+    [Theory]
+    // Past the sentinel, LabelOrNull is Label — the same two cases the export
+    // and the panel show for the accounts on this machine.
+    [InlineData("raven", "default_raven", "team", "Team")]
+    [InlineData("claude_max", "default_claude_max_20x", null, "Max 20x")]
+    public void LabelOrNullIsLabelOnceAnyFieldIsThere(
+        string capability, string tier, string? ravenType, string expected) =>
+        Assert.Equal(expected, SubscriptionTier.LabelOrNull([capability, "chat"], tier, ravenType));
+
+    [Fact]
+    public void LabelForAnAbsentProfileIsNull() =>
+        // The export runs off freshly loaded settings, where the account it is
+        // exporting may no longer be: no profile, no fields, no plan.
+        Assert.Null(SubscriptionTier.LabelFor(null));
+
+    [Fact]
+    public void LabelForReadsTheThreeFieldsOffTheProfile() =>
+        Assert.Equal("Team", SubscriptionTier.LabelFor(new AccountProfile(
+            "a1", "work", "org-1", null, 0,
+            Capabilities: ["raven", "chat"], RateLimitTier: "default_raven", RavenType: "team")));
+
+    [Fact]
+    public void LabelForAnswersPerProfileAndNeverOffTheWrongOne()
+    {
+        // Two accounts, two plans. The export picks the profile by id and this
+        // is the other half of that: the label must come from the profile it was
+        // handed, so exporting one account's plan onto another is a change a
+        // test can see.
+        var team = new AccountProfile(
+            "a1", "work", "org-1", null, 0,
+            Capabilities: ["raven", "chat"], RateLimitTier: "default_raven", RavenType: "team");
+        var max = new AccountProfile(
+            "a2", "personal", "org-2", null, 0,
+            Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x");
+
+        Assert.Equal("Team", SubscriptionTier.LabelFor(team));
+        Assert.Equal("Max 20x", SubscriptionTier.LabelFor(max));
+    }
+
+    [Fact]
+    public void LabelForKeepsTheNeverAskedSentinel() =>
+        Assert.Null(SubscriptionTier.LabelFor(new AccountProfile("a1", "work", "org-1", null, 0)));
 }

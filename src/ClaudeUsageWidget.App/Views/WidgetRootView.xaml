@@ -143,9 +143,11 @@
              got wrong, and reserving space INSIDE it is what the user saw as
              the panel resizing and then sitting elsewhere.
 
-             The buttons ride on a rounded pill of the panel's own background,
-             because outside the panel there is nothing behind them: dim glyphs
-             on bare wallpaper are a strip you cannot find. The pill is sized to
+             The buttons ride on a rounded pill of the OVERLAY background — the
+             panel's colour at its own fixed alpha, not the user's panel
+             opacity — because outside the panel there is nothing behind them:
+             dim glyphs on bare wallpaper are a strip you cannot find, and at a
+             see-through panel setting the pill would go with it. The pill is sized to
              the button row and padded out of the band's existing gap, so it
              costs no geometry.
 
@@ -153,7 +155,7 @@
              not known here), and the row/column counts from Core's
              ToolbarMetrics, so what is drawn and what the window grew by cannot
              disagree. -->
-        <Border x:Name="ToolbarPill" Background="{DynamicResource Theme.PanelBackgroundBrush}"
+        <Border x:Name="ToolbarPill" Background="{DynamicResource Theme.OverlayBackgroundBrush}"
                 VerticalAlignment="Top" HorizontalAlignment="Center"
                 Visibility="Collapsed">
             <Grid x:Name="EditToolbar"/>

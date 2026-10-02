@@ -162,15 +162,20 @@ account. Keys in this file are camelCase, as shown.
 { "fiveHour": 62, "sevenDay": 30, "atMs": 1787748230070,
   "fiveResetAt": 1787750400, "sevenResetAt": 1787860800,
   "account": "Personal", "modelKey": "seven_day_fable", "modelLabel": "FABLE",
-  "modelSevenDay": 15, "modelResetAt": 1788278400 }
+  "modelSevenDay": 15, "modelResetAt": 1788278400,
+  "availableModels": ["fable"], "plan": "Max 20x" }
 ```
 
 `atMs` is epoch milliseconds; the three reset stamps are epoch seconds. The
 `model*` four describe the per-model weekly limit the third dial shows and are
-all null on an account that has none. The file is written whole (temp file,
-then move), so a reader polling it never catches half of one. Nothing is
-written for an account with neither window — zeros would read as "0% used",
-which is the opposite of the truth.
+all null on an account that has none. `availableModels` lists that account's
+per-model weekly buckets (`seven_day_` stripped, lowercased) and is empty rather
+than null when it has none. `plan` is the subscription label — "Team",
+"Max 20x", "Pro" — re-read once an hour, and `null` until the widget has read
+it: treat that the same as the key being absent. The file is written whole
+(temp file, then move), so a reader polling it never catches half of one.
+Nothing is written for an account with neither window — zeros would read as
+"0% used", which is the opposite of the truth.
 
 ## Service status
 

@@ -22,10 +22,39 @@ namespace ClaudeUsageWidget.Core;
 /// round trip to claude.ai for an answer already on disk.
 public static class SubscriptionTier
 {
+    /// The plan for one account as the settings hold it.
+    ///
+    /// Takes the PROFILE, not its three fields, so the read cannot be spelled
+    /// out again at a call site no test reaches — which is where it was, in the
+    /// usage export. A null profile is an answer too: the export runs off
+    /// freshly loaded settings, and the account it is exporting may no longer
+    /// be in them.
+    public static string? LabelFor(AccountProfile? profile) =>
+        profile is null
+            ? null
+            : LabelOrNull(profile.Capabilities, profile.RateLimitTier, profile.RavenType);
+
+    /// The plan, or null while nothing has been fetched for this account.
+    ///
+    /// <see cref="Label"/> answers "what plan is this", and its answer for an
+    /// organization that claims nothing is Free — correct there, wrong for a
+    /// caller that has not asked yet. All three fields absent is the sentinel:
+    /// the picker fills the capability list (empty at worst) for any
+    /// organization it found, so the guard is AND and never OR.
+    ///
+    /// One copy of the rule on purpose: the panel's plan line and the usage
+    /// export both need it, and two copies would answer differently the day one
+    /// of them is edited.
+    public static string? LabelOrNull(
+        IReadOnlyList<string>? capabilities, string? rateLimitTier, string? ravenType) =>
+        capabilities is null && rateLimitTier is null && ravenType is null
+            ? null
+            : Label(capabilities, rateLimitTier, ravenType);
+
     /// Never empty and never a lie: an unknown tier is shown prettified rather
     /// than dropped, because silence on the panel reads as a broken widget.
     /// "We have not asked yet" is a different question and is not answered here
-    /// — <see cref="AccountRow.ForAll"/> keeps that one, from the absence of the
+    /// — <see cref="LabelOrNull"/> keeps that one, from the absence of the
     /// fields themselves.
     public static string Label(
         IReadOnlyList<string>? capabilities, string? rateLimitTier, string? ravenType)

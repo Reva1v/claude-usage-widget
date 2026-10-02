@@ -57,7 +57,8 @@ internal static class MenuPreview
             TrayAccountId: "a1",
             PanelView: Core.PanelView.Classic,
             BandView: BandView.Metrics,
-            Theme: ThemeChoice.System));
+            Theme: ThemeChoice.System,
+            PanelOpacity: PanelOpacities.Default));
 
         var menu = tray.Menu;
 

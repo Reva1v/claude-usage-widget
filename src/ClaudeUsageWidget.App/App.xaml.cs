@@ -137,6 +137,7 @@ public partial class App : System.Windows.Application
         _trayIcon.PanelViewSelected += OnPanelViewSelected;
         _trayIcon.BandViewSelected += OnBandViewSelected;
         _trayIcon.ThemeSelected += OnThemeSelected;
+        _trayIcon.PanelOpacitySelected += OnPanelOpacitySelected;
         _trayIcon.AccountAddRequested += OnAccountAddRequested;
         _trayIcon.AccountRenameRequested += OnAccountRenameRequested;
         _trayIcon.AccountRemoveRequested += id => FireAndForget(() => OnAccountRemoveRequestedAsync(id));
@@ -350,7 +351,8 @@ public partial class App : System.Windows.Application
         // ExportPath comes from the freshly loaded settings, not from
         // account.Profile: it is set by hand-editing settings.json, and such
         // an edit must take effect on the next refresh, not after a restart.
-        var path = data.Accounts.FirstOrDefault(a => a.Id == account.Profile.Id)?.ExportPath;
+        var profile = data.Accounts.FirstOrDefault(a => a.Id == account.Profile.Id);
+        var path = profile?.ExportPath;
         if (string.IsNullOrWhiteSpace(path))
         {
             if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return;
@@ -368,9 +370,15 @@ public partial class App : System.Windows.Application
         // the last good snapshot would mean bumping its "age" without
         // learning anything new.
         if (account.Store.CurrentState is not UsageState.Ok(var snapshot, _)) return;
+        // v3: the plan the launcher filters its model list by, through the same
+        // sentinel as the panel's plan line. One call, so the derivation itself
+        // lives where Core.Tests can pin it — an absent profile included.
+        var plan = SubscriptionTier.LabelFor(profile);
+
         // ModelBucket is the same choice the third dial shows; otherwise the
         // file and the panel would call two different limits by one name.
-        if (UsageExport.Payload(snapshot, DateTimeOffset.Now, account.Profile.DisplayName, data.ModelBucket)
+        if (UsageExport.Payload(
+                snapshot, DateTimeOffset.Now, account.Profile.DisplayName, data.ModelBucket, plan)
             is not { } payload) return;
 
         UsageExportWriter.Write(path, payload);
@@ -490,7 +498,8 @@ public partial class App : System.Windows.Application
             data.TrayAccountId,
             PanelViews.Current(resolved.Layout, resolved.Status),
             BandViews.Resolve(data.BandView, data.Accounts.Count),
-            data.Theme ?? ThemeChoice.System));
+            data.Theme ?? ThemeChoice.System,
+            PanelOpacities.Resolve(data.PanelOpacity)));
     }
 
     private void OnTrayMetricSelected(string key)
@@ -561,17 +570,24 @@ public partial class App : System.Windows.Application
         RefreshTrayMenuState();
     }
 
-    /// The one place the theme setting meets the system: everything that
-    /// draws reads Theme.Current, so this is a resolve and an Apply.
+    /// The one place the theme and opacity settings meet the system:
+    /// everything that draws reads Theme, so this is a resolve and an Apply.
     private void ApplyTheme()
     {
-        var choice = _settings!.Load().Theme;
-        Theme.Apply(ThemeChoices.Resolve(choice, SystemTheme.AppsKind));
+        var data = _settings!.Load();
+        Theme.Apply(ThemeChoices.Resolve(data.Theme, SystemTheme.AppsKind), PanelOpacities.Resolve(data.PanelOpacity));
     }
 
     private void OnThemeSelected(ThemeChoice choice)
     {
         _settings!.Save(_settings.Load() with { Theme = choice });
+        ApplyTheme();
+        RefreshTrayMenuState();
+    }
+
+    private void OnPanelOpacitySelected(double opacity)
+    {
+        _settings!.Save(_settings.Load() with { PanelOpacity = opacity });
         ApplyTheme();
         RefreshTrayMenuState();
     }
@@ -903,6 +919,13 @@ public partial class App : System.Windows.Application
         _widgetWindow!.RebuildLayout(_accounts.Count);
         RenderWidget();
         RefreshTrayMenuState();
+        // The same line the tray and the panel write before their own
+        // OpenLoginWindowAsync. Without it this was the only route into the
+        // login window with no positive trace: an add whose window never
+        // appeared left widget.log looking as if the click had not happened at
+        // all (2026-09-08 — an account whose WebView2 profile is timestamped
+        // 16:22 against a log that jumps from 09-04 to 17:06).
+        WidgetLog.Write(profile.DisplayName, "sign-in-requested", "source=add-account");
         FireAndForget(() => runtime.Session.OpenLoginWindowAsync());
     }
 

@@ -175,6 +175,41 @@ public class WidgetSettingsTests
     }
 
     [Fact]
+    public void TheSubscriptionFetchStampSurvivesTheFile()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var stamp = DateTimeOffset.FromUnixTimeSeconds(1_785_348_000);
+        new SettingsStore(path).Save(new WidgetSettingsData
+        {
+            Accounts = [new AccountProfile("a1", "work", "org-1", null, 0, SubscriptionFetchedAt: stamp)],
+        });
+
+        Assert.Equal(stamp, Assert.Single(new SettingsStore(path).Load().Accounts).SubscriptionFetchedAt);
+    }
+
+    [Fact]
+    public void AnAccountWrittenBeforeTheStampRefreshesAtOnce()
+    {
+        // The stamp is additive: every settings file written before it reads as
+        // null, and null is the "fetch now" side of the cadence — the upgrade
+        // must not leave an account stuck on a label nothing will refresh.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+        {"WidgetVisible": false,
+         "Accounts": [{"Id":"a1","DisplayName":"work","OrganizationId":"org-1","ConsecutiveRateLimits":0,
+                       "Capabilities":["raven","chat"],"RateLimitTier":"default_raven","RavenType":"team"}]}
+        """);
+
+        var account = Assert.Single(new SettingsStore(path).Load().Accounts);
+
+        Assert.Null(account.SubscriptionFetchedAt);
+        Assert.True(SubscriptionRefresh.ShouldRefresh(account.SubscriptionFetchedAt, DateTimeOffset.Now));
+        // Proof the file parsed rather than falling through to the defaults.
+        Assert.Equal("team", account.RavenType);
+    }
+
+    [Fact]
     public void ExportDirectorySurvivesTheFile()
     {
         var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");

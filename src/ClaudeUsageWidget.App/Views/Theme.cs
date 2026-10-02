@@ -28,8 +28,13 @@ public static class Theme
 
     public static ThemeKind Kind { get; private set; } = ThemeKind.Dark;
 
-    /// Raised after Current has changed, on the thread Apply was called on —
-    /// always the dispatcher; see App.ApplyTheme.
+    /// The panel background's alpha — the one palette value the user sets
+    /// directly. Only the panel and the toolbar pill read it; the overlays
+    /// keep their own alpha so a notice stays legible over a see-through panel.
+    public static double PanelOpacity { get; private set; } = PanelOpacities.Default;
+
+    /// Raised after Current or PanelOpacity has changed, on the thread Apply
+    /// was called on — always the dispatcher; see App.ApplyTheme.
     public static event Action? Changed;
 
     public const string TextBrushKey = "Theme.TextBrush";
@@ -40,12 +45,19 @@ public static class Theme
     /// Swaps the palette, republishes the XAML resource keys and tells the
     /// code consumers. Idempotent: the same kind twice is a no-op, so a
     /// system-theme event that changed nothing costs nothing.
-    public static void Apply(ThemeKind kind)
+    public static void Apply(ThemeKind kind) => Apply(kind, PanelOpacity);
+
+    /// The palette and the panel alpha in one step, so a settings change
+    /// republishes once. A resolved alpha is expected (PanelOpacities.Resolve).
+    public static void Apply(ThemeKind kind, double panelOpacity)
     {
-        if (kind == Kind && Current == Palette.For(kind)) return;
+        if (kind == Kind && Current == Palette.For(kind) && panelOpacity == PanelOpacity) return;
 
         Kind = kind;
         Current = Palette.For(kind);
+        PanelOpacity = panelOpacity;
+        PanelBackgroundBrush = Current.PanelBrush(panelOpacity);
+        PanelBackgroundBrush.Freeze();
         PublishResources();
         Changed?.Invoke();
     }
@@ -58,7 +70,7 @@ public static class Theme
         if (resources is null) return;
         resources[TextBrushKey] = Current.TextBrush;
         resources[DimBrushKey] = Current.DimBrush;
-        resources[PanelBackgroundBrushKey] = Current.PanelBackgroundBrush;
+        resources[PanelBackgroundBrushKey] = PanelBackgroundBrush;
         resources[OverlayBackgroundBrushKey] = Current.OverlayBackgroundBrush;
     }
 
@@ -75,7 +87,9 @@ public static class Theme
     public static SolidColorBrush TextBrush => Current.TextBrush;
     public static SolidColorBrush DimBrush => Current.DimBrush;
     public static SolidColorBrush WarningBrush => Current.WarningBrush;
-    public static SolidColorBrush PanelBackgroundBrush => Current.PanelBackgroundBrush;
+    /// The panel colour at <see cref="PanelOpacity"/>; rebuilt and frozen by
+    /// Apply, not read off the palette, because the alpha is the user's.
+    public static SolidColorBrush PanelBackgroundBrush { get; private set; } = Palette.Dark.PanelBackgroundBrush;
     public static SolidColorBrush OverlayBackgroundBrush => Current.OverlayBackgroundBrush;
 
     public static Color ColorFor(ThresholdLevel level) => Current.ColorFor(level);

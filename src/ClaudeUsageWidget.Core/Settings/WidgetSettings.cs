@@ -20,7 +20,8 @@ public sealed record AccountProfile(
     string? ExportPath = null,
     IReadOnlyList<string>? Capabilities = null,
     string? RateLimitTier = null,
-    string? RavenType = null);
+    string? RavenType = null,
+    DateTimeOffset? SubscriptionFetchedAt = null);
 
 /// Everything persisted between launches. Serialized to JSON verbatim by
 /// <see cref="SettingsStore"/> — every property here is a JSON field, so
@@ -58,6 +59,11 @@ public sealed record WidgetSettingsData
     /// follow Windows' app theme — through <see cref="ThemeChoices.Resolve"/>.
     /// Never default it here.
     public ThemeChoice? Theme { get; init; }
+
+    /// The panel background's alpha, 0..1. NULLABLE: null is the alpha the
+    /// panel always had, through <see cref="PanelOpacities.Resolve"/>, which
+    /// also clamps a hand-edited value. Never default it here.
+    public double? PanelOpacity { get; init; }
 
     /// Which account the tray icon and its metric describe. Null falls back to
     /// the first account.
