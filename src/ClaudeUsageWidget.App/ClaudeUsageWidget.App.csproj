@@ -1,16 +1,16 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\ClaudeUsageWidget.Core\ClaudeUsageWidget.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -22,11 +22,11 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <Version>0.2.7</Version>
     <AssemblyTitle>Claude Usage Widget</AssemblyTitle>
-    <!-- WFAC010 suggests ApplicationHighDpiMode/SetHighDpiMode — APIs from the
+    <!-- WFO0003 (WFAC010 before the .NET 9 SDK) suggests ApplicationHighDpiMode/SetHighDpiMode — APIs from the
          WinForms-application world. Here the host process is WPF, WinForms is used
          only for the tray, and PerMonitorV2 in the manifest is the documented way to
          get DPI-awareness for WPF, so the warning does not apply. -->
-    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <!-- Precompiled (crossgen) code in the publish output: less JIT work and memory at run time. -->
     <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>

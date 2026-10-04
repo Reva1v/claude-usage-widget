@@ -9,7 +9,7 @@ own service status, as dials in a panel pinned to the bottom of the desktop —
 one square of four dials for a single account, a row per account for several.
 Dark and light, following Windows or pinned to either.
 
-This is a Windows port (C#/.NET 8 + WPF) of
+This is a Windows port (C#/.NET 10 + WPF) of
 [TadelUnso/claude-usage-widget](https://github.com/TadelUnso/claude-usage-widget),
 the original macOS app. It reads the same figures through the same
 authenticated claude.ai web session; the desktop widget, tray icon, sign-in
@@ -247,7 +247,7 @@ regular browsers.
   [WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
   first.
 - A Claude.ai account on a subscription plan
-- .NET 8 SDK, to build from source
+- .NET 10 SDK, to build from source
 
 ## Run
 
