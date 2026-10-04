@@ -29,7 +29,7 @@ public sealed class StatusStore
     /// threads could simultaneously see `_inFlight == null` and both start
     /// their own fetch, breaking the "one fetch for all concurrent calls"
     /// contract.
-    private readonly object _inFlightGate = new();
+    private readonly Lock _inFlightGate = new();
 
     /// The last status successfully read. A failed refresh leaves it
     /// standing — a transient network blip should not claim the service is
