@@ -59,7 +59,7 @@ public sealed class ClaudeWebSession
     /// which is a snapshot from construction: the log can live with that (see
     /// above), a window cannot. It said `account "New account"` for an account
     /// the panel and the tray had been calling `shared` for the best part of an
-    /// hour (the owner, 2026-09-08). One read per window, not per log line.
+    /// hour (user report, 2026-09-08). One read per window, not per log line.
     private string CurrentLabel => _settings.Load().Account(_accountId)?.DisplayName ?? _accountLabel;
 
     // The single on-demand WebView2 environment for the whole process:

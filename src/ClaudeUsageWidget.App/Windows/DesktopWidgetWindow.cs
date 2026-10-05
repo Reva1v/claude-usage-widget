@@ -328,7 +328,7 @@ public sealed class DesktopWidgetWindow : Window
         // nothing to the content: with it last, ANY failure inside Draw left
         // the window at its old top-left carrying its new, larger size — which
         // is precisely how adding a fifth account hung the panel off the right
-        // edge of the screen (the owner, 2026-09-08).
+        // edge of the screen (user report, 2026-09-08).
         ClampToScreen();
         // The grid was just rebuilt and is empty — fill it with the same frame,
         // without waiting for the store's next update.

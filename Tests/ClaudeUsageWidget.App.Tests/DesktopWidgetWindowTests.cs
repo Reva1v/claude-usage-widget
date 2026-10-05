@@ -21,7 +21,7 @@ public sealed class DesktopWidgetWindowTests
     /// last bit of a division.
     private const double Tolerance = 0.5;
 
-    /// The owner's live layout on 2026-09-08, the one the bug was reported
+    /// A user's live layout on 2026-09-08, the one the bug was reported
     /// against: accounts side by side, three dials stacked under each name.
     /// Positions are left out — the test computes them from the real screen.
     private const string SettingsJson = """
