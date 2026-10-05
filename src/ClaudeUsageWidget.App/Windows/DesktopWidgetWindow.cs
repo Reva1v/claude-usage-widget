@@ -284,6 +284,17 @@ public sealed class DesktopWidgetWindow : Window
     {
         if (_last is not { } f) return;
 
+        // The grid may have just been rebuilt for a different number of
+        // accounts, and the frame still cached here belongs to the old one.
+        // SetContent refuses that pairing by design — "silently lose or
+        // duplicate an account" — so it THREW, out through ApplyLayoutAndSize
+        // and out through the tray click that added the account: the login
+        // window was never opened, the panel kept its old position with its
+        // new width, and the only thing the user saw was a WinForms error box.
+        // Skipping is right rather than merely safe: every rebuild is followed
+        // by a Render with the matching frame, one line later.
+        if (f.Rows.Count != _accountCount) return;
+
         var dimmed = f.State is not UsageState.Ok;
         _root.SetContent(
             f.Rows, f.Status, dimmed,
@@ -313,10 +324,15 @@ public sealed class DesktopWidgetWindow : Window
         ApplyStripBand(_stripAbove ? metrics.ToolbarReserve : 0);
         // A bigger band may no longer fit above: same rule as a drag.
         ReconsiderStripSide();
+        // Before the paint, not after it. The clamp is geometry and owes
+        // nothing to the content: with it last, ANY failure inside Draw left
+        // the window at its old top-left carrying its new, larger size — which
+        // is precisely how adding a fifth account hung the panel off the right
+        // edge of the screen (user report, 2026-09-08).
+        ClampToScreen();
         // The grid was just rebuilt and is empty — fill it with the same frame,
         // without waiting for the store's next update.
         Draw();
-        ClampToScreen();
     }
 
     /// The panel stopped being square and grows wider with every account,

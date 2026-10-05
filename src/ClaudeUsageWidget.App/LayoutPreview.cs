@@ -88,6 +88,15 @@ internal static class LayoutPreview
             RenderAll(themeDir, accounts, snapshots, cases, now);
         }
 
+        // One see-through run: the PNGs render over transparency, so a viewer
+        // with a checkerboard shows how much wallpaper comes through, and a
+        // panel that stayed at 82 % would show up here first.
+        Theme.Apply(ThemeKind.Dark, 0.3);
+        var opacityDir = Path.Combine(dir, "dark-opacity30");
+        Directory.CreateDirectory(opacityDir);
+        RenderAll(opacityDir, accounts, snapshots, cases, now);
+        Theme.Apply(ThemeKind.Dark, PanelOpacities.Default);
+
         Environment.Exit(0);
     }
 

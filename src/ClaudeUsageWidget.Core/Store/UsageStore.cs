@@ -54,7 +54,7 @@ public sealed class UsageStore
     /// threads could simultaneously see `_inFlight == null` and both start
     /// their own fetch, breaking the "one fetch for all concurrent calls"
     /// contract.
-    private readonly object _inFlightGate = new();
+    private readonly Lock _inFlightGate = new();
 
     public UsageState CurrentState { get; private set; } = new UsageState.Loading();
 

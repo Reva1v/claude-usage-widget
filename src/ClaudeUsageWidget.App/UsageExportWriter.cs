@@ -10,11 +10,6 @@ namespace ClaudeUsageWidget.App;
 /// reason for the widget to stop showing usage.
 public static class UsageExportWriter
 {
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     public static void Write(string path, UsageExportPayload payload)
     {
         try
@@ -26,7 +21,10 @@ public static class UsageExportWriter
             // path, and a plain write lets it catch a half-written file and
             // decide the account has no figures at all.
             var temp = path + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(payload, Options));
+            // UsageExport.JsonOptions, not a local copy: the key names and the
+            // null policy are the reader's contract, and Core.Tests pin them
+            // through that same object.
+            File.WriteAllText(temp, JsonSerializer.Serialize(payload, UsageExport.JsonOptions));
             File.Move(temp, path, overwrite: true);
         }
         catch (Exception ex)

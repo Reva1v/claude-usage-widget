@@ -22,7 +22,7 @@ public static class WidgetLog
 
     // Every account's session logs into the same file, and refreshes overlap
     // across accounts.
-    private static readonly object Gate = new();
+    private static readonly Lock Gate = new();
 
     // No BOM: this file is read by tail-style tools and by eye, and a BOM at
     // the head of the first line shows up as garbage in both.

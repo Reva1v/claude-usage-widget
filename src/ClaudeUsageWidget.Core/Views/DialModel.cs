@@ -87,17 +87,11 @@ public sealed record AccountRow(
                 account.Id, account.DisplayName, dials, dials[0].Remaining, PlanLabelFor(account));
         }).ToList();
 
-    /// The plan, or null while nothing has been fetched for this account.
-    ///
-    /// `SubscriptionTier.Label` answers "what plan is this", and its answer for
-    /// an organization that claims nothing is Free — correct there and wrong
-    /// here, because an account whose fields were never read claims nothing for
-    /// a different reason. All three absent is the sentinel: the picker fills
-    /// the capability list (empty at worst) for any organization it found.
-    private static string? PlanLabelFor(AccountProfile account) =>
-        account.Capabilities is null && account.RateLimitTier is null && account.RavenType is null
-            ? null
-            : SubscriptionTier.Label(account.Capabilities, account.RateLimitTier, account.RavenType);
+    /// The plan, or null while nothing has been fetched for this account. The
+    /// sentinel and the reason for it live in
+    /// <see cref="SubscriptionTier.LabelFor"/>, which the usage export reads
+    /// the same profile through.
+    private static string? PlanLabelFor(AccountProfile account) => SubscriptionTier.LabelFor(account);
 }
 
 /// The line under the dials. Null means everything is fine and the widget

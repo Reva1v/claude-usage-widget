@@ -29,7 +29,8 @@ public sealed record TrayMenuState(
     string? TrayAccountId,
     PanelView? PanelView,
     BandView BandView,
-    ThemeChoice Theme);
+    ThemeChoice Theme,
+    double PanelOpacity);
 
 /// <summary>
 /// The application's icon in the system tray and its context menu.
@@ -67,6 +68,7 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _themeSystemItem = null!;
     private ToolStripMenuItem _themeDarkItem = null!;
     private ToolStripMenuItem _themeLightItem = null!;
+    private readonly List<(double Value, ToolStripMenuItem Item)> _opacityItems = [];
 
     /// <summary>The "Refresh now" menu item.</summary>
     public event Action? RefreshRequested;
@@ -120,6 +122,9 @@ public sealed class TrayIcon : IDisposable
     /// Theme — System / Dark / Light.
     public event Action<ThemeChoice>? ThemeSelected;
 
+    /// Opacity — the panel background's alpha, one of PanelOpacities.Presets.
+    public event Action<double>? PanelOpacitySelected;
+
     /// What the tick beside `Edit layout…` should show. Set before the menu is
     /// opened, like the rest of the Layout submenu's state.
     public bool EditingLayout { get; set; }
@@ -147,6 +152,7 @@ public sealed class TrayIcon : IDisposable
         Theme.Changed += OnThemeChanged;
 
         Menu.Opening += (_, _) => MenuOpening?.Invoke();
+        MenuPlacement.Attach(Menu);
 
         _notifyIcon = new NotifyIcon
         {
@@ -201,6 +207,10 @@ public sealed class TrayIcon : IDisposable
         _themeSystemItem.Checked = state.Theme == ThemeChoice.System;
         _themeDarkItem.Checked = state.Theme == ThemeChoice.Dark;
         _themeLightItem.Checked = state.Theme == ThemeChoice.Light;
+        // A hand-edited value between two steps ticks nothing: the menu shows
+        // what is set, not the nearest thing it could have set.
+        foreach (var (value, item) in _opacityItems)
+            item.Checked = PanelOpacities.IsPreset(state.PanelOpacity, value);
 
         var metricIndex = MetricIndex(state.TrayMetricKey);
         _trayShowsSessionItem.Checked = metricIndex == 0;
@@ -427,6 +437,20 @@ public sealed class TrayIcon : IDisposable
         themeMenu.DropDownItems.Add(_themeLightItem);
         menu.Items.Add(themeMenu);
 
+        // The panel background only: the dials and text stay solid, 0 % leaves
+        // just them on the wallpaper. Steps rather than a slider — a WinForms
+        // menu has no slider, and settings.json takes any value in between.
+        var opacityMenu = new ToolStripMenuItem("Opacity");
+        foreach (var preset in PanelOpacities.Presets)
+        {
+            var value = preset;
+            var item = new ToolStripMenuItem($"{Math.Round(value * 100)} %", null, (_, _) => PanelOpacitySelected?.Invoke(value));
+            if (value == 0) item.ToolTipText = "Dials and text only, no panel behind them.";
+            _opacityItems.Add((value, item));
+            opacityMenu.DropDownItems.Add(item);
+        }
+        menu.Items.Add(opacityMenu);
+
         _showOnDesktopItem = new ToolStripMenuItem("Show on desktop");
         _showOnDesktopItem.Click += (_, _) => ShowOnDesktopToggled?.Invoke(!_showOnDesktopItem.Checked);
         menu.Items.Add(_showOnDesktopItem);
@@ -542,6 +566,7 @@ public sealed class TrayIcon : IDisposable
         Set("Accounts", "\uE716");
         Set("Layout", "\uE80A");
         Set("Theme", "\uE790");
+        Set("Opacity", "\uE7B5");
         Set("Show on desktop", "\uE7F4");
         Set("Taskbar band", "\uE90E");
         Set("Band position", "\uE8A0");
