@@ -453,8 +453,16 @@ public sealed class ClaudeWebSession
         }
         finally
         {
-            ExitIdleLease();
-            _fetchGate.Release();
+            // The release in a finally of its own: the gate is the account's
+            // only way in, and nothing the lease touches may keep it shut.
+            try
+            {
+                ExitIdleLease();
+            }
+            finally
+            {
+                _fetchGate.Release();
+            }
         }
     }
 
@@ -475,8 +483,7 @@ public sealed class ClaudeWebSession
                 {
                     // Back from the idle wait (see ExitIdleLease): the page is
                     // in use again.
-                    if (webView.MemoryUsageTargetLevel != CoreWebView2MemoryUsageTargetLevel.Normal)
-                        webView.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
+                    SetMemoryTarget(webView, CoreWebView2MemoryUsageTargetLevel.Normal);
 
                     return await action(webView).ConfigureAwait(true);
                 }
@@ -507,13 +514,17 @@ public sealed class ClaudeWebSession
         {
             try
             {
-                ready.Result.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
+                SetMemoryTarget(ready.Result, CoreWebView2MemoryUsageTargetLevel.Low);
             }
-            catch (Exception ex) when (IsWebViewDead(ex))
+            catch (Exception ex)
             {
-                // The next use finds it dead and recreates it; the idle close
-                // below tears it down even sooner.
-                WidgetLog.Write(_accountLabel, "webview-idle", "low-memory-skipped dead");
+                // Every caller runs this from a finally, so nothing may escape
+                // it: an exception here would skip FetchPageAsync's gate
+                // release and freeze the account until a restart. A dead
+                // webview is recreated by the next use; the idle close below
+                // tears it down even sooner.
+                WidgetLog.Write(_accountLabel, "webview-idle",
+                    $"low-memory-skipped {(IsWebViewDead(ex) ? "dead" : ex.GetType().Name)}");
             }
         }
 
@@ -528,18 +539,45 @@ public sealed class ClaudeWebSession
             TaskScheduler.FromCurrentSynchronizationContext());
     }
 
+    /// The memory target is a hint, so a runtime without it (the wrapper
+    /// throws NotImplementedException when ICoreWebView2_19 is missing) must
+    /// not cost the fetch. A dead webview still throws: the caller's retry is
+    /// what recreates it.
+    private static void SetMemoryTarget(CoreWebView2 webView, CoreWebView2MemoryUsageTargetLevel level)
+    {
+        try
+        {
+            if (webView.MemoryUsageTargetLevel != level)
+                webView.MemoryUsageTargetLevel = level;
+        }
+        catch (NotImplementedException)
+        {
+            // An older runtime: the webview simply keeps its default target.
+        }
+    }
+
     /// Forms of WebView2 death after which the cached CoreWebView2 is
-    /// useless: ObjectDisposedException — the wrapper is closed ("...cannot
-    /// be accessed after the WebView2 control is disposed"); COMException
-    /// 0x8007139F (ERROR_INVALID_STATE) and 0x80010108 (RPC_E_DISCONNECTED)
-    /// — the browser process exited, the native object fell off.
-    private static bool IsWebViewDead(Exception ex) => ex switch
+    /// useless: the browser process exited, the native object fell off.
+    ///
+    /// The managed wrapper does not let the raw COMException 0x8007139F
+    /// (ERROR_INVALID_STATE) through: it rethrows it as
+    /// InvalidOperationException ("...cannot be accessed after the WebView2
+    /// control is disposed") with the COMException as the inner exception
+    /// (read off the IL of Microsoft.Web.WebView2.Core 1.0.4258.31). It is
+    /// matched by that inner HRESULT, not by the message and not as any
+    /// InvalidOperationException. ObjectDisposedException and a bare
+    /// COMException 0x8007139F / 0x80010108 (RPC_E_DISCONNECTED) cover the
+    /// paths that do not go through the wrapper.
+    internal static bool IsWebViewDead(Exception ex) => ex switch
     {
         ObjectDisposedException => true,
-        System.Runtime.InteropServices.COMException com =>
-            (uint)com.HResult is 0x8007139F or 0x80010108,
+        System.Runtime.InteropServices.COMException com => IsDeadHResult(com.HResult),
+        InvalidOperationException { InnerException: System.Runtime.InteropServices.COMException inner } =>
+            IsDeadHResult(inner.HResult),
         _ => false,
     };
+
+    private static bool IsDeadHResult(int hresult) => (uint)hresult is 0x8007139F or 0x80010108;
 
     private void ResetFetchWebView()
     {
