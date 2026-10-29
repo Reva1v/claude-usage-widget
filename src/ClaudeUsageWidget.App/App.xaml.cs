@@ -112,6 +112,7 @@ public partial class App : System.Windows.Application
         // process right after OnStartup, without waiting for Quit.
         _trayIcon = new TrayIcon();
         _trayIcon.QuitRequested += Shutdown;
+        _trayIcon.UpdateRequested += () => FireAndForget(() => Updater.CheckAndInstallAsync(Shutdown));
         // Tray account only: manually refreshing all four is exactly what
         // this endpoint punishes with a rate limit.
         _trayIcon.RefreshRequested += () => FireAndForget(async () =>

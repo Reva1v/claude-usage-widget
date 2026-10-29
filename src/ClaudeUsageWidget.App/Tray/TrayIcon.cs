@@ -70,6 +70,11 @@ public sealed class TrayIcon : IDisposable
     private ToolStripMenuItem _themeLightItem = null!;
     private readonly List<(double Value, ToolStripMenuItem Item)> _opacityItems = [];
 
+    private const string UpdateCaption = "Check for updates and install…";
+
+    /// <summary>The "Check for updates and install…" menu item.</summary>
+    public event Action? UpdateRequested;
+
     /// <summary>The "Refresh now" menu item.</summary>
     public event Action? RefreshRequested;
 
@@ -373,13 +378,20 @@ public sealed class TrayIcon : IDisposable
         _renderer = new WidgetMenuRenderer(Theme.Current);
 
         // Order and separators — like the macOS menu (ClaudeUsageWidgetApp.swift:33-58):
-        // GitHub/issues first, then refresh/sign-in, then toggles, then quit.
-        // "Check for Updates…" isn't ported (no Sparkle equivalent in this
-        // task); "Tray shows" is an item with no Swift counterpart, specific to
-        // the Windows tray: there the menu bar always draws all three numbers at
-        // once, here the icon only fits one.
+        // GitHub/issues/updates first, then refresh/sign-in, then toggles, then
+        // quit. Updates come from GitHub Releases rather than Sparkle (see
+        // Updater); "Tray shows" is an item with no Swift counterpart, specific
+        // to the Windows tray: there the menu bar always draws all three
+        // numbers at once, here the icon only fits one.
         menu.Items.Add($"Claude Usage Widget v{CoreInfo.Version} — GitHub", null, (_, _) => OpenUrl(RepoUrl));
         menu.Items.Add("Report an Issue", null, (_, _) => OpenUrl(IssuesUrl));
+        // An action like Refresh now, so it closes the menu: the dialogs it
+        // opens would otherwise appear under a menu still holding the input.
+        menu.Items.Add(UpdateCaption, null, (_, _) =>
+        {
+            menu.Close();
+            UpdateRequested?.Invoke();
+        });
         menu.Items.Add(new ToolStripSeparator());
         // Refresh now — an exception to the "menu doesn't close on click" rule
         // below: it's an action, not a toggle, no reason to keep the menu open
@@ -560,6 +572,7 @@ public sealed class TrayIcon : IDisposable
 
         Set($"Claude Usage Widget v{CoreInfo.Version} — GitHub", "\uE774");
         Set("Report an Issue", "\uEBE8");
+        Set(UpdateCaption, "\uE896");
         Set("Refresh now", "\uE72C");
         Set("Sign in to Claude.ai…", "\uE77B");
         Set("Tray shows", "\uE7C4");

@@ -866,7 +866,19 @@ public partial class WidgetRootView : UserControl
                 // No reserve to honour here: the name cell is a whole dial
                 // square, and two short lines centred in it fit with room to
                 // spare. That is why BlockMetrics adds nothing for Cell.
-                cell = NameStack(metrics, visual, metrics.DialSize);
+                // The text is narrowed to the ring's inside, so a long name
+                // is trimmed before it reaches the stroke.
+                var inset = metrics.DialSize * NameRingControl.TextInset;
+                cell = new Grid
+                {
+                    Width = metrics.DialSize,
+                    Height = metrics.DialSize,
+                    Children =
+                    {
+                        new NameRingControl(),
+                        NameStack(metrics, visual, metrics.DialSize - 2 * inset),
+                    },
+                };
             }
             else if (items[i] == BlockItem.Status)
             {
