@@ -897,6 +897,9 @@ public partial class App : System.Windows.Application
     {
         _settings!.Save(_settings.Load() with { TrayAccountId = accountId });
         RenderWidget();
+        // The band's three metrics are the tray account's too; without this it
+        // kept the old account until the next poll (the user, 2026-10-29).
+        RenderTaskbarBand();
         UpdateTrayTooltip();
         RefreshTrayIcon();
         RefreshTrayMenuState();
