@@ -211,6 +211,15 @@ public sealed class ClaudeWebSession
             if (string.IsNullOrEmpty(organizationId))
                 throw new UsageException(UsageError.MalformedResponse);
 
+            // Not saved: a stored duplicate would be polled from now on and
+            // pass for this account's own numbers. Left unpicked, every poll
+            // re-checks, so signing in with the right login clears it.
+            if (_settings.Load().AccountWithOrganization(organizationId, _accountId) is { } other)
+            {
+                WidgetLog.Write(_accountLabel, "organization", $"duplicate-of {other.DisplayName}");
+                throw new UsageException(UsageError.DuplicateAccount(other.DisplayName));
+            }
+
             SaveOrganizationId(organizationId);
             RecordSubscription(body, organizationId);
         }

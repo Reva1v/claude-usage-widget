@@ -107,6 +107,13 @@ public sealed record WidgetSettingsData
     /// The account with this id, or null when there is none.
     public AccountProfile? Account(string id) => Accounts.FirstOrDefault(a => a.Id == id);
 
+    /// Another account already polling this organization, if any. Two
+    /// accounts on one organization are one claude.ai login added twice —
+    /// typically a sign-in done with the wrong login — and would show the
+    /// same numbers under two names (the user, 2026-10-29).
+    public AccountProfile? AccountWithOrganization(string organizationId, string exceptId) =>
+        Accounts.FirstOrDefault(a => a.Id != exceptId && a.OrganizationId == organizationId);
+
     /// A copy with one account rewritten, everything else untouched. An id
     /// that is no longer in the list (removed while a poll was in flight)
     /// changes nothing rather than resurrecting the account.

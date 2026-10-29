@@ -79,6 +79,13 @@ public sealed record UsageError(UsageErrorKind Kind, int? RetryAfterSeconds = nu
     public static readonly UsageError Unauthorized = new(UsageErrorKind.Unauthorized);
     public static readonly UsageError MalformedResponse = new(UsageErrorKind.MalformedResponse);
 
+    /// Unauthorized in kind — the session this account holds is not one it
+    /// may use — so the dials blank and the notice asks for a sign-in, but
+    /// with words that say why.
+    public static UsageError DuplicateAccount(string otherName) =>
+        new(UsageErrorKind.Unauthorized,
+            Message: $"This Claude.ai login is already added as \"{otherName}\". Sign in again with another login.");
+
     public static UsageError RateLimited(int? retryAfterSeconds) =>
         new(UsageErrorKind.RateLimited, RetryAfterSeconds: retryAfterSeconds);
 
@@ -90,7 +97,7 @@ public sealed record UsageError(UsageErrorKind Kind, int? RetryAfterSeconds = nu
     public string Description => Kind switch
     {
         UsageErrorKind.NoCredentials => "No Claude.ai web session was found.",
-        UsageErrorKind.Unauthorized => "The Claude.ai session expired. Sign in again from the widget menu.",
+        UsageErrorKind.Unauthorized => Message ?? "The Claude.ai session expired. Sign in again from the widget menu.",
         UsageErrorKind.MalformedResponse => "The server returned something unexpected.",
         UsageErrorKind.RateLimited => "The API is rate limited. The widget retries on its own.",
         UsageErrorKind.Network => Message ?? string.Empty,

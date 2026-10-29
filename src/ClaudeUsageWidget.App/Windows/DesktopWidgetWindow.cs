@@ -368,7 +368,8 @@ public sealed class DesktopWidgetWindow : Window
         UsageState.Failed(var error) when error.Kind == UsageErrorKind.NoCredentials =>
             new WidgetNotice("Not signed in", "Use the menu to sign in to Claude.ai", ShowSignIn: true),
         UsageState.Failed(var error) when error.Kind == UsageErrorKind.Unauthorized =>
-            new WidgetNotice("Session expired", error.Description, ShowSignIn: false),
+            new WidgetNotice(error.Message is null ? "Session expired" : "Account added twice",
+                error.Description, ShowSignIn: error.Message is not null),
         _ => null,
     };
 

@@ -19,6 +19,24 @@ public class WidgetSettingsAccountTests
     }
 
     [Fact]
+    public void AccountWithOrganizationFindsAnotherAccountOnly()
+    {
+        Assert.Equal("Work", Two.AccountWithOrganization("org-b", exceptId: "a")?.DisplayName);
+        Assert.Null(Two.AccountWithOrganization("org-b", exceptId: "b"));
+        Assert.Null(Two.AccountWithOrganization("org-c", exceptId: "a"));
+    }
+
+    [Fact]
+    public void DuplicateAccountNamesTheOtherAccount()
+    {
+        var error = UsageError.DuplicateAccount("Work");
+
+        Assert.Equal(UsageErrorKind.Unauthorized, error.Kind);
+        Assert.Contains("\"Work\"", error.Description);
+        Assert.Contains("expired", UsageError.Unauthorized.Description);
+    }
+
+    [Fact]
     public void WithAccountRewritesOnlyThatAccount()
     {
         var updated = Two.WithAccount("a", a => a with { DisplayName = "Renamed" });
