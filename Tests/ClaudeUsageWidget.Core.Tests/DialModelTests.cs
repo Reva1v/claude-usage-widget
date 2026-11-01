@@ -129,6 +129,74 @@ public class DialModelTests
         var dials = DialModel.All(null, null, Now);
         Assert.Equal(new[] { "5H", "7D", "MODEL" }, dials.Select(d => d.Title));
         Assert.All(dials, d => Assert.Null(d.Fraction));
+        Assert.All(dials, d => Assert.False(d.NoLimit));
+    }
+
+    [Fact]
+    public void AWeekWithoutAFiveHourWindowReadsAsNoLimit()
+    {
+        // A verified Ultra account has no five-hour limit, only the weekly one
+        // (claude.com/pricing, "No 5-hour limit"). Its usage body carries
+        // seven_day and no usable five_hour: the export of such an account on
+        // 2026-11-01 wrote fiveHour=null next to sevenDay=77. That is an
+        // answer, not missing data, so the dial must not read n/a.
+        var dials = DialModel.All(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, "Ultra");
+
+        Assert.Equal("5H", dials[0].Title);
+        Assert.True(dials[0].NoLimit);
+        Assert.Null(dials[0].Fraction);
+        Assert.Equal("no limit", dials[0].Remaining);
+        Assert.False(dials[1].NoLimit);
+    }
+
+    [Theory]
+    // Only Ultra is sold without a five-hour limit. On any other plan, or
+    // before the plan is known, a missing five_hour (the decoder drops a null
+    // one) is missing data and reads n/a as it always did.
+    [InlineData("Max")]
+    [InlineData("Team")]
+    [InlineData("Team Premium")]
+    [InlineData("Pro")]
+    [InlineData(null)]
+    public void AMissingFiveHourWindowOnAnyOtherPlanIsNA(string? plan)
+    {
+        var dials = DialModel.All(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, plan);
+
+        Assert.False(dials[0].NoLimit);
+        Assert.Null(dials[0].Fraction);
+        Assert.Null(dials[0].Remaining);
+    }
+
+    [Fact]
+    public void AnUltraAccountWithAFiveHourWindowShowsTheNumber()
+    {
+        // A new, unverified Ultra account still has a temporary five-hour limit.
+        var dials = DialModel.All(
+            Snapshot(new() { ["five_hour"] = (40, 3600), ["seven_day"] = (77, 259_200) }), null, Now, "Ultra");
+
+        Assert.False(dials[0].NoLimit);
+        Assert.Equal(0.40, dials[0].Fraction!.Value, 10);
+        Assert.Equal("1h 0m", dials[0].Remaining);
+    }
+
+    [Fact]
+    public void ASpentWeekLeavesTheNoLimitDialAlone()
+    {
+        // The spent-week rule moves a five-hour COUNTDOWN; there is none here,
+        // and the seven-day dial already counts down to the week.
+        var dials = DialModel.All(Snapshot(new() { ["seven_day"] = (100, 259_200) }), null, Now, "Ultra");
+
+        Assert.True(dials[0].NoLimit);
+        Assert.Equal("no limit", dials[0].Remaining);
+    }
+
+    [Fact]
+    public void NoSnapshotIsNotNoLimitEvenOnUltra()
+    {
+        // Nothing fetched yet is no answer at all.
+        var dials = DialModel.All(null, null, Now, "Ultra");
+
+        Assert.False(dials[0].NoLimit);
     }
 }
 

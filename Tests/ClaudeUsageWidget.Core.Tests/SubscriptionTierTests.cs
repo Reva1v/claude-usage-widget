@@ -13,9 +13,12 @@ namespace ClaudeUsageWidget.Core.Tests;
 public class SubscriptionTierTests
 {
     [Fact]
-    public void PersonalIsMaxTwentyTimes() =>
-        // widget.log 19:18:04 — capabilities=["claude_max","chat"]
-        Assert.Equal("Max 20x", SubscriptionTier.Label(
+    public void TheTwentyTimesMaxTierIsUltra() =>
+        // widget.log 19:18:04 — capabilities=["claude_max","chat"]. The fields
+        // were the same on 2026-11-01, after Max 20x was renamed Ultra:
+        // claude.com/pricing lists "Max" at $100 and "Ultra" at $200, and the
+        // tier string kept its old name.
+        Assert.Equal("Ultra", SubscriptionTier.Label(
             ["claude_max", "chat"], "default_claude_max_20x", null));
 
     [Fact]
@@ -25,7 +28,18 @@ public class SubscriptionTierTests
             ["raven", "chat"], "default_raven", "team"));
 
     [Fact]
-    public void LowIsMaxFiveTimes() =>
+    public void APremiumSeatLooksLikeAnyOtherTeamSeat() =>
+        // widget.log 2026-11-01 — a Premium seat: capabilities=["raven","chat",
+        // "customer_terms:standard"], rate_limit_tier="default_raven",
+        // raven_type="team", analytics_subscription_plan="claude_team",
+        // plan_display_name=null. Another seat in the same organization logs the
+        // same values: the seat type is not in the organization body, so the
+        // label cannot name it and stays "Team".
+        Assert.Equal("Team", SubscriptionTier.Label(
+            ["raven", "chat", "customer_terms:standard"], "default_raven", "team"));
+
+    [Fact]
+    public void TheFiveTimesMaxTierIsMax() =>
         // widget.log 19:21:25 — capabilities=["chat","claude_max"], chat FIRST.
         // The order differs from the personal account's, which is why the
         // capability is matched by membership and never by index.
@@ -33,7 +47,10 @@ public class SubscriptionTierTests
         // That body also carries subscription_pause={"status":"scheduled",...},
         // which is deliberately not a parameter here at all: the label says what
         // the plan IS, and a pause was not asked for.
-        Assert.Equal("Max 5x", SubscriptionTier.Label(
+        //
+        // Max 5x is sold as plain "Max" since the rename, so the multiplier
+        // is no longer part of the name.
+        Assert.Equal("Max", SubscriptionTier.Label(
             ["chat", "claude_max"], "default_claude_max_5x", null));
 
     [Fact]
@@ -65,8 +82,9 @@ public class SubscriptionTierTests
     public void ARavenTierThatSaysMoreThanRavenKeepsItsTail() =>
         // HYPOTHETICAL: claude.com/pricing sells Team as Standard and Premium
         // seats, and this machine only has the plain one. If a seat ever reaches
-        // the tier string, the label says so rather than flattening it to "Team".
-        Assert.Equal("Team premium", SubscriptionTier.Label(
+        // the tier string, the label says so rather than flattening it to "Team",
+        // in the words the pricing page uses.
+        Assert.Equal("Team Premium", SubscriptionTier.Label(
             ["raven", "chat"], "default_raven_premium", "team"));
 
     [Fact]
@@ -127,7 +145,7 @@ public class SubscriptionTierTests
     // Past the sentinel, LabelOrNull is Label — the same two cases the export
     // and the panel show for the accounts on this machine.
     [InlineData("raven", "default_raven", "team", "Team")]
-    [InlineData("claude_max", "default_claude_max_20x", null, "Max 20x")]
+    [InlineData("claude_max", "default_claude_max_20x", null, "Ultra")]
     public void LabelOrNullIsLabelOnceAnyFieldIsThere(
         string capability, string tier, string? ravenType, string expected) =>
         Assert.Equal(expected, SubscriptionTier.LabelOrNull([capability, "chat"], tier, ravenType));
@@ -159,8 +177,50 @@ public class SubscriptionTierTests
             Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x");
 
         Assert.Equal("Team", SubscriptionTier.LabelFor(team));
-        Assert.Equal("Max 20x", SubscriptionTier.LabelFor(max));
+        Assert.Equal("Ultra", SubscriptionTier.LabelFor(max));
     }
+
+    private static readonly AccountProfile TeamSeat = new(
+        "a1", "work", "org-1", null, 0,
+        Capabilities: ["raven", "chat", "customer_terms:standard"], RateLimitTier: "default_raven", RavenType: "team");
+
+    private static UsageSnapshot Usage(params string[] keys) =>
+        new(keys.ToDictionary(key => key, _ => new UsageBucket(10, null)));
+
+    [Fact]
+    public void ATeamSeatWithAFableWeeklyLimitIsPremium() =>
+        // The organization body is the same for every seat, so the usage is the
+        // witness: a Premium seat has Fable inside its plan limits (its own
+        // weekly bucket), a Standard seat only pays for it from usage credits
+        // (claude.com/pricing).
+        Assert.Equal("Team Premium", SubscriptionTier.LabelFor(
+            TeamSeat, Usage("five_hour", "seven_day", "seven_day_fable")));
+
+    [Theory]
+    // Only Fable is the witness. Another model's weekly bucket says nothing
+    // the pricing page ties to the seat.
+    [InlineData("seven_day_sonnet")]
+    [InlineData("seven_day_opus")]
+    public void ATeamSeatWithAnotherModelsWeeklyLimitStaysTeam(string key) =>
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat, Usage("five_hour", "seven_day", key)));
+
+    [Fact]
+    public void ATeamSeatWithoutAPerModelLimitStaysTeam()
+    {
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat, Usage("five_hour", "seven_day")));
+        // Not a per-model limit: ModelBuckets excludes these keys from the dial too.
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat, Usage("seven_day", "seven_day_oauth_apps")));
+        // No usage yet says nothing about the seat.
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat));
+    }
+
+    [Fact]
+    public void APerModelLimitNamesNoOtherPlan() =>
+        // Ultra has a Fable bucket too; only Team has seats to tell apart.
+        Assert.Equal("Ultra", SubscriptionTier.LabelFor(
+            new AccountProfile("a2", "personal", "org-2", null, 0,
+                Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x"),
+            Usage("seven_day", "seven_day_fable")));
 
     [Fact]
     public void LabelForKeepsTheNeverAskedSentinel() =>

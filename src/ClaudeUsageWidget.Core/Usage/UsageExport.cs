@@ -28,7 +28,7 @@ namespace ClaudeUsageWidget.Core;
 /// JSON only from pre-v3 writers.</param>
 /// <param name="Plan">v3. The account's subscription plan label, as
 /// <see cref="SubscriptionTier.LabelFor"/> reads it off the account's stored
-/// profile — "Team", "Max 20x", "Pro", … — which
+/// profile and this snapshot — "Team", "Team Premium", "Max", "Ultra", "Pro", … — which
 /// is what entitlement the launcher filters by; the model buckets above are
 /// not. Null when the three raw subscription fields were never fetched, and
 /// written as `"plan":null` rather than omitted (the writer sets no ignore
@@ -110,6 +110,30 @@ public static class UsageExport
                 .Select(s => s.ToLowerInvariant())
                 .ToList(),
             plan);
+    }
+
+    /// Where this account's figures go, or null when the export is off. The
+    /// account's own ExportPath wins; otherwise ExportDirectory plus
+    /// <see cref="FileNameFor"/>.
+    ///
+    /// Two accounts whose names slugify alike would overwrite each other's file
+    /// on every refresh. The first of them in settings order keeps the plain
+    /// name, which readers open by name; each later one gets `-<id>` appended.
+    /// An account with its own ExportPath writes elsewhere and takes no name
+    /// here. An account missing from the list (removed mid-poll) counts as the last.
+    public static string? ExportPathFor(WidgetSettingsData data, string accountId, string displayName)
+    {
+        var path = data.Account(accountId)?.ExportPath;
+        if (!string.IsNullOrWhiteSpace(path)) return path;
+        if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return null;
+
+        var name = FileNameFor(displayName, accountId);
+        var taken = data.Accounts
+            .TakeWhile(a => a.Id != accountId)
+            .Where(a => string.IsNullOrWhiteSpace(a.ExportPath))
+            .Any(a => string.Equals(FileNameFor(a.DisplayName, a.Id), name, StringComparison.Ordinal));
+        if (taken) name += "-" + FileNameFor(accountId, accountId);
+        return Path.Combine(data.ExportDirectory, name + ".widget.json");
     }
 
     /// A display name turned into one path segment: trim, lowercase, anything

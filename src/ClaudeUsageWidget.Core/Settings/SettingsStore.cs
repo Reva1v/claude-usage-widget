@@ -20,6 +20,7 @@ public sealed class SettingsStore
     };
 
     private readonly string _path;
+    private readonly Lock _saveLock = new();
 
     public SettingsStore(string path)
     {
@@ -48,10 +49,36 @@ public sealed class SettingsStore
         }
     }
 
+    /// Writes a sibling temp file, flushes it to disk, then moves it over the
+    /// real one: an in-place rewrite cut short by a crash leaves a truncated
+    /// file, which Load reads as defaults, every account gone. Same directory,
+    /// so the move is a rename on one volume. A crash before the move leaves
+    /// at most one `.tmp`, which the next save overwrites.
     public void Save(WidgetSettingsData data)
     {
         var directory = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-        File.WriteAllText(_path, JsonSerializer.Serialize(data, SerializerOptions));
+
+        var temp = _path + ".tmp";
+        // One temp name per store, so two saves at once must not share it.
+        lock (_saveLock)
+        {
+            try
+            {
+                using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    JsonSerializer.Serialize(stream, data, SerializerOptions);
+                    stream.Flush(flushToDisk: true);
+                }
+
+                FileReplace.Move(temp, _path);
+            }
+            catch (Exception ex)
+            {
+                try { File.Delete(temp); }
+                catch (Exception cleanup) { throw new AggregateException(ex, cleanup); }
+                throw;
+            }
+        }
     }
 }

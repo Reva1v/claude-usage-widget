@@ -56,7 +56,8 @@ shifting the rows below it.
 Each dial reads its percentage with the time until that window resets
 underneath. The three usage dials:
 
-- **5H** — the 5-hour session limit
+- **5H** — the 5-hour session limit. A verified Ultra account has none: the
+  dial reads `∞` over "no limit", and so do the tray tooltip and the band
 - **7D** — the 7-day weekly limit
 - One per-model weekly limit — whichever the server returns; pick a specific
   one from the tray menu when more than one applies
@@ -98,7 +99,7 @@ The menu has:
   Each account has **Rename…** and **Sign out and remove**; **Add account…**
   opens a sign-in window for a new one and is disabled once four are configured
 - **Tray shows** — pick which figure (5H, 7D or MODEL) the tray icon itself
-  displays
+  displays. 5H on an account without a 5-hour limit shows 7D instead
 - **Model limit** — pick which per-model weekly limit the dial shows
   (appears once the server returns more than one)
 - **Layout** — **Classic** or **Account rows** (see above), and **Edit
@@ -163,19 +164,25 @@ account. Keys in this file are camelCase, as shown.
   "fiveResetAt": 1787750400, "sevenResetAt": 1787860800,
   "account": "Personal", "modelKey": "seven_day_fable", "modelLabel": "FABLE",
   "modelSevenDay": 15, "modelResetAt": 1788278400,
-  "availableModels": ["fable"], "plan": "Max 20x" }
+  "availableModels": ["fable"], "plan": "Max" }
 ```
 
 `atMs` is epoch milliseconds; the three reset stamps are epoch seconds. The
 `model*` four describe the per-model weekly limit the third dial shows and are
 all null on an account that has none. `availableModels` lists that account's
 per-model weekly buckets (`seven_day_` stripped, lowercased) and is empty rather
-than null when it has none. `plan` is the subscription label — "Team",
-"Max 20x", "Pro" — re-read once an hour, and `null` until the widget has read
-it: treat that the same as the key being absent. The file is written whole
-(temp file, then move), so a reader polling it never catches half of one.
-Nothing is written for an account with neither window — zeros would read as
-"0% used", which is the opposite of the truth.
+than null when it has none. `plan` is the subscription label — "Pro", "Max",
+"Ultra", "Team", "Team Premium" — re-read once an hour, and `null` until the
+widget has read it: treat that the same as the key being absent. The
+organization does not say which kind a Team seat is, so a seat whose usage
+carries a Fable weekly limit reads "Team Premium": a Standard seat
+pays for that model from usage credits instead. These names replace the
+earlier `plan` values: "Max 20x" is now "Ultra", "Max 5x" is "Max", and a
+Premium seat's "Team" is "Team Premium". The
+file is written whole (temp file, then move), so a reader polling it never
+catches half of one. `fiveHour` and `fiveResetAt` are null on an account
+without a 5-hour limit (Ultra). Nothing is written for an account with neither
+window — zeros would read as "0% used", which is the opposite of the truth.
 
 ## Service status
 
@@ -214,7 +221,7 @@ half their width, which is what keeps them sharp on a 2x display. The panel is t
 pictures is a flat gradient standing in for a desktop.
 
 **The per-model dial depends on your plan.** A separate weekly limit for a
-specific model is a Max and Team Premium arrangement. On Pro and Team
+specific model is a Max, Ultra and Team Premium arrangement. On Pro and Team
 Standard that model is billed from usage credits instead, so the dial shows
 whichever per-model limit your account does have, or `n/a` if it has none.
 
@@ -285,7 +292,8 @@ and writes `menu.png`, `submenu.png` and a `metrics.txt` of the measurements
 $env:CUW_RENDER_MENU = "$env:TEMP\cuw-menu"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-336 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
+432 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
+`Tests/ClaudeUsageWidget.App.Tests`.
 
 ## Architecture
 

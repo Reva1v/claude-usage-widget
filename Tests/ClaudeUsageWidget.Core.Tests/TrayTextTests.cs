@@ -36,6 +36,33 @@ public class TrayTextTests
     }
 
     [Fact]
+    public void NoLimitShowsInfinityRatherThanADash()
+    {
+        // A dash means "no data"; an account without a five-hour window has
+        // its answer, and it is "unlimited".
+        var metrics = TrayText.Metrics(new[] { new DialModel("5H", null, "no limit", NoLimit: true) });
+        Assert.Equal(new[] { new TrayMetric("5H", "∞") }, metrics);
+    }
+
+    [Theory]
+    // The icon is one number. "∞" is not one, so a 5H choice on an account
+    // without that window shows the week instead; any other choice stays.
+    [InlineData(0, true, 1)]
+    [InlineData(0, false, 0)]
+    [InlineData(1, true, 1)]
+    [InlineData(2, true, 2)]
+    public void TheIconFallsBackToTheWeekWhenTheChosenDialHasNoLimit(int chosen, bool noLimit, int expected)
+    {
+        var dials = new[]
+        {
+            new DialModel("5H", noLimit ? null : 0.4, noLimit ? "no limit" : "1h 0m", NoLimit: noLimit),
+            Model("7D", 0.77),
+            Model("FABLE", 0.01),
+        };
+        Assert.Equal(expected, TrayText.IconIndex(chosen, dials));
+    }
+
+    [Fact]
     public void ShortTitlesSurviveIntact()
     {
         Assert.Equal("OPUS", TrayText.Metrics(new[] { Model("OPUS", 0.1) })[0].Label);

@@ -1041,6 +1041,7 @@ public partial class WidgetRootView : UserControl
         dial.Title = model.Title;
         dial.Fraction = model.Fraction;
         dial.Remaining = model.Remaining;
+        dial.NoLimit = model.NoLimit;
         dial.Dimmed = dimmed;
     }
 

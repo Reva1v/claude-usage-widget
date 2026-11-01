@@ -352,20 +352,12 @@ public partial class App : System.Windows.Application
         // ExportPath comes from the freshly loaded settings, not from
         // account.Profile: it is set by hand-editing settings.json, and such
         // an edit must take effect on the next refresh, not after a restart.
-        var profile = data.Accounts.FirstOrDefault(a => a.Id == account.Profile.Id);
-        var path = profile?.ExportPath;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return;
-
-            // The file name comes from DisplayName, with the id only as a
-            // fallback: the reader wants `personal.widget.json`, not a GUID.
-            // The profile here is current — ReloadAccountProfiles pulls a
-            // rename into the live AccountRuntime.
-            path = Path.Combine(
-                data.ExportDirectory,
-                UsageExport.FileNameFor(account.Profile.DisplayName, account.Profile.Id) + ".widget.json");
-        }
+        var profile = data.Account(account.Profile.Id);
+        // The file name comes from DisplayName, with the id only as a
+        // fallback: the reader wants `personal.widget.json`, not a GUID.
+        // The profile here is current — ReloadAccountProfiles pulls a
+        // rename into the live AccountRuntime.
+        if (UsageExport.ExportPathFor(data, account.Profile.Id, account.Profile.DisplayName) is not { } path) return;
 
         // Only on a fresh successful response: overwriting the file with
         // the last good snapshot would mean bumping its "age" without
@@ -374,7 +366,7 @@ public partial class App : System.Windows.Application
         // v3: the plan the launcher filters its model list by, through the same
         // sentinel as the panel's plan line. One call, so the derivation itself
         // lives where Core.Tests can pin it — an absent profile included.
-        var plan = SubscriptionTier.LabelFor(profile);
+        var plan = SubscriptionTier.LabelFor(profile, snapshot);
 
         // ModelBucket is the same choice the third dial shows; otherwise the
         // file and the panel would call two different limits by one name.
@@ -458,10 +450,12 @@ public partial class App : System.Windows.Application
         if (account is null) return;
 
         var data = _settings!.Load();
-        var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now);
+        var plan = SubscriptionTier.LabelFor(data.Account(account.Profile.Id), account.Snapshot);
+        var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now, plan);
         var metrics = TrayText.Metrics(models);
 
-        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value, SystemTheme.TaskbarKind));
+        var index = TrayText.IconIndex(TrayIcon.MetricIndex(data.TrayMetricKey), models);
+        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[index].Value, SystemTheme.TaskbarKind));
     }
 
     /// <summary>Pulls the current state into the tray menu (checkboxes,
@@ -729,7 +723,8 @@ public partial class App : System.Windows.Application
         var now = DateTimeOffset.Now;
         var state = account.Store.CurrentState;
         var data = _settings!.Load();
-        var models = DialModel.All(account.Snapshot, data.ModelBucket, now);
+        var plan = SubscriptionTier.LabelFor(data.Account(account.Profile.Id), account.Snapshot);
+        var models = DialModel.All(account.Snapshot, data.ModelBucket, now, plan);
         var metrics = TrayText.Metrics(models);
         var statusLine = StatusLine.Text(state, now, account.Store.RetryPausedUntil);
 

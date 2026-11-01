@@ -123,7 +123,53 @@ public class AccountRowTests
 
         var rows = AccountRow.ForAll(accounts, new Dictionary<string, UsageSnapshot?>(), null, Now);
 
-        Assert.Equal(["Max 20x", "Team", "Max 5x"], rows.Select(r => r.PlanLabel));
+        Assert.Equal(["Ultra", "Team", "Max"], rows.Select(r => r.PlanLabel));
+    }
+
+    [Fact]
+    public void ATeamRowReadsItsSeatOffItsOwnSnapshot()
+    {
+        // The row hands its own snapshot to the label. The rule itself (a Fable
+        // bucket marks a Premium seat) is pinned in SubscriptionTierTests; this
+        // pins that each row asks with ITS snapshot.
+        var team = new AccountProfile("w", "work", "org-w", null, 0,
+            Capabilities: ["raven", "chat"], RateLimitTier: "default_raven", RavenType: "team");
+        var other = team with { Id = "s", DisplayName = "shared" };
+        var fable = new UsageSnapshot(new Dictionary<string, UsageBucket>
+        {
+            ["seven_day"] = new(30, Now.AddDays(3)),
+            ["seven_day_fable"] = new(0, Now.AddDays(3)),
+        });
+
+        var rows = AccountRow.ForAll(
+            [team, other],
+            new Dictionary<string, UsageSnapshot?> { ["w"] = fable, ["s"] = Snapshot(10, 600) },
+            null, Now);
+
+        Assert.Equal(["Team Premium", "Team"], rows.Select(r => r.PlanLabel));
+    }
+
+    [Fact]
+    public void AnUltraRowWithoutAFiveHourWindowReadsNoLimitAndOthersDoNot()
+    {
+        // The plan decides it: the row passes its own label to the dials.
+        var ultra = new AccountProfile("u", "personal", "org-u", null, 0,
+            Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x");
+        var max = new AccountProfile("m", "low", "org-m", null, 0,
+            Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_5x");
+        var weekOnly = new UsageSnapshot(new Dictionary<string, UsageBucket>
+        {
+            ["seven_day"] = new(77, Now.AddDays(3)),
+        });
+
+        var rows = AccountRow.ForAll(
+            [ultra, max],
+            new Dictionary<string, UsageSnapshot?> { ["u"] = weekOnly, ["m"] = weekOnly },
+            null, Now);
+
+        Assert.True(rows[0].Dials[0].NoLimit);
+        Assert.Null(rows[0].SessionResetsIn);
+        Assert.False(rows[1].Dials[0].NoLimit);
     }
 
     [Fact]

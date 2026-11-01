@@ -2,7 +2,10 @@ namespace ClaudeUsageWidget.Core;
 
 /// Everything one dial needs, derived from a snapshot. A plain value so the
 /// derivation is testable without a UI framework.
-public sealed record DialModel(string Title, double? Fraction, string? Remaining)
+/// <param name="NoLimit">The account has no such window at all, which is an
+/// answer and not missing data: every view says "no limit" instead of `n/a`.
+/// <see cref="Fraction"/> is null then, because there is nothing to fill.</param>
+public sealed record DialModel(string Title, double? Fraction, string? Remaining, bool NoLimit = false)
 {
     public static DialModel Make(string key, string title, UsageSnapshot? snapshot, DateTimeOffset now)
     {
@@ -21,12 +24,20 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     ///
     /// "5H"/"7D" — the user chose time-window labels rather than limit names,
     /// to match what the taskbar band and tray already show.
-    public static IReadOnlyList<DialModel> All(UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now)
+    public static IReadOnlyList<DialModel> All(
+        UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now, string? plan = null)
     {
         var modelKey = snapshot is null ? null : ModelBuckets.Resolve(preferredModelKey, snapshot);
 
         var fiveHour = Make("five_hour", "5H", snapshot, now);
         var sevenDay = Make("seven_day", "7D", snapshot, now);
+
+        // Ultra is the one plan sold without a five-hour limit, so on Ultra a
+        // missing five-hour figure is that answer. On any other plan, or before
+        // the plan is known, it is missing data and stays n/a: the decoder
+        // drops a null five_hour, so the snapshot alone cannot tell the two apart.
+        if (plan == SubscriptionTier.Ultra && snapshot is not null && snapshot["five_hour"] is null)
+            fiveHour = fiveHour with { Remaining = NoLimitText, NoLimit = true };
 
         // A spent week makes the five-hour window the wrong thing to wait for:
         // nothing more goes through until the WEEK resets, and a dial counting
@@ -36,7 +47,7 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
         // The per-model bucket is a seven-day window too and deliberately does
         // NOT do this: exhausting it closes one model, and the five-hour window
         // still decides when the others may be used again.
-        if (IsSpent(sevenDay)) fiveHour = fiveHour with { Remaining = sevenDay.Remaining };
+        if (IsSpent(sevenDay) && !fiveHour.NoLimit) fiveHour = fiveHour with { Remaining = sevenDay.Remaining };
 
         return
         [
@@ -53,6 +64,8 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     /// `UsageMath.Fraction` clamps at 1, so anything the server reports at or
     /// above 100 lands exactly here.
     private static bool IsSpent(DialModel dial) => dial.Fraction >= 1;
+
+    private const string NoLimitText = "no limit";
 }
 
 /// One account's line on the panel: its three dials plus the 5H reset time,
@@ -79,19 +92,19 @@ public sealed record AccountRow(
         accounts.Select(account =>
         {
             snapshots.TryGetValue(account.Id, out var snapshot);
-            var dials = DialModel.All(snapshot, preferredModelKey, now);
+            var plan = SubscriptionTier.LabelFor(account, snapshot);
+            var dials = DialModel.All(snapshot, preferredModelKey, now, plan);
             // Read off the dial rather than recomputed from the bucket: the
             // band shows one time per account, and it must be the time the
-            // panel shows, including where a spent week moved it.
+            // panel shows, including where a spent week moved it. A window that
+            // does not exist has no reset time; "no limit" is the dial's caption.
             return new AccountRow(
-                account.Id, account.DisplayName, dials, dials[0].Remaining, PlanLabelFor(account));
+                account.Id, account.DisplayName, dials,
+                dials[0].NoLimit ? null : dials[0].Remaining, plan);
         }).ToList();
-
-    /// The plan, or null while nothing has been fetched for this account. The
-    /// sentinel and the reason for it live in
-    /// <see cref="SubscriptionTier.LabelFor"/>, which the usage export reads
-    /// the same profile through.
-    private static string? PlanLabelFor(AccountProfile account) => SubscriptionTier.LabelFor(account);
+    // The plan sentinel and the Team Premium witness live in
+    // SubscriptionTier.LabelFor, which the usage export reads the same
+    // profile and snapshot through.
 }
 
 /// The line under the dials. Null means everything is fine and the widget
