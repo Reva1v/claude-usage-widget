@@ -112,6 +112,28 @@ public static class UsageExport
             plan);
     }
 
+    /// Where this account's figures go, or null when the export is off. The
+    /// account's own ExportPath wins; otherwise ExportDirectory plus
+    /// <see cref="FileNameFor"/>.
+    ///
+    /// Two accounts whose names slugify alike would overwrite each other's file
+    /// on every refresh. The first of them in the account list keeps the plain
+    /// name, which readers open by name; each later one gets `-<id>` appended.
+    /// An account missing from the list (removed mid-poll) counts as the last.
+    public static string? ExportPathFor(WidgetSettingsData data, string accountId, string displayName)
+    {
+        var path = data.Account(accountId)?.ExportPath;
+        if (!string.IsNullOrWhiteSpace(path)) return path;
+        if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return null;
+
+        var name = FileNameFor(displayName, accountId);
+        var taken = data.Accounts
+            .TakeWhile(a => a.Id != accountId)
+            .Any(a => string.Equals(FileNameFor(a.DisplayName, a.Id), name, StringComparison.Ordinal));
+        if (taken) name += "-" + FileNameFor(accountId, accountId);
+        return Path.Combine(data.ExportDirectory, name + ".widget.json");
+    }
+
     /// A display name turned into one path segment: trim, lowercase, anything
     /// outside `[a-z0-9_-]` becomes `-`, runs collapse, edges trimmed.
     ///

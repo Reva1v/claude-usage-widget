@@ -306,4 +306,70 @@ public class UsageExportTests
     [InlineData("", "id1", "id1")]
     public void FileNameForSlugifiesTheDisplayName(string displayName, string fallbackId, string expected) =>
         Assert.Equal(expected, UsageExport.FileNameFor(displayName, fallbackId));
+
+    private static AccountProfile Profile(string id, string name, string? exportPath = null) =>
+        new(id, name, null, null, 0, exportPath);
+
+    [Fact]
+    public void UniquelyNamedAccountsKeepTheirPlainFileNames()
+    {
+        // Readers outside the widget open `personal.widget.json` by name.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "personal"), Profile("id-2", "work")],
+        };
+
+        Assert.Equal(@"C:\x\personal.widget.json", UsageExport.ExportPathFor(data, "id-1", "personal"));
+        Assert.Equal(@"C:\x\work.widget.json", UsageExport.ExportPathFor(data, "id-2", "work"));
+    }
+
+    [Fact]
+    public void ASecondAccountWhoseNameSlugifiesTheSameGetsItsIdAppended()
+    {
+        // "Personal" and "personal " are one slug: without a suffix the two
+        // accounts overwrite each other's file every refresh. The account first
+        // in the list keeps the plain name, so a reader of it sees no change.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "Personal"), Profile("id-2", "personal ")],
+        };
+
+        Assert.Equal(@"C:\x\personal.widget.json", UsageExport.ExportPathFor(data, "id-1", "Personal"));
+        Assert.Equal(@"C:\x\personal-id-2.widget.json", UsageExport.ExportPathFor(data, "id-2", "personal "));
+    }
+
+    [Fact]
+    public void AnAccountMissingFromTheSettingsStillAvoidsAnotherAccountsFile()
+    {
+        // Removed while a poll was in flight: it must not overwrite the file of
+        // the account that is still there under the same name.
+        var data = new WidgetSettingsData { ExportDirectory = @"C:\x", Accounts = [Profile("id-1", "work")] };
+
+        Assert.Equal(@"C:\x\work-gone.widget.json", UsageExport.ExportPathFor(data, "gone", "Work"));
+    }
+
+    [Fact]
+    public void ExportPathIsMatchedByIdNotByPosition()
+    {
+        // The per-account override belongs to the account whose id it sits on,
+        // through WidgetSettingsData.Account, never to the first account.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "personal"), Profile("id-2", "work", @"D:\work.json")],
+        };
+
+        Assert.Equal(@"D:\work.json", UsageExport.ExportPathFor(data, "id-2", "work"));
+        Assert.Equal(@"C:\x\personal.widget.json", UsageExport.ExportPathFor(data, "id-1", "personal"));
+    }
+
+    [Fact]
+    public void NoOverrideAndNoDirectoryExportsNothing()
+    {
+        var data = new WidgetSettingsData { Accounts = [Profile("id-1", "personal")] };
+
+        Assert.Null(UsageExport.ExportPathFor(data, "id-1", "personal"));
+    }
 }

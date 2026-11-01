@@ -352,20 +352,12 @@ public partial class App : System.Windows.Application
         // ExportPath comes from the freshly loaded settings, not from
         // account.Profile: it is set by hand-editing settings.json, and such
         // an edit must take effect on the next refresh, not after a restart.
-        var profile = data.Accounts.FirstOrDefault(a => a.Id == account.Profile.Id);
-        var path = profile?.ExportPath;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return;
-
-            // The file name comes from DisplayName, with the id only as a
-            // fallback: the reader wants `personal.widget.json`, not a GUID.
-            // The profile here is current — ReloadAccountProfiles pulls a
-            // rename into the live AccountRuntime.
-            path = Path.Combine(
-                data.ExportDirectory,
-                UsageExport.FileNameFor(account.Profile.DisplayName, account.Profile.Id) + ".widget.json");
-        }
+        var profile = data.Account(account.Profile.Id);
+        // The file name comes from DisplayName, with the id only as a
+        // fallback: the reader wants `personal.widget.json`, not a GUID.
+        // The profile here is current — ReloadAccountProfiles pulls a
+        // rename into the live AccountRuntime.
+        if (UsageExport.ExportPathFor(data, account.Profile.Id, account.Profile.DisplayName) is not { } path) return;
 
         // Only on a fresh successful response: overwriting the file with
         // the last good snapshot would mean bumping its "age" without
