@@ -244,4 +244,44 @@ public class WidgetSettingsTests
         File.WriteAllText(path, "{not json");
         Assert.True(new SettingsStore(path).Load().WidgetVisible);
     }
+
+    [Fact]
+    public void SaveReplacesTheFileRatherThanRewritingItInPlace()
+    {
+        // A crash in the middle of an in-place rewrite leaves a truncated file,
+        // and Load turns that into defaults: every account gone. Replacing the
+        // file means a hard link to the old one keeps the old bytes, where an
+        // in-place rewrite would change them under both names.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { ModelBucket = "old" });
+        var before = File.ReadAllText(path);
+        var link = path + ".link";
+        Assert.True(CreateHardLink(link, path, IntPtr.Zero));
+
+        store.Save(new WidgetSettingsData { ModelBucket = "new" });
+
+        Assert.Equal(before, File.ReadAllText(link));
+        Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+        File.Delete(link);
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
+
+    [Fact]
+    public void AFailedSaveLeavesTheOldFileAndNoTempFile()
+    {
+        // NaN is not valid JSON, so the serializer throws part-way through.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { ModelBucket = "old" });
+        var before = File.ReadAllText(path);
+
+        Assert.ThrowsAny<Exception>(() => store.Save(new WidgetSettingsData { WidgetSide = double.NaN }));
+
+        Assert.Equal(before, File.ReadAllText(path));
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
 }
