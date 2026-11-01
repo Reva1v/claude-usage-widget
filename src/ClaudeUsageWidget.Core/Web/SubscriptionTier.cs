@@ -12,6 +12,10 @@ namespace ClaudeUsageWidget.Core;
 /// line: `chat` comes first there and second above, so capabilities are matched
 /// by MEMBERSHIP and never by index.
 ///
+/// A Team seat's kind (Standard or Premium) is not in that body: two seats of
+/// one organization logged the same fields on 2026-11-01, so the label stays
+/// "Team" until a tier string says more.
+///
 /// Everything the three samples do not cover — Pro, Free, Enterprise — comes
 /// from research, not from a body seen here: helixml/helix
 /// `subscription_profile.go` and lugia19/Claude-Usage-Extension `claude-api.js`
@@ -66,7 +70,7 @@ public static class SubscriptionTier
         // would otherwise read as one of the personal plans.
         if (!string.IsNullOrEmpty(ravenType) || caps.Contains("raven")) return Named("Team", tier, "raven");
 
-        if (caps.Contains("claude_max")) return Named("Max", tier, "claude_max");
+        if (caps.Contains("claude_max")) return MaxPlan(tier);
         if (caps.Contains("claude_pro")) return "Pro";
 
         if (tier.Contains("enterprise", StringComparison.OrdinalIgnoreCase) ||
@@ -82,9 +86,21 @@ public static class SubscriptionTier
         return tier.Length == 0 ? "Free" : Prettify(tier);
     }
 
-    /// The plan name plus whatever the tier adds after its family — "Max" +
-    /// "20x", "Team" + "premium". A tier that names another family, or none at
-    /// all, leaves the bare name: better a plan without its multiplier than a
+    /// Max 5x is sold as "Max" and Max 20x as "Ultra" since the plans were
+    /// renamed (claude.com/pricing: Max $100, Ultra $200). The tier strings
+    /// kept the old names: `default_claude_max_20x` was still what an Ultra
+    /// account returned on 2026-11-01.
+    private static string MaxPlan(string tier) => Strip(tier) switch
+    {
+        "claude_max_20x" => "Ultra",
+        "claude_max_5x" => "Max",
+        _ => Named("Max", tier, "claude_max"),
+    };
+
+    /// The plan name plus whatever the tier adds after its family, in title
+    /// case: "Team" + "premium" reads "Team Premium", as the pricing page
+    /// spells the seat. A tier that names another family, or none at all,
+    /// leaves the bare name: better a plan without its multiplier than a
     /// multiplier that was invented.
     private static string Named(string plan, string tier, string family)
     {
@@ -92,7 +108,11 @@ public static class SubscriptionTier
         if (rest == family) return plan;
         if (!rest.StartsWith(family + "_", StringComparison.Ordinal)) return plan;
 
-        return $"{plan} {rest[(family.Length + 1)..].Replace('_', ' ')}";
+        var words = rest[(family.Length + 1)..]
+            .Split('_', StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => char.ToUpperInvariant(word[0]) + word[1..])
+            .ToList();
+        return words.Count == 0 ? plan : $"{plan} {string.Join(' ', words)}";
     }
 
     /// Every tier seen so far is `default_<something>`; the prefix says nothing

@@ -123,7 +123,7 @@ public class AccountRowTests
 
         var rows = AccountRow.ForAll(accounts, new Dictionary<string, UsageSnapshot?>(), null, Now);
 
-        Assert.Equal(["Max 20x", "Team", "Max 5x"], rows.Select(r => r.PlanLabel));
+        Assert.Equal(["Ultra", "Team", "Max"], rows.Select(r => r.PlanLabel));
     }
 
     [Fact]

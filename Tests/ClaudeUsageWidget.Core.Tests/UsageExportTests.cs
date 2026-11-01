@@ -76,6 +76,23 @@ public class UsageExportTests
     }
 
     [Fact]
+    public void AnAccountWithoutAFiveHourWindowExportsNullNeverZero()
+    {
+        // Ultra has the week only. A reader must see "no five-hour figure", and
+        // 0 would claim a window that is empty instead of one that does not exist.
+        var snapshot = new UsageSnapshot(new Dictionary<string, UsageBucket>
+        {
+            ["seven_day"] = new(77, Now.AddDays(3)),
+        });
+
+        var json = JsonSerializer.Serialize(UsageExport.Payload(snapshot, Now), UsageExport.JsonOptions);
+
+        Assert.Contains("\"fiveHour\":null", json);
+        Assert.Contains("\"fiveResetAt\":null", json);
+        Assert.Contains("\"sevenDay\":77", json);
+    }
+
+    [Fact]
     public void CarriesTheModelBucketTheDialShows()
     {
         // The reader wants the same per-model limit the third dial shows, not
@@ -262,7 +279,7 @@ public class UsageExportTests
     // into the exported record. SubscriptionTierTests owns the label rules —
     // this pins that the export carries THAT label and not a second opinion.
     [InlineData("raven", "default_raven", "team", "Team")]
-    [InlineData("claude_max", "default_claude_max_20x", null, "Max 20x")]
+    [InlineData("claude_max", "default_claude_max_20x", null, "Ultra")]
     public void ThePlanTravelsFromTheRawSubscriptionFields(
         string capability, string tier, string? ravenType, string expected)
     {
