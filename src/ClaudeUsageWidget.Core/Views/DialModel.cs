@@ -2,7 +2,10 @@ namespace ClaudeUsageWidget.Core;
 
 /// Everything one dial needs, derived from a snapshot. A plain value so the
 /// derivation is testable without a UI framework.
-public sealed record DialModel(string Title, double? Fraction, string? Remaining)
+/// <param name="NoLimit">The account has no such window at all, which is an
+/// answer and not missing data: every view says "no limit" instead of `n/a`.
+/// <see cref="Fraction"/> is null then, because there is nothing to fill.</param>
+public sealed record DialModel(string Title, double? Fraction, string? Remaining, bool NoLimit = false)
 {
     public static DialModel Make(string key, string title, UsageSnapshot? snapshot, DateTimeOffset now)
     {
@@ -28,6 +31,12 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
         var fiveHour = Make("five_hour", "5H", snapshot, now);
         var sevenDay = Make("seven_day", "7D", snapshot, now);
 
+        // A week with no five-hour window is an account without that limit
+        // (Ultra), not a missing figure. Without the week there is no telling
+        // the two apart, so the dial stays n/a.
+        if (snapshot?["five_hour"] is null && snapshot?["seven_day"] is not null)
+            fiveHour = fiveHour with { Remaining = NoLimitText, NoLimit = true };
+
         // A spent week makes the five-hour window the wrong thing to wait for:
         // nothing more goes through until the WEEK resets, and a dial counting
         // down twenty minutes answers a question nobody is asking. The
@@ -36,7 +45,7 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
         // The per-model bucket is a seven-day window too and deliberately does
         // NOT do this: exhausting it closes one model, and the five-hour window
         // still decides when the others may be used again.
-        if (IsSpent(sevenDay)) fiveHour = fiveHour with { Remaining = sevenDay.Remaining };
+        if (IsSpent(sevenDay) && !fiveHour.NoLimit) fiveHour = fiveHour with { Remaining = sevenDay.Remaining };
 
         return
         [
@@ -53,6 +62,8 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     /// `UsageMath.Fraction` clamps at 1, so anything the server reports at or
     /// above 100 lands exactly here.
     private static bool IsSpent(DialModel dial) => dial.Fraction >= 1;
+
+    private const string NoLimitText = "no limit";
 }
 
 /// One account's line on the panel: its three dials plus the 5H reset time,
@@ -82,9 +93,11 @@ public sealed record AccountRow(
             var dials = DialModel.All(snapshot, preferredModelKey, now);
             // Read off the dial rather than recomputed from the bucket: the
             // band shows one time per account, and it must be the time the
-            // panel shows, including where a spent week moved it.
+            // panel shows, including where a spent week moved it. A window that
+            // does not exist has no reset time; "no limit" is the dial's caption.
             return new AccountRow(
-                account.Id, account.DisplayName, dials, dials[0].Remaining, PlanLabelFor(account));
+                account.Id, account.DisplayName, dials,
+                dials[0].NoLimit ? null : dials[0].Remaining, PlanLabelFor(account));
         }).ToList();
 
     /// The plan, or null while nothing has been fetched for this account. The

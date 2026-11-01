@@ -164,6 +164,14 @@ internal static class LayoutPreview
 
         RenderBand(dir, AccountRow.ForAll(accounts, snapshots, null, now));
 
+        // Ultra: the week only, no five-hour window. Its own folder, because
+        // the band files have fixed names.
+        var ultraDir = Path.Combine(dir, "ultra");
+        Directory.CreateDirectory(ultraDir);
+        var ultra = new Dictionary<string, UsageSnapshot?>(snapshots) { ["a1"] = WeekOnly(77, 1, now) };
+        RenderPlanLine(ultraDir, "plan-line", NamePlacement.Above, accounts.Take(2).ToList(), ultra, now);
+        RenderBand(ultraDir, AccountRow.ForAll(accounts.Take(2).ToList(), ultra, null, now));
+
         RenderHero(dir, "hero-classic.png", PanelViews.LayoutFor(PanelView.Classic), StatusMode.Cell,
             accounts.Take(1).ToList(), snapshots, now, 300);
         RenderHero(dir, "hero-rows.png", WidgetLayout.Default, StatusMode.Line,
@@ -509,7 +517,7 @@ internal static class LayoutPreview
     /// The plan under the account name, in all three placements that draw a
     /// name — "the account text on top, with the subscription tier below it"
     /// (the user, 2026-09-04). Two accounts with the fields the live bodies carried, so the
-    /// lines read `Max 20x` and `Team` rather than a placeholder.
+    /// lines read `Ultra` and `Team` rather than a placeholder.
     ///
     /// Each is rendered TWICE, `<stem>-off` and `<stem>-on`, and the pair is the
     /// measurement: off is the panel that ships today, and the two files must
@@ -661,6 +669,13 @@ internal static class LayoutPreview
         using var stream = File.Create(path);
         encoder.Save(stream);
     }
+
+    private static UsageSnapshot WeekOnly(double seven, double model, DateTimeOffset now) =>
+        new(new Dictionary<string, UsageBucket>
+        {
+            ["seven_day"] = new(seven, now.AddDays(3)),
+            ["seven_day_fable"] = new(model, now.AddDays(3)),
+        });
 
     private static UsageSnapshot Snap(double five, double seven, double model, DateTimeOffset now) =>
         new(new Dictionary<string, UsageBucket>

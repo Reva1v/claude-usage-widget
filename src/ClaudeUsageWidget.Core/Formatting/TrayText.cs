@@ -18,12 +18,24 @@ public static class TrayText
     internal static string LabelFor(string title) =>
         title.Length <= 4 ? title : title[..3];
 
+    /// The dial the tray ICON draws: the one chosen in "Tray shows", unless
+    /// that account has no such limit. The icon is one number and "∞" is not
+    /// one, so a 5H choice falls back to the week, which such an account always
+    /// has. The setting is left alone: another account may have the window.
+    public static int IconIndex(int chosen, IReadOnlyList<DialModel> dials) =>
+        chosen < dials.Count && dials[chosen].NoLimit ? WeekIndex : chosen;
+
+    /// `DialModel.All` order: 5H, 7D, the model.
+    private const int WeekIndex = 1;
+
+    /// "42%", "∞" for a window the account does not have, "—" for no data.
+    internal static string ValueFor(DialModel model) =>
+        model.NoLimit ? "∞" : model.Fraction is { } fraction ? UsageMath.PercentText(fraction) : "—";
+
     public static IReadOnlyList<TrayMetric> Metrics(IReadOnlyList<DialModel> models) =>
         models
             .Where(model => model.Title.Length > 0)
-            .Select(model => new TrayMetric(
-                LabelFor(model.Title),
-                model.Fraction is { } fraction ? UsageMath.PercentText(fraction) : "—"))
+            .Select(model => new TrayMetric(LabelFor(model.Title), ValueFor(model)))
             .ToList();
 }
 
@@ -44,7 +56,7 @@ public static class BandText
     public static IReadOnlyList<BandEntry> Entries(IReadOnlyList<AccountRow> rows) =>
         rows.Select(row => new BandEntry(
             row.DisplayName.Length <= MaxNameLength ? row.DisplayName : row.DisplayName[..MaxNameLength],
-            row.Dials[0].Fraction is { } fraction ? UsageMath.PercentText(fraction) : "—",
+            TrayText.ValueFor(row.Dials[0]),
             row.SessionResetsIn)).ToList();
 
     /// The band as it was before accounts existed: the tray account's three

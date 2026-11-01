@@ -453,7 +453,8 @@ public partial class App : System.Windows.Application
         var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now);
         var metrics = TrayText.Metrics(models);
 
-        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value, SystemTheme.TaskbarKind));
+        var index = TrayText.IconIndex(TrayIcon.MetricIndex(data.TrayMetricKey), models);
+        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[index].Value, SystemTheme.TaskbarKind));
     }
 
     /// <summary>Pulls the current state into the tray menu (checkboxes,

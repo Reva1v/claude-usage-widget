@@ -29,4 +29,24 @@ public class BandViewTests
         Assert.Equal(["3%", "68%", "58%"], entries.Select(e => e.Percent));
         Assert.All(entries, e => Assert.Null(e.ResetsIn));
     }
+
+    [Fact]
+    public void AnAccountWithoutAFiveHourWindowShowsNoLimitInBothBandViews()
+    {
+        // Ultra: the week only. The band reads "∞" with no reset time for the
+        // five-hour slot rather than a dash that looks like a failed fetch.
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_787_748_000);
+        var snapshot = new UsageSnapshot(new Dictionary<string, UsageBucket>
+        {
+            ["seven_day"] = new(77, now.AddDays(2)),
+            ["seven_day_fable"] = new(1, now.AddDays(2)),
+        });
+        var account = new AccountProfile("a", "personal", null, null, 0);
+        var row = AccountRow.ForAll([account], new Dictionary<string, UsageSnapshot?> { ["a"] = snapshot }, null, now)[0];
+
+        Assert.Equal(["∞", "77%", "1%"], BandText.MetricEntries(row).Select(e => e.Percent));
+        var entry = Assert.Single(BandText.Entries([row]));
+        Assert.Equal("∞", entry.Percent);
+        Assert.Null(entry.ResetsIn);
+    }
 }
