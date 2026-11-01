@@ -175,8 +175,10 @@ than null when it has none. `plan` is the subscription label — "Pro", "Max",
 "Ultra", "Team", "Team Premium" — re-read once an hour, and `null` until the
 widget has read it: treat that the same as the key being absent. The
 organization does not say which kind a Team seat is, so a seat whose usage
-carries a per-model weekly limit (Fable) reads "Team Premium": a Standard seat
-pays for that model from usage credits instead. The
+carries a Fable weekly limit reads "Team Premium": a Standard seat
+pays for that model from usage credits instead. These names replace the
+earlier `plan` values: "Max 20x" is now "Ultra", "Max 5x" is "Max", and a
+Premium seat's "Team" is "Team Premium". The
 file is written whole (temp file, then move), so a reader polling it never
 catches half of one. `fiveHour` and `fiveResetAt` are null on an account
 without a 5-hour limit (Ultra). Nothing is written for an account with neither
@@ -290,7 +292,7 @@ and writes `menu.png`, `submenu.png` and a `metrics.txt` of the measurements
 $env:CUW_RENDER_MENU = "$env:TEMP\cuw-menu"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-421 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
+432 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
 `Tests/ClaudeUsageWidget.App.Tests`.
 
 ## Architecture

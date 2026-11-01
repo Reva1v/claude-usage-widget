@@ -24,17 +24,19 @@ public sealed record DialModel(string Title, double? Fraction, string? Remaining
     ///
     /// "5H"/"7D" — the user chose time-window labels rather than limit names,
     /// to match what the taskbar band and tray already show.
-    public static IReadOnlyList<DialModel> All(UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now)
+    public static IReadOnlyList<DialModel> All(
+        UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now, string? plan = null)
     {
         var modelKey = snapshot is null ? null : ModelBuckets.Resolve(preferredModelKey, snapshot);
 
         var fiveHour = Make("five_hour", "5H", snapshot, now);
         var sevenDay = Make("seven_day", "7D", snapshot, now);
 
-        // A week with no five-hour window is an account without that limit
-        // (Ultra), not a missing figure. Without the week there is no telling
-        // the two apart, so the dial stays n/a.
-        if (snapshot?["five_hour"] is null && snapshot?["seven_day"] is not null)
+        // Ultra is the one plan sold without a five-hour limit, so on Ultra a
+        // missing five-hour figure is that answer. On any other plan, or before
+        // the plan is known, it is missing data and stays n/a: the decoder
+        // drops a null five_hour, so the snapshot alone cannot tell the two apart.
+        if (plan == SubscriptionTier.Ultra && snapshot is not null && snapshot["five_hour"] is null)
             fiveHour = fiveHour with { Remaining = NoLimitText, NoLimit = true };
 
         // A spent week makes the five-hour window the wrong thing to wait for:
@@ -90,14 +92,15 @@ public sealed record AccountRow(
         accounts.Select(account =>
         {
             snapshots.TryGetValue(account.Id, out var snapshot);
-            var dials = DialModel.All(snapshot, preferredModelKey, now);
+            var plan = SubscriptionTier.LabelFor(account, snapshot);
+            var dials = DialModel.All(snapshot, preferredModelKey, now, plan);
             // Read off the dial rather than recomputed from the bucket: the
             // band shows one time per account, and it must be the time the
             // panel shows, including where a spent week moved it. A window that
             // does not exist has no reset time; "no limit" is the dial's caption.
             return new AccountRow(
                 account.Id, account.DisplayName, dials,
-                dials[0].NoLimit ? null : dials[0].Remaining, SubscriptionTier.LabelFor(account, snapshot));
+                dials[0].NoLimit ? null : dials[0].Remaining, plan);
         }).ToList();
     // The plan sentinel and the Team Premium witness live in
     // SubscriptionTier.LabelFor, which the usage export reads the same

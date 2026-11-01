@@ -188,12 +188,21 @@ public class SubscriptionTierTests
         new(keys.ToDictionary(key => key, _ => new UsageBucket(10, null)));
 
     [Fact]
-    public void ATeamSeatWithAPerModelWeeklyLimitIsPremium() =>
+    public void ATeamSeatWithAFableWeeklyLimitIsPremium() =>
         // The organization body is the same for every seat, so the usage is the
         // witness: a Premium seat has Fable inside its plan limits (its own
-        // weekly bucket), a Standard seat only pays for it from usage credits.
+        // weekly bucket), a Standard seat only pays for it from usage credits
+        // (claude.com/pricing).
         Assert.Equal("Team Premium", SubscriptionTier.LabelFor(
             TeamSeat, Usage("five_hour", "seven_day", "seven_day_fable")));
+
+    [Theory]
+    // Only Fable is the witness. Another model's weekly bucket says nothing
+    // the pricing page ties to the seat.
+    [InlineData("seven_day_sonnet")]
+    [InlineData("seven_day_opus")]
+    public void ATeamSeatWithAnotherModelsWeeklyLimitStaysTeam(string key) =>
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat, Usage("five_hour", "seven_day", key)));
 
     [Fact]
     public void ATeamSeatWithoutAPerModelLimitStaysTeam()

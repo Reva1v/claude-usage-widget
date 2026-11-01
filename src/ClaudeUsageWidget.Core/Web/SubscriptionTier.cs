@@ -36,19 +36,23 @@ public static class SubscriptionTier
     public static string? LabelFor(AccountProfile? profile) => LabelFor(profile, null);
 
     /// The same, with the account's latest usage as the witness the
-    /// organization lacks: a Team seat whose plan limits carry a per-model
-    /// weekly bucket (Fable) is a Premium seat, because a Standard seat gets
-    /// that model only through usage credits. No usage yet reads plain "Team".
+    /// organization lacks: a Team seat whose plan limits carry a Fable weekly
+    /// bucket (any utilization) is a Premium seat, because a Standard seat gets
+    /// Fable only through usage credits (claude.com/pricing). Another model's
+    /// bucket is no witness. No usage yet reads plain "Team".
     public static string? LabelFor(AccountProfile? profile, UsageSnapshot? usage)
     {
         var label = profile is null
             ? null
             : LabelOrNull(profile.Capabilities, profile.RateLimitTier, profile.RavenType);
 
-        return label == "Team" && usage is not null && ModelBuckets.Available(usage).Count > 0
+        return label == "Team" && usage?["seven_day_fable"] is not null
             ? "Team Premium"
             : label;
     }
+
+    /// The plan sold without a five-hour limit; the dials read it.
+    public const string Ultra = "Ultra";
 
     /// The plan, or null while nothing has been fetched for this account.
     ///
@@ -104,7 +108,7 @@ public static class SubscriptionTier
     /// account returned on 2026-11-01.
     private static string MaxPlan(string tier) => Strip(tier) switch
     {
-        "claude_max_20x" => "Ultra",
+        "claude_max_20x" => Ultra,
         "claude_max_5x" => "Max",
         _ => Named("Max", tier, "claude_max"),
     };

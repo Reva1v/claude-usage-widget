@@ -41,7 +41,8 @@ public class BandViewTests
             ["seven_day"] = new(77, now.AddDays(2)),
             ["seven_day_fable"] = new(1, now.AddDays(2)),
         });
-        var account = new AccountProfile("a", "personal", null, null, 0);
+        var account = new AccountProfile("a", "personal", null, null, 0,
+            Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x");
         var row = AccountRow.ForAll([account], new Dictionary<string, UsageSnapshot?> { ["a"] = snapshot }, null, now)[0];
 
         Assert.Equal(["∞", "77%", "1%"], BandText.MetricEntries(row).Select(e => e.Percent));

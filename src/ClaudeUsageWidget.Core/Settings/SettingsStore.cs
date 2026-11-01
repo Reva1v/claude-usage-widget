@@ -71,7 +71,7 @@ public sealed class SettingsStore
                     stream.Flush(flushToDisk: true);
                 }
 
-                File.Move(temp, _path, overwrite: true);
+                FileReplace.Move(temp, _path);
             }
             catch (Exception ex)
             {

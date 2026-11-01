@@ -25,7 +25,7 @@ public static class UsageExportWriter
             // null policy are the reader's contract, and Core.Tests pin them
             // through that same object.
             File.WriteAllText(temp, JsonSerializer.Serialize(payload, UsageExport.JsonOptions));
-            File.Move(temp, path, overwrite: true);
+            FileReplace.Move(temp, path);
         }
         catch (Exception ex)
         {

@@ -117,9 +117,10 @@ public static class UsageExport
     /// <see cref="FileNameFor"/>.
     ///
     /// Two accounts whose names slugify alike would overwrite each other's file
-    /// on every refresh. The first of them in the account list keeps the plain
+    /// on every refresh. The first of them in settings order keeps the plain
     /// name, which readers open by name; each later one gets `-<id>` appended.
-    /// An account missing from the list (removed mid-poll) counts as the last.
+    /// An account with its own ExportPath writes elsewhere and takes no name
+    /// here. An account missing from the list (removed mid-poll) counts as the last.
     public static string? ExportPathFor(WidgetSettingsData data, string accountId, string displayName)
     {
         var path = data.Account(accountId)?.ExportPath;
@@ -129,6 +130,7 @@ public static class UsageExport
         var name = FileNameFor(displayName, accountId);
         var taken = data.Accounts
             .TakeWhile(a => a.Id != accountId)
+            .Where(a => string.IsNullOrWhiteSpace(a.ExportPath))
             .Any(a => string.Equals(FileNameFor(a.DisplayName, a.Id), name, StringComparison.Ordinal));
         if (taken) name += "-" + FileNameFor(accountId, accountId);
         return Path.Combine(data.ExportDirectory, name + ".widget.json");

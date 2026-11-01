@@ -358,6 +358,21 @@ public class UsageExportTests
     }
 
     [Fact]
+    public void AnAccountWithItsOwnExportPathDoesNotTakeThePlainName()
+    {
+        // The first account writes to its own path, so the plain name in the
+        // directory is free and the second account keeps it.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "personal", @"D:\own.json"), Profile("id-2", "personal")],
+        };
+
+        Assert.Equal(@"D:\own.json", UsageExport.ExportPathFor(data, "id-1", "personal"));
+        Assert.Equal(@"C:\x\personal.widget.json", UsageExport.ExportPathFor(data, "id-2", "personal"));
+    }
+
+    [Fact]
     public void AnAccountMissingFromTheSettingsStillAvoidsAnotherAccountsFile()
     {
         // Removed while a poll was in flight: it must not overwrite the file of

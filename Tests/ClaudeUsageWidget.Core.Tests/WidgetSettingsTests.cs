@@ -271,6 +271,26 @@ public class WidgetSettingsTests
     private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
 
     [Fact]
+    public async Task SaveWaitsOutAReaderThatHoldsTheFileBriefly()
+    {
+        // A reader that opens settings.json with FileShare.ReadWrite but not
+        // Delete blocks the move over it. A short hold must cost a short wait,
+        // not the setting.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { ModelBucket = "old" });
+
+        var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var release = Task.Delay(150).ContinueWith(_ => reader.Dispose(), TaskScheduler.Default);
+
+        store.Save(new WidgetSettingsData { ModelBucket = "new" });
+        await release;
+
+        Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
     public void AFailedSaveLeavesTheOldFileAndNoTempFile()
     {
         // NaN is not valid JSON, so the serializer throws part-way through.
