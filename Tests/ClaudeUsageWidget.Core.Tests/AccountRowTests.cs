@@ -127,6 +127,20 @@ public class AccountRowTests
     }
 
     [Fact]
+    public void ATeamRowWithAPerModelLimitReadsTeamPremium()
+    {
+        // The row hands its own snapshot to the label: Snapshot() carries
+        // seven_day_opus, a per-model weekly limit, which only a Premium seat has.
+        var account = new AccountProfile("w", "work", "org-w", null, 0,
+            Capabilities: ["raven", "chat"], RateLimitTier: "default_raven", RavenType: "team");
+
+        var row = Assert.Single(AccountRow.ForAll(
+            [account], new Dictionary<string, UsageSnapshot?> { ["w"] = Snapshot(10, 600) }, null, Now));
+
+        Assert.Equal("Team Premium", row.PlanLabel);
+    }
+
+    [Fact]
     public void AnAccountWhoseFieldsWereNeverFetchedHasNoPlanLabel()
     {
         // Null is "we have not asked yet", and it must NOT read as Free: a fresh

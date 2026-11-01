@@ -180,6 +180,39 @@ public class SubscriptionTierTests
         Assert.Equal("Ultra", SubscriptionTier.LabelFor(max));
     }
 
+    private static readonly AccountProfile TeamSeat = new(
+        "a1", "work", "org-1", null, 0,
+        Capabilities: ["raven", "chat", "customer_terms:standard"], RateLimitTier: "default_raven", RavenType: "team");
+
+    private static UsageSnapshot Usage(params string[] keys) =>
+        new(keys.ToDictionary(key => key, _ => new UsageBucket(10, null)));
+
+    [Fact]
+    public void ATeamSeatWithAPerModelWeeklyLimitIsPremium() =>
+        // The organization body is the same for every seat, so the usage is the
+        // witness: a Premium seat has Fable inside its plan limits (its own
+        // weekly bucket), a Standard seat only pays for it from usage credits.
+        Assert.Equal("Team Premium", SubscriptionTier.LabelFor(
+            TeamSeat, Usage("five_hour", "seven_day", "seven_day_fable")));
+
+    [Fact]
+    public void ATeamSeatWithoutAPerModelLimitStaysTeam()
+    {
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat, Usage("five_hour", "seven_day")));
+        // Not a per-model limit: ModelBuckets excludes these keys from the dial too.
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat, Usage("seven_day", "seven_day_oauth_apps")));
+        // No usage yet says nothing about the seat.
+        Assert.Equal("Team", SubscriptionTier.LabelFor(TeamSeat));
+    }
+
+    [Fact]
+    public void APerModelLimitNamesNoOtherPlan() =>
+        // Ultra has a Fable bucket too; only Team has seats to tell apart.
+        Assert.Equal("Ultra", SubscriptionTier.LabelFor(
+            new AccountProfile("a2", "personal", "org-2", null, 0,
+                Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x"),
+            Usage("seven_day", "seven_day_fable")));
+
     [Fact]
     public void LabelForKeepsTheNeverAskedSentinel() =>
         Assert.Null(SubscriptionTier.LabelFor(new AccountProfile("a1", "work", "org-1", null, 0)));

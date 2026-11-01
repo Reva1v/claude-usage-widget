@@ -97,14 +97,11 @@ public sealed record AccountRow(
             // does not exist has no reset time; "no limit" is the dial's caption.
             return new AccountRow(
                 account.Id, account.DisplayName, dials,
-                dials[0].NoLimit ? null : dials[0].Remaining, PlanLabelFor(account));
+                dials[0].NoLimit ? null : dials[0].Remaining, SubscriptionTier.LabelFor(account, snapshot));
         }).ToList();
-
-    /// The plan, or null while nothing has been fetched for this account. The
-    /// sentinel and the reason for it live in
-    /// <see cref="SubscriptionTier.LabelFor"/>, which the usage export reads
-    /// the same profile through.
-    private static string? PlanLabelFor(AccountProfile account) => SubscriptionTier.LabelFor(account);
+    // The plan sentinel and the Team Premium witness live in
+    // SubscriptionTier.LabelFor, which the usage export reads the same
+    // profile and snapshot through.
 }
 
 /// The line under the dials. Null means everything is fine and the widget

@@ -366,7 +366,7 @@ public partial class App : System.Windows.Application
         // v3: the plan the launcher filters its model list by, through the same
         // sentinel as the panel's plan line. One call, so the derivation itself
         // lives where Core.Tests can pin it — an absent profile included.
-        var plan = SubscriptionTier.LabelFor(profile);
+        var plan = SubscriptionTier.LabelFor(profile, snapshot);
 
         // ModelBucket is the same choice the third dial shows; otherwise the
         // file and the panel would call two different limits by one name.

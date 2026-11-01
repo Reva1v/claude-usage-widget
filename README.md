@@ -172,9 +172,11 @@ account. Keys in this file are camelCase, as shown.
 all null on an account that has none. `availableModels` lists that account's
 per-model weekly buckets (`seven_day_` stripped, lowercased) and is empty rather
 than null when it has none. `plan` is the subscription label — "Pro", "Max",
-"Ultra", "Team" — re-read once an hour, and `null` until the widget has read
-it: treat that the same as the key being absent. A Team seat reads "Team"
-whether it is Standard or Premium: the organization does not say which. The
+"Ultra", "Team", "Team Premium" — re-read once an hour, and `null` until the
+widget has read it: treat that the same as the key being absent. The
+organization does not say which kind a Team seat is, so a seat whose usage
+carries a per-model weekly limit (Fable) reads "Team Premium": a Standard seat
+pays for that model from usage credits instead. The
 file is written whole (temp file, then move), so a reader polling it never
 catches half of one. `fiveHour` and `fiveResetAt` are null on an account
 without a 5-hour limit (Ultra). Nothing is written for an account with neither
@@ -288,7 +290,8 @@ and writes `menu.png`, `submenu.png` and a `metrics.txt` of the measurements
 $env:CUW_RENDER_MENU = "$env:TEMP\cuw-menu"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-336 tests across `Tests/ClaudeUsageWidget.Core.Tests`.
+421 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
+`Tests/ClaudeUsageWidget.App.Tests`.
 
 ## Architecture
 

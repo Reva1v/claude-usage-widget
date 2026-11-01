@@ -28,7 +28,7 @@ namespace ClaudeUsageWidget.Core;
 /// JSON only from pre-v3 writers.</param>
 /// <param name="Plan">v3. The account's subscription plan label, as
 /// <see cref="SubscriptionTier.LabelFor"/> reads it off the account's stored
-/// profile — "Team", "Max 20x", "Pro", … — which
+/// profile and this snapshot — "Team", "Team Premium", "Max", "Ultra", "Pro", … — which
 /// is what entitlement the launcher filters by; the model buckets above are
 /// not. Null when the three raw subscription fields were never fetched, and
 /// written as `"plan":null` rather than omitted (the writer sets no ignore

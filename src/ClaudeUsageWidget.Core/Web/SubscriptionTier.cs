@@ -13,8 +13,8 @@ namespace ClaudeUsageWidget.Core;
 /// by MEMBERSHIP and never by index.
 ///
 /// A Team seat's kind (Standard or Premium) is not in that body: two seats of
-/// one organization logged the same fields on 2026-11-01, so the label stays
-/// "Team" until a tier string says more.
+/// one organization logged the same fields on 2026-11-01. The usage is the
+/// witness instead: see <see cref="LabelFor(AccountProfile?, UsageSnapshot?)"/>.
 ///
 /// Everything the three samples do not cover — Pro, Free, Enterprise — comes
 /// from research, not from a body seen here: helixml/helix
@@ -33,10 +33,22 @@ public static class SubscriptionTier
     /// usage export. A null profile is an answer too: the export runs off
     /// freshly loaded settings, and the account it is exporting may no longer
     /// be in them.
-    public static string? LabelFor(AccountProfile? profile) =>
-        profile is null
+    public static string? LabelFor(AccountProfile? profile) => LabelFor(profile, null);
+
+    /// The same, with the account's latest usage as the witness the
+    /// organization lacks: a Team seat whose plan limits carry a per-model
+    /// weekly bucket (Fable) is a Premium seat, because a Standard seat gets
+    /// that model only through usage credits. No usage yet reads plain "Team".
+    public static string? LabelFor(AccountProfile? profile, UsageSnapshot? usage)
+    {
+        var label = profile is null
             ? null
             : LabelOrNull(profile.Capabilities, profile.RateLimitTier, profile.RavenType);
+
+        return label == "Team" && usage is not null && ModelBuckets.Available(usage).Count > 0
+            ? "Team Premium"
+            : label;
+    }
 
     /// The plan, or null while nothing has been fetched for this account.
     ///
