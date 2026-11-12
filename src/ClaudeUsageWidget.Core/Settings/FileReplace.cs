@@ -96,7 +96,7 @@ public static class FileReplace
     /// for writing tells them apart: a reader that shares ReadWrite lets it
     /// through and a stricter one answers with a sharing violation, both of
     /// which pass; the permanent cases are refused again.
-    private static bool IsTransient(Exception ex, string target)
+    internal static bool IsTransient(Exception ex, string target)
     {
         if (IsSharingViolation(ex)) return true;
         if (ex is not UnauthorizedAccessException) return false;

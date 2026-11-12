@@ -468,12 +468,10 @@ public class WidgetSettingsTests
         Icacls(dir, "/deny", $"{user}:(DC)");
         try
         {
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            Assert.ThrowsAny<UnauthorizedAccessException>(() => store.Save(new WidgetSettingsData()));
-            clock.Stop();
+            var denied = Assert.ThrowsAny<UnauthorizedAccessException>(() => store.Save(new WidgetSettingsData()));
 
-            // A retry would sleep 750 ms before giving up.
-            Assert.True(clock.ElapsedMilliseconds < 50, $"took {clock.ElapsedMilliseconds} ms");
+            // Not transient = Move gives up on the first attempt instead of sleeping through the backoff.
+            Assert.False(FileReplace.IsTransient(denied, path));
         }
         finally
         {
