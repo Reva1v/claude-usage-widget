@@ -529,6 +529,63 @@ public class WidgetSettingsTests
     }
 
     [Fact]
+    public void AFileThatTurnsUnparseableAfterAGoodLoadIsNeverReplacedWithDefaults()
+    {
+        // A hand-edit gone wrong while the widget runs, then a write the way
+        // ClaudeWebSession.SaveOrganizationId does it.
+        var path = StoreWithOneAccount(out var store);
+        store.Load();
+        const string broken = """{ "Accounts": [ { "Id": "a1", "DisplayName": "work" """;
+        File.WriteAllText(path, broken);
+
+        Assert.Throws<SettingsUnparseableException>(() =>
+            store.Save(store.Load().WithAccount("a1", a => a with { OrganizationId = "org-2" })));
+
+        Assert.Equal(broken, File.ReadAllText(path));
+        Assert.Equal("org-1", Assert.Single(store.Current().Accounts).OrganizationId);
+    }
+
+    [Fact]
+    public void AnUnparseableFileThatCannotBeCopiedAsideIsNotLoadedAsDefaults()
+    {
+        // Before any good read, defaults are only safe once the bad bytes are
+        // kept: a held earlier copy makes the hash check, and so the copy, fail.
+        const string broken = """{ "Accounts": [ { "Id": "a1", "DisplayName": "work" """;
+        var path = WriteRaw(broken);
+        File.WriteAllText(path + ".bad-held", "other");
+        var store = new SettingsStore(path);
+
+        using (new FileStream(path + ".bad-held", FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Throws<SettingsUnparseableException>(() => store.Save(store.Load()));
+        }
+
+        Assert.Equal(broken, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void AFailedWriteWhoseTempCannotBeDeletedRethrowsTheOriginalError()
+    {
+        // App filters on IOException and UnauthorizedAccessException: an
+        // AggregateException would slip past both.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        string? temp = null;
+
+        var thrown = Assert.Throws<IOException>(() => FileReplace.Write(path, stream =>
+        {
+            temp = ((FileStream)stream).Name;
+            File.SetAttributes(temp, FileAttributes.ReadOnly);
+            throw new IOException("write failed");
+        }));
+
+        Assert.Equal("write failed", thrown.Message);
+        Assert.True(thrown.Data.Contains("TempCleanupFailed"));
+        // Set by the callback above, which the assertion just proved ran.
+        File.SetAttributes(temp!, FileAttributes.Normal);
+        File.Delete(temp!);
+    }
+
+    [Fact]
     public void AFileThatVanishesAfterAGoodLoadIsNotAFirstRun()
     {
         // A sync tool deletes and recreates the file; between the two, Load

@@ -51,8 +51,14 @@ public static class FileReplace
         }
         catch (Exception ex)
         {
+            // The original error is what callers filter on (IOException,
+            // UnauthorizedAccessException); a failed cleanup rides along in Data.
             try { File.Delete(temp); }
-            catch (Exception cleanup) { throw new AggregateException(ex, cleanup); }
+            catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException)
+            {
+                ex.Data["TempCleanupFailed"] = $"{temp}: {cleanup.GetType().Name}: {cleanup.Message}";
+            }
+
             throw;
         }
     }

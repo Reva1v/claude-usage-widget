@@ -55,38 +55,58 @@ public sealed class SettingsStore
     ///
     /// A file missing after a good read is not a first run: a sync tool
     /// deletes and recreates it. The last good settings stand in.
+    ///
+    /// An unparseable file after a good read is not defaults either: it is a
+    /// hand-edit gone wrong, and defaults saved over it would drop every
+    /// account. <see cref="SettingsUnparseableException"/> (an IOException)
+    /// aborts the write; <see cref="Current"/> draws the last good settings.
+    /// Before any good read, defaults stand only once the bad bytes are kept.
+    ///
+    /// Under the save lock, so a read's result cannot be remembered over a
+    /// newer save's.
     public WidgetSettingsData Load()
     {
-        string json;
-        try
+        lock (_saveLock)
         {
-            json = FileReplace.Read(() => File.ReadAllText(_path));
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            // A first run has no file at all, and an absent file must stay an
-            // empty account list rather than become a phantom `default`
-            // account with no cookies behind it.
-            lock (_lastGoodLock) return _lastGood ?? new WidgetSettingsData();
-        }
+            string json;
+            try
+            {
+                json = FileReplace.Read(() => File.ReadAllText(_path));
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // A first run has no file at all, and an absent file must stay an
+                // empty account list rather than become a phantom `default`
+                // account with no cookies behind it.
+                lock (_lastGoodLock) return _lastGood ?? new WidgetSettingsData();
+            }
 
-        WidgetSettingsData data;
-        try
-        {
-            var raw = JsonSerializer.Deserialize<WidgetSettingsData>(json, SerializerOptions)
-                      ?? new WidgetSettingsData();
-            data = SettingsMigration.Apply(raw);
-        }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
-        {
-            // Unparseable: the bytes were read, so this is the file's content
-            // and not a passing IO state. Defaults, as the summary says.
-            KeepBadCopy(json);
-            return new WidgetSettingsData();
-        }
+            WidgetSettingsData data;
+            try
+            {
+                var raw = JsonSerializer.Deserialize<WidgetSettingsData>(json, SerializerOptions)
+                          ?? new WidgetSettingsData();
+                data = SettingsMigration.Apply(raw);
+            }
+            catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
+            {
+                // Unparseable: the bytes were read, so this is the file's content
+                // and not a passing IO state.
+                var kept = KeepBadCopy(json);
+                lock (_lastGoodLock)
+                {
+                    if (_lastGood is not null)
+                        throw new SettingsUnparseableException($"{_path} does not parse; keeping the last good settings", ex);
+                }
 
-        Remember(data);
-        return data;
+                if (!kept)
+                    throw new SettingsUnparseableException($"{_path} does not parse and could not be copied aside", ex);
+                return new WidgetSettingsData();
+            }
+
+            Remember(data);
+            return data;
+        }
     }
 
     /// The settings to draw from: a fresh read, or the last good one while
@@ -117,9 +137,8 @@ public sealed class SettingsStore
         lock (_saveLock)
         {
             FileReplace.Write(_path, stream => JsonSerializer.Serialize(stream, data, SerializerOptions));
+            Remember(data);
         }
-
-        Remember(data);
     }
 
     private void Remember(WidgetSettingsData data)
@@ -129,8 +148,9 @@ public sealed class SettingsStore
 
     /// Best effort and once per distinct content: a hand-edit gone wrong is
     /// worth a copy, but a widget polling every five minutes must not fill the
-    /// folder with the same bad file.
-    private void KeepBadCopy(string json)
+    /// folder with the same bad file. True when a copy of this content exists
+    /// afterwards, made now or earlier.
+    private bool KeepBadCopy(string json)
     {
         try
         {
@@ -140,15 +160,17 @@ public sealed class SettingsStore
             foreach (var existing in Directory.EnumerateFiles(directory, prefix + "*"))
             {
                 var bytes = File.ReadAllBytes(existing);
-                if (Convert.ToHexString(SHA256.HashData(bytes)) == hash) return;
+                if (Convert.ToHexString(SHA256.HashData(bytes)) == hash) return true;
             }
 
             var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
             File.WriteAllText(_path + ".bad-" + stamp, json);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // Best effort: the copy is a courtesy, the load must still answer.
+            // No copy: the caller must not let defaults replace the only one.
+            return false;
         }
     }
 }
