@@ -38,6 +38,10 @@ public sealed class UsageStore
     private readonly Func<DateTimeOffset> _now;
     private readonly Action<UsageRetryState?> _saveRetryState;
 
+    /// Where a failing <see cref="Changed"/> subscriber is reported: the App
+    /// passes its log, the only place a tray widget's swallowed error shows.
+    private readonly Action<string> _log;
+
     private int _consecutiveRateLimits;
 
     /// What the settings hold for this account, as far as this store knows:
@@ -81,12 +85,14 @@ public sealed class UsageStore
         Func<bool> hasCredentials,
         Func<DateTimeOffset> now,
         Func<UsageRetryState?> loadRetryState,
-        Action<UsageRetryState?> saveRetryState)
+        Action<UsageRetryState?> saveRetryState,
+        Action<string>? log = null)
     {
         _fetch = fetch;
         _hasCredentials = hasCredentials;
         _now = now;
         _saveRetryState = saveRetryState;
+        _log = log ?? (message => System.Diagnostics.Debug.WriteLine(message));
 
         UsageRetryState? saved;
         try
@@ -242,7 +248,7 @@ public sealed class UsageStore
             try { subscriber(); }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                System.Diagnostics.Debug.WriteLine($"UsageStore.Changed subscriber failed: {ex}");
+                _log($"Changed subscriber failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
     }

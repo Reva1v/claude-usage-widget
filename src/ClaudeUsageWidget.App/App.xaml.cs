@@ -106,6 +106,12 @@ public partial class App : System.Windows.Application
             args.Handled = true;
         };
 
+        // The tray menu is WinForms: its click handlers run under WinForms'
+        // own callback, which shows a crash dialog instead of reaching the
+        // dispatcher handler above.
+        System.Windows.Forms.Application.ThreadException += (_, args) =>
+            WidgetLog.Write("-", "unhandled", $"tray {args.Exception.GetType().Name}: {args.Exception.Message}");
+
         // With no window and no MainWindow, the app stays alive as long as
         // the tray object is alive and ShutdownMode remains
         // OnExplicitShutdown (see App.xaml) — otherwise WPF would close the
@@ -117,6 +123,8 @@ public partial class App : System.Windows.Application
         // this endpoint punishes with a rate limit.
         _trayIcon.RefreshRequested += () => FireAndForget(async () =>
         {
+            // Null until CompleteStartup: startup is still waiting for settings.json.
+            if (_statusStore is null) return;
             if (TrayAccount() is { } account) await RefreshAccountAsync(account);
             await _statusStore!.LoadAsync();
         });
@@ -576,6 +584,9 @@ public partial class App : System.Windows.Application
 
     private void OnShowOnDesktopToggled(bool visible)
     {
+        // No window before CompleteStartup; saving the flag then would make
+        // the menu and the screen disagree once it exists.
+        if (_widgetWindow is null) return;
         var data = _settings!.Load();
         _settings.Save(data with { WidgetVisible = visible });
 
@@ -583,7 +594,7 @@ public partial class App : System.Windows.Application
         // the opposite side, so plain Show/Hide, without
         // PersistWidgetVisible below: the setting is already saved on the
         // line above.
-        if (visible) _widgetWindow!.Show(); else _widgetWindow!.Hide();
+        if (visible) _widgetWindow.Show(); else _widgetWindow.Hide();
 
         if (!visible) SetEditingLayout(false); else RefreshTrayMenuState();
     }
@@ -592,8 +603,9 @@ public partial class App : System.Windows.Application
     {
         // The PositionLocked setter itself updates _root.PositionLocked
         // and saves the setting (see DesktopWidgetWindow.PositionLocked) —
-        // there is nothing to duplicate here.
-        _widgetWindow!.PositionLocked = locked;
+        // there is nothing to duplicate here. No window before CompleteStartup.
+        if (_widgetWindow is null) return;
+        _widgetWindow.PositionLocked = locked;
         RefreshTrayMenuState();
     }
 
@@ -849,7 +861,8 @@ public partial class App : System.Windows.Application
             hasCredentials: () => _hasSessionCookie.TryGetValue(profile.Id, out var has) && has,
             now: () => DateTimeOffset.Now,
             loadRetryState: () => LoadRetryState(profile.Id),
-            saveRetryState: state => SaveRetryState(profile.Id, state));
+            saveRetryState: state => SaveRetryState(profile.Id, state),
+            log: message => WidgetLog.Write(profile.DisplayName, "unhandled", message));
         store.Changed += OnStoresChanged;
 
         return new AccountRuntime(profile, session, store);

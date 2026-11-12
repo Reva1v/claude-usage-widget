@@ -432,6 +432,20 @@ public class UsageStoreTests
     }
 
     [Fact]
+    public async Task AThrowingSubscriberIsLogged()
+    {
+        var logged = new List<string>();
+        var store = new UsageStore(
+            _ => Task.FromResult(Snapshot(42)), () => true, () => Now, () => null, _ => { },
+            log: logged.Add);
+        store.Changed += () => throw new IOException("held");
+
+        await store.LoadAsync();
+
+        Assert.Contains("held", Assert.Single(logged), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AClearThatFailedIsTriedAgainOnTheNextSuccess()
     {
         var attempts = new List<UsageRetryState?>();

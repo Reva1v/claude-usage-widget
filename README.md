@@ -209,6 +209,10 @@ failures, sign-in windows opening and closing, and every browser launch. Nothing
 is written on a healthy five-minute refresh, so the file stays small; it rotates
 at 1 MB, keeping one previous copy as `widget.log.1`.
 
+To reset the settings, quit the widget first, then delete
+`%APPDATA%\ClaudeUsageWidget\settings.json`: a running widget keeps its last
+good settings and writes them back.
+
 ## Known limitations
 
 **A Claude subscription is required.** The usage endpoint this widget reads
