@@ -451,6 +451,15 @@ public class UsageExportTests
         Assert.Equal(@"C:\x\personal-id-2-id-3.widget.json", UsageExport.ExportPathFor(data, "id-3", "personal-id-2"));
     }
 
+    [Theory]
+    // An ExportPath typed into the wrong field must not replace settings.json.
+    [InlineData(@"C:\App\settings.json", true)]
+    [InlineData(@"c:\app\SETTINGS.JSON", true)]
+    [InlineData(@"C:\App\sub\..\settings.json", true)]
+    [InlineData(@"C:\App\work.widget.json", false)]
+    public void AnExportOverTheSettingsFileIsRefused(string exportPath, bool refused) =>
+        Assert.Equal(refused, UsageExport.WritesOver(exportPath, @"C:\App\settings.json"));
+
     [Fact]
     public void NoOverrideAndNoDirectoryExportsNothing()
     {

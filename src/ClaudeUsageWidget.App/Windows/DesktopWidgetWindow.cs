@@ -209,7 +209,7 @@ public sealed class DesktopWidgetWindow : Window
         _root.PlanLineSelected += line => PlanLineSelected?.Invoke(line);
         Content = _root;
 
-        var data = settings.Load();
+        var data = settings.Current();
         _side = WidgetSettings.ClampSide(data.WidgetSide);
         _positionLocked = data.PositionLocked;
         _root.PositionLocked = _positionLocked;
@@ -312,7 +312,7 @@ public sealed class DesktopWidgetWindow : Window
 
     private void ApplyLayoutAndSize(double side)
     {
-        var (layout, mode, modelDial, planLine) = LayoutResolution.Resolve(_settings.Load(), _accountCount);
+        var (layout, mode, modelDial, planLine) = LayoutResolution.Resolve(_settings.Current(), _accountCount);
 
         var metrics = PanelMetrics.For(layout, _accountCount, side, _root.EditMode, planLine);
         Width = metrics.Width;

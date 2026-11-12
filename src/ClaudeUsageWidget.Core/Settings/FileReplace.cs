@@ -6,9 +6,12 @@ namespace ClaudeUsageWidget.Core;
 /// A reader that opens the file with FileShare.ReadWrite but without Delete (a
 /// polling script, an editor, an indexer) makes the move fail while it holds
 /// the handle. Such holds are short, so a few retries keep the write instead
-/// of losing it. A permanent refusal (a read-only file, an ACL that denies the
-/// write) fails at once: retrying it would only sleep on the caller's thread.
-/// The last failure is rethrown: the caller decides what a lost write means.
+/// of losing it. A permanent refusal (a read-only file, or a folder whose ACL
+/// denies deleting its files) fails at once: retrying it would only sleep on
+/// the caller's thread. A deny ACE on the FILE alone does not stop the replace
+/// (the folder's delete-child right still allows it), and the new file takes
+/// the folder's inherited ACL, not the old file's. The last failure is
+/// rethrown: the caller decides what a lost write means.
 public static class FileReplace
 {
     /// Waits between attempts: about 0.75 s in all before giving up.
@@ -33,7 +36,9 @@ public static class FileReplace
         var directory = Path.GetDirectoryName(target);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-        var temp = target + ".tmp";
+        // A unique name: a stale `.tmp` left read-only by a crash or a sync tool
+        // must not block every later write, and two writers never share one.
+        var temp = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -105,7 +110,9 @@ public static class FileReplace
         }
         catch (Exception probeEx)
         {
-            return IsSharingViolation(probeEx);
+            // No target yet (a first write) means the denial came from the
+            // temp side, an antivirus scanning the fresh temp: that passes too.
+            return IsSharingViolation(probeEx) || probeEx is FileNotFoundException;
         }
     }
 

@@ -322,10 +322,10 @@ public class WidgetSettingsTests
         // be written back once the hold ends, every account gone.
         var path = StoreWithOneAccount(out var store);
         var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
-        var release = Task.Delay(150).ContinueWith(_ => holder.Dispose(), TaskScheduler.Default);
+        // 100 ms against a 750 ms budget: the load must wait it out and the save land.
+        var release = Task.Delay(100).ContinueWith(_ => holder.Dispose(), TaskScheduler.Default);
 
-        try { store.Save(store.Load().WithAccount("a1", a => a with { ConsecutiveRateLimits = 2 })); }
-        catch (IOException) { /* a lost write is allowed here; lost accounts are not */ }
+        store.Save(store.Load().WithAccount("a1", a => a with { ConsecutiveRateLimits = 2 }));
         await release;
 
         var account = Assert.Single(new SettingsStore(path).Load().Accounts);
@@ -375,7 +375,17 @@ public class WidgetSettingsTests
         var real = Path.Combine(dir, "real.json");
         var link = Path.Combine(dir, "s.json");
         new SettingsStore(real).Save(new WidgetSettingsData { ModelBucket = "old" });
-        File.CreateSymbolicLink(link, real);
+        try
+        {
+            File.CreateSymbolicLink(link, real);
+        }
+        catch (IOException ex) when ((ex.HResult & 0xFFFF) == 1314)
+        {
+            // ERROR_PRIVILEGE_NOT_HELD: no Developer Mode and not elevated.
+            // xUnit 2 has no runtime skip, so this returns; the CI runner and
+            // the owner's elevated shell both create links.
+            return;
+        }
 
         new SettingsStore(link).Save(new WidgetSettingsData { ModelBucket = "new" });
 
@@ -406,5 +416,159 @@ public class WidgetSettingsTests
         {
             File.SetAttributes(path, FileAttributes.Normal);
         }
+    }
+
+    // Not tested: that FileReplace.Write flushes the temp to disk before the
+    // move. Losing an unflushed write needs a power cut between the move and
+    // the lazy writer; no test here can observe it.
+
+    [Fact]
+    public void AStaleReadOnlyTempDoesNotBlockTheSave()
+    {
+        var path = StoreWithOneAccount(out var store);
+        var stale = path + ".tmp";
+        File.WriteAllText(stale, "stale");
+        File.SetAttributes(stale, FileAttributes.ReadOnly);
+        try
+        {
+            store.Save(new WidgetSettingsData { ModelBucket = "new" });
+
+            Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+        }
+        finally
+        {
+            File.SetAttributes(stale, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task AReaderThatSharesOnlyReadIsWaitedOut()
+    {
+        // The move is denied (ACCESS_DENIED, like a permanent refusal); the
+        // probe's sharing violation is what marks it as passing.
+        var path = StoreWithOneAccount(out var store);
+        var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = Task.Delay(100).ContinueWith(_ => reader.Dispose(), TaskScheduler.Default);
+
+        store.Save(new WidgetSettingsData { ModelBucket = "new" });
+        await release;
+
+        Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+    }
+
+    [Fact]
+    public void AnAclThatDeniesTheReplaceFailsAtOnce()
+    {
+        // A deny on the file alone does not stop the replace (the folder's
+        // delete-child right allows it), so the folder denies delete-child too.
+        var path = StoreWithOneAccount(out var store);
+        var dir = Path.GetDirectoryName(path)!;
+        var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
+        Icacls(path, "/deny", $"{user}:(W,D)");
+        Icacls(dir, "/deny", $"{user}:(DC)");
+        try
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Assert.ThrowsAny<UnauthorizedAccessException>(() => store.Save(new WidgetSettingsData()));
+            clock.Stop();
+
+            // A retry would sleep 750 ms before giving up.
+            Assert.True(clock.ElapsedMilliseconds < 50, $"took {clock.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            Icacls(dir, "/remove:d", user);
+            Icacls(path, "/remove:d", user);
+        }
+
+        Assert.Single(new SettingsStore(path).Load().Accounts);
+    }
+
+    private static void Icacls(params string[] args)
+    {
+        var info = new System.Diagnostics.ProcessStartInfo("icacls") { CreateNoWindow = true, UseShellExecute = false };
+        foreach (var arg in args) info.ArgumentList.Add(arg);
+        using var process = System.Diagnostics.Process.Start(info)!;
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public void ATrailingCommaStillLoadsTheAccounts()
+    {
+        var path = WriteRaw("""{ "Accounts": [ { "Id": "a1", "DisplayName": "work", "ConsecutiveRateLimits": 0 }, ], }""");
+
+        Assert.Equal("work", Assert.Single(new SettingsStore(path).Load().Accounts).DisplayName);
+    }
+
+    [Fact]
+    public void AnUnknownEnumNameFallsBackForThatFieldAlone()
+    {
+        // A newer build wrote a value this one does not know.
+        var path = WriteRaw("""{ "Accounts": [ { "Id": "a1", "DisplayName": "work", "ConsecutiveRateLimits": 0 } ], "BandView": "Hologram", "ModelDial": "Hidden" }""");
+
+        var loaded = new SettingsStore(path).Load();
+
+        Assert.Single(loaded.Accounts);
+        Assert.Equal(ModelDial.Hidden, loaded.ModelDial);
+    }
+
+    [Fact]
+    public void AnUnparseableFileIsCopiedAsideOnceBeforeDefaultsReplaceIt()
+    {
+        const string broken = """{ "Accounts": [ { "Id": "a1", "DisplayName": "work" """;
+        var path = WriteRaw(broken);
+        var store = new SettingsStore(path);
+
+        var loaded = store.Load();
+        store.Load();
+        // What BuildAccounts does with an empty list: one default account, saved.
+        store.Save(loaded with { Accounts = [new AccountProfile("default", "Claude", null, null, 0)] });
+
+        Assert.Empty(loaded.Accounts);
+        var copy = Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!, "s.json.bad-*"));
+        Assert.Equal(broken, File.ReadAllText(copy));
+    }
+
+    [Fact]
+    public void AFileThatVanishesAfterAGoodLoadIsNotAFirstRun()
+    {
+        // A sync tool deletes and recreates the file; between the two, Load
+        // must not answer "no accounts".
+        var path = StoreWithOneAccount(out var store);
+        File.Delete(path);
+
+        Assert.Single(store.Load().Accounts);
+    }
+
+    [Fact]
+    public void CurrentDrawsTheLastGoodSettingsWhileTheFileIsHeld()
+    {
+        var path = StoreWithOneAccount(out var store);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Single(store.Current().Accounts);
+            Assert.ThrowsAny<IOException>(() => store.Load());
+        }
+    }
+
+    [Fact]
+    public void CurrentThrowsWhenNoReadHasSucceededYet()
+    {
+        var path = StoreWithOneAccount(out _);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => new SettingsStore(path).Current());
+        }
+    }
+
+    private static string WriteRaw(string json)
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, json);
+        return path;
     }
 }

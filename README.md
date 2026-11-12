@@ -161,7 +161,10 @@ refresh — the name lowercased, with anything outside `a-z 0-9 _ -` turned into
 `-`. A single account's `ExportPath` still overrides the directory for that
 account. Two accounts never share a file: when a name is already taken, by an
 account earlier in the settings or by an `ExportPath`, the account writes
-`<account name>-<account id>.widget.json` instead. The plain name goes to the
+`<account name>-<account id>.widget.json` instead, or
+`<account name>-<account id>-<n>.widget.json` (n = 2, 3, …) if even that is
+taken. An `ExportPath` pointing at `settings.json` itself is refused: that
+account's export is skipped and logged. The plain name goes to the
 first account in settings order that wants it, so a reader that opens files by
 exact name sees that account, and should list the directory to find the others.
 Keys in this file are camelCase, as shown.
@@ -300,7 +303,7 @@ and writes `menu.png`, `submenu.png` and a `metrics.txt` of the measurements
 $env:CUW_RENDER_MENU = "$env:TEMP\cuw-menu"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-459 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
+473 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
 `Tests/ClaudeUsageWidget.App.Tests`.
 
 ## Architecture

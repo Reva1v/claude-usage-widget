@@ -416,6 +416,22 @@ public class UsageStoreTests
     }
 
     [Fact]
+    public async Task AThrowingSubscriberNeitherFailsTheFetchNorSkipsTheOthers()
+    {
+        // The render reads settings.json; held, it throws. The export
+        // subscribed after it must still run, and the state stays Ok.
+        var store = MakeStore(fetch: _ => Task.FromResult(Snapshot(42)));
+        var exported = 0;
+        store.Changed += () => throw new IOException("held");
+        store.Changed += () => exported++;
+
+        await store.LoadAsync();
+
+        Assert.Equal(new UsageState.Ok(Snapshot(42), Now), store.CurrentState);
+        Assert.Equal(1, exported);
+    }
+
+    [Fact]
     public async Task AClearThatFailedIsTriedAgainOnTheNextSuccess()
     {
         var attempts = new List<UsageRetryState?>();

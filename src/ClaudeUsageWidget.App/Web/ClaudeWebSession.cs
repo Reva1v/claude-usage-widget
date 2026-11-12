@@ -60,7 +60,7 @@ public sealed class ClaudeWebSession
     /// above), a window cannot. It said `account "New account"` for an account
     /// the panel and the tray had been calling `shared` for the best part of an
     /// hour (user report, 2026-09-08). One read per window, not per log line.
-    private string CurrentLabel => _settings.Load().Account(_accountId)?.DisplayName ?? _accountLabel;
+    private string CurrentLabel => _settings.Current().Account(_accountId)?.DisplayName ?? _accountLabel;
 
     // The single on-demand WebView2 environment for the whole process:
     // LoginWindow obtains the same one through EnsureEnvironmentAsync, so the
@@ -124,13 +124,27 @@ public sealed class ClaudeWebSession
     /// Each account has its own organization: before multi-account support
     /// this field lived at the top level of settings simply because there was
     /// only one account.
-    private AccountProfile? LoadProfile() => _settings.Load().Account(_accountId);
+    private AccountProfile? LoadProfile() => _settings.Current().Account(_accountId);
 
     private string? LoadOrganizationId() => LoadProfile()?.OrganizationId;
 
-    private void SaveOrganizationId(string? organizationId)
+    private void SaveOrganizationId(string? organizationId) =>
+        SaveQuietly("organization", () =>
+            _settings.Save(_settings.Load().WithAccount(_accountId, a => a with { OrganizationId = organizationId })));
+
+    /// These saves ride on a fetch. A settings.json held past the wait must
+    /// cost the save (repeated on a later poll), never the fetch: the figures
+    /// came back fine and must not turn into Failed.
+    private void SaveQuietly(string what, Action save)
     {
-        _settings.Save(_settings.Load().WithAccount(_accountId, a => a with { OrganizationId = organizationId }));
+        try
+        {
+            save();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            WidgetLog.Write(_accountLabel, "settings", $"{what} not saved: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     /// The three subscription fields plus the stamp that says when they were
@@ -148,7 +162,7 @@ public sealed class ClaudeWebSession
     /// Raw, never a label. The mapping lives in <see cref="SubscriptionTier"/>,
     /// and a wrong guess there must be fixable by shipping a new build rather
     /// than by asking claude.ai for a body that is already on disk.
-    private void SaveSubscriptionFields(OrganizationFields fields)
+    private void SaveSubscriptionFields(OrganizationFields fields) => SaveQuietly("subscription", () =>
     {
         _settings.Save(_settings.Load().WithAccount(_accountId, a =>
         {
@@ -165,7 +179,7 @@ public sealed class ClaudeWebSession
                 SubscriptionFetchedAt = DateTimeOffset.Now,
             };
         }));
-    }
+    });
 
     /// One FAILED organizations fetch per RUN, and no more — whatever it threw.
     /// A failure stores nothing, so the cadence stamp cannot bound the retry:
@@ -214,7 +228,7 @@ public sealed class ClaudeWebSession
             // Not saved: a stored duplicate would be polled from now on and
             // pass for this account's own numbers. Left unpicked, every poll
             // re-checks, so signing in with the right login clears it.
-            if (_settings.Load().AccountWithOrganization(organizationId, _accountId) is { } other)
+            if (_settings.Current().AccountWithOrganization(organizationId, _accountId) is { } other)
             {
                 WidgetLog.Write(_accountLabel, "organization", $"duplicate-of {other.DisplayName}");
                 throw new UsageException(UsageError.DuplicateAccount(other.DisplayName));

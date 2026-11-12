@@ -232,6 +232,18 @@ public sealed class UsageStore
     private void SetState(UsageState state)
     {
         CurrentState = state;
-        Changed?.Invoke();
+        if (Changed is not { } changed) return;
+
+        // Each subscriber on its own: one that throws (a render reading a held
+        // settings file) must neither skip the others (the export) nor reach
+        // PerformLoadAsync's catch, which would turn a good fetch into Failed.
+        foreach (var subscriber in changed.GetInvocationList().Cast<Action>())
+        {
+            try { subscriber(); }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                System.Diagnostics.Debug.WriteLine($"UsageStore.Changed subscriber failed: {ex}");
+            }
+        }
     }
 }

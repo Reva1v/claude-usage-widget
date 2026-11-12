@@ -161,6 +161,12 @@ public static class UsageExport
         return path;
     }
 
+    /// True when an export to <paramref name="exportPath"/> would replace
+    /// <paramref name="protectedPath"/> (settings.json): an ExportPath typed
+    /// into the wrong field would write usage figures over every account.
+    public static bool WritesOver(string exportPath, string protectedPath) =>
+        string.Equals(Normalize(exportPath), Normalize(protectedPath), StringComparison.OrdinalIgnoreCase);
+
     /// A hand-written ExportPath may be relative or spelled with `..`; one
     /// that does not even parse cannot collide with a generated one.
     private static string Normalize(string path)
