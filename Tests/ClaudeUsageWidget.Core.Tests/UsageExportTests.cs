@@ -398,6 +398,60 @@ public class UsageExportTests
     }
 
     [Fact]
+    public void TheNameComesFromTheSettingsNotTheCaller()
+    {
+        // The caller's runtime profile may predate a hand-edit that renamed the
+        // account into another one's name; the settings are the one source.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "personal"), Profile("id-2", "personal")],
+        };
+
+        Assert.Equal(@"C:\x\personal-id-2.widget.json", UsageExport.ExportPathFor(data, "id-2", "work"));
+    }
+
+    [Fact]
+    public void AnExplicitExportPathIsNotHandedToAnotherAccount()
+    {
+        // The first account's own path is exactly the second one's plain name.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "home", @"C:\X\Work.widget.json"), Profile("id-2", "work")],
+        };
+
+        Assert.Equal(@"C:\x\work-id-2.widget.json", UsageExport.ExportPathFor(data, "id-2", "work"));
+    }
+
+    [Fact]
+    public void ALaterAccountWithItsOwnExportPathStillKeepsItsFile()
+    {
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "work"), Profile("id-2", "home", @"C:\x\work.widget.json")],
+        };
+
+        Assert.Equal(@"C:\x\work-id-1.widget.json", UsageExport.ExportPathFor(data, "id-1", "work"));
+    }
+
+    [Fact]
+    public void ASuffixedNameIsNotHandedToAnAccountNamedLikeIt()
+    {
+        // "personal-id-2" is both the second account's suffixed name and the
+        // third account's plain one.
+        var data = new WidgetSettingsData
+        {
+            ExportDirectory = @"C:\x",
+            Accounts = [Profile("id-1", "personal"), Profile("id-2", "personal"), Profile("id-3", "personal-id-2")],
+        };
+
+        Assert.Equal(@"C:\x\personal-id-2.widget.json", UsageExport.ExportPathFor(data, "id-2", "personal"));
+        Assert.Equal(@"C:\x\personal-id-2-id-3.widget.json", UsageExport.ExportPathFor(data, "id-3", "personal-id-2"));
+    }
+
+    [Fact]
     public void NoOverrideAndNoDirectoryExportsNothing()
     {
         var data = new WidgetSettingsData { Accounts = [Profile("id-1", "personal")] };

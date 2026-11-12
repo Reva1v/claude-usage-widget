@@ -57,7 +57,9 @@ Each dial reads its percentage with the time until that window resets
 underneath. The three usage dials:
 
 - **5H** — the 5-hour session limit. A verified Ultra account has none: the
-  dial reads `∞` over "no limit", and so do the tray tooltip and the band
+  dial reads `∞` over "no limit", and so do the tray tooltip and the band.
+  Once its week is spent, the band's Accounts view shows the week's figure and
+  reset time instead, since nothing goes through until then
 - **7D** — the 7-day weekly limit
 - One per-model weekly limit — whichever the server returns; pick a specific
   one from the tray menu when more than one applies
@@ -157,7 +159,12 @@ Off by default. Set `ExportDirectory` in
 figures to `<ExportDirectory>\<account name>.widget.json` after each successful
 refresh — the name lowercased, with anything outside `a-z 0-9 _ -` turned into
 `-`. A single account's `ExportPath` still overrides the directory for that
-account. Keys in this file are camelCase, as shown.
+account. Two accounts never share a file: when a name is already taken, by an
+account earlier in the settings or by an `ExportPath`, the account writes
+`<account name>-<account id>.widget.json` instead. The plain name goes to the
+first account in settings order that wants it, so a reader that opens files by
+exact name sees that account, and should list the directory to find the others.
+Keys in this file are camelCase, as shown.
 
 ```json
 { "fiveHour": 62, "sevenDay": 30, "atMs": 1787748230070,
@@ -172,7 +179,8 @@ account. Keys in this file are camelCase, as shown.
 all null on an account that has none. `availableModels` lists that account's
 per-model weekly buckets (`seven_day_` stripped, lowercased) and is empty rather
 than null when it has none. `plan` is the subscription label — "Pro", "Max",
-"Ultra", "Team", "Team Premium" — re-read once an hour, and `null` until the
+"Ultra", "Team", "Team Premium", or "Max or Ultra" for a Max-family tier the
+widget does not recognise — re-read once an hour, and `null` until the
 widget has read it: treat that the same as the key being absent. The
 organization does not say which kind a Team seat is, so a seat whose usage
 carries a Fable weekly limit reads "Team Premium": a Standard seat
@@ -292,7 +300,7 @@ and writes `menu.png`, `submenu.png` and a `metrics.txt` of the measurements
 $env:CUW_RENDER_MENU = "$env:TEMP\cuw-menu"; dotnet run --project src/ClaudeUsageWidget.App
 ```
 
-432 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
+459 tests across `Tests/ClaudeUsageWidget.Core.Tests` and 15 in
 `Tests/ClaudeUsageWidget.App.Tests`.
 
 ## Architecture
