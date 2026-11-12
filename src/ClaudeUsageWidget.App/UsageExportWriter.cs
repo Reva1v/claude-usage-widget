@@ -1,4 +1,3 @@
-using System.IO;
 using System.Text.Json;
 using ClaudeUsageWidget.Core;
 
@@ -14,18 +13,13 @@ public static class UsageExportWriter
     {
         try
         {
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
-            // Temp file plus move: the reader is a separate process polling this
+            // Replaced whole: the reader is a separate process polling this
             // path, and a plain write lets it catch a half-written file and
             // decide the account has no figures at all.
-            var temp = path + ".tmp";
             // UsageExport.JsonOptions, not a local copy: the key names and the
             // null policy are the reader's contract, and Core.Tests pin them
             // through that same object.
-            File.WriteAllText(temp, JsonSerializer.Serialize(payload, UsageExport.JsonOptions));
-            File.Move(temp, path, overwrite: true);
+            FileReplace.Write(path, stream => JsonSerializer.Serialize(stream, payload, UsageExport.JsonOptions));
         }
         catch (Exception ex)
         {

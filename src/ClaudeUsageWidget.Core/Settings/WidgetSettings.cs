@@ -76,6 +76,9 @@ public sealed record WidgetSettingsData
     /// `<ExportDirectory>\<UsageExport.FileNameFor(DisplayName, Id)>.widget.json`
     /// after every successful refresh. <see cref="AccountProfile.ExportPath"/>
     /// stays a per-account override and wins over this for that account.
+    /// A name already taken (by an earlier account in settings order, or by an
+    /// ExportPath) gets `-<id>` appended, so the plain name belongs to the
+    /// first account that wants it: see <see cref="UsageExport.ExportPathFor"/>.
     public string? ExportDirectory { get; init; }
 
     /// How the panel arranges accounts and how each account's block arranges

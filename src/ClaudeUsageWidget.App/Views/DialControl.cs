@@ -33,6 +33,10 @@ public sealed class DialControl : DialControlBase
         nameof(Remaining), typeof(string), typeof(DialControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty NoLimitProperty = DependencyProperty.Register(
+        nameof(NoLimit), typeof(bool), typeof(DialControl),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
+
     public static readonly DependencyProperty DimmedProperty = DependencyProperty.Register(
         nameof(Dimmed), typeof(bool), typeof(DialControl),
         new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
@@ -53,6 +57,14 @@ public sealed class DialControl : DialControlBase
     {
         get => (string?)GetValue(RemainingProperty);
         set => SetValue(RemainingProperty, value);
+    }
+
+    /// The account has no such window: "∞" in the centre, an empty track,
+    /// rather than the `n/a` of a figure that failed to arrive.
+    public bool NoLimit
+    {
+        get => (bool)GetValue(NoLimitProperty);
+        set => SetValue(NoLimitProperty, value);
     }
 
     public bool Dimmed
@@ -113,7 +125,7 @@ public sealed class DialControl : DialControlBase
     {
         var pixelsPerDip = DialText.PixelsPerDip(this);
         var valueBrush = Dimmed ? Theme.DimBrush : Theme.TextBrush;
-        var valueString = Fraction is { } fraction ? UsageMath.PercentText(fraction) : "n/a";
+        var valueString = NoLimit ? "∞" : Fraction is { } fraction ? UsageMath.PercentText(fraction) : "n/a";
 
         var titleText = DialText.Format(Title, Theme.LabelFontSize(scale), Theme.LabelWeight, Theme.DimBrush, pixelsPerDip);
         var valueText = DialText.Format(valueString, Theme.ValueFontSize(scale), Theme.ValueWeight, valueBrush, pixelsPerDip);

@@ -106,6 +106,12 @@ public partial class App : System.Windows.Application
             args.Handled = true;
         };
 
+        // The tray menu is WinForms: its click handlers run under WinForms'
+        // own callback, which shows a crash dialog instead of reaching the
+        // dispatcher handler above.
+        System.Windows.Forms.Application.ThreadException += (_, args) =>
+            WidgetLog.Write("-", "unhandled", $"tray {args.Exception.GetType().Name}: {args.Exception.Message}");
+
         // With no window and no MainWindow, the app stays alive as long as
         // the tray object is alive and ShutdownMode remains
         // OnExplicitShutdown (see App.xaml) — otherwise WPF would close the
@@ -117,6 +123,8 @@ public partial class App : System.Windows.Application
         // this endpoint punishes with a rate limit.
         _trayIcon.RefreshRequested += () => FireAndForget(async () =>
         {
+            // Null until CompleteStartup: startup is still waiting for settings.json.
+            if (_statusStore is null) return;
             if (TrayAccount() is { } account) await RefreshAccountAsync(account);
             await _statusStore!.LoadAsync();
         });
@@ -148,8 +156,54 @@ public partial class App : System.Windows.Application
             "ClaudeUsageWidget", "settings.json");
         _settings = new SettingsStore(settingsPath);
 
-        BuildAccounts();
+        if (TryBuildAccounts()) CompleteStartup();
+        else RetryStartupUntilSettingsLoad();
+    }
 
+    /// Retries while settings.json cannot be read, every 2 s for the first
+    /// minute and every 30 s after. Not a half-started widget: no window, no
+    /// polling, until the accounts are known — and never defaults written over
+    /// a file that is only held, which is what BuildAccounts would do.
+    private DispatcherTimer? _startupRetry;
+
+    private void RetryStartupUntilSettingsLoad()
+    {
+        _trayIcon!.SetTooltip("Claude Usage Widget — settings.json unreadable, retrying");
+        var started = DateTimeOffset.UtcNow;
+        _startupRetry = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _startupRetry.Tick += (_, _) =>
+        {
+            if (TryBuildAccounts())
+            {
+                _startupRetry.Stop();
+                _startupRetry = null;
+                CompleteStartup();
+                return;
+            }
+
+            if (DateTimeOffset.UtcNow - started > TimeSpan.FromMinutes(1))
+                _startupRetry.Interval = TimeSpan.FromSeconds(30);
+        };
+        _startupRetry.Start();
+    }
+
+    private bool TryBuildAccounts()
+    {
+        try
+        {
+            BuildAccounts();
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            WidgetLog.Write("-", "settings", $"unreadable at startup, retrying: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// Everything that needs the accounts: windows, stores, the poll timer.
+    private void CompleteStartup()
+    {
         // The palette before any window exists, and live tracking of Windows'
         // switch for as long as the app runs.
         ApplyTheme();
@@ -159,7 +213,8 @@ public partial class App : System.Windows.Application
         _statusStore = new StatusStore(new StatusApi().FetchAsync);
         _statusStore.Changed += OnStoresChanged;
 
-        _widgetWindow = new DesktopWidgetWindow(_settings);
+        // Set in OnStartup before CompleteStartup can run.
+        _widgetWindow = new DesktopWidgetWindow(_settings!);
         _widgetWindow.HideRequested += OnWidgetHideRequested;
         // The same handler the tray's Layout menu uses: two save paths for one
         // record is how they drift.
@@ -204,11 +259,11 @@ public partial class App : System.Windows.Application
         // widget with the eye icon in a previous run, it must not come back
         // on its own — otherwise "Show on desktop" in the menu and what is
         // actually on screen would drift apart immediately after startup.
-        if (_settings.Load().WidgetVisible) _widgetWindow.Show();
+        if (_settings!.Current().WidgetVisible) _widgetWindow.Show();
 
         // Same principle as WidgetVisible on the line above: the taskbar
         // band's state survives an application restart.
-        if (_settings.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
+        if (_settings.Current().TaskbarBandEnabled) SetTaskbarBandVisible(true);
 
         FireAndForget(StartupAsync);
     }
@@ -347,24 +402,21 @@ public partial class App : System.Windows.Application
     /// just the one that once had a path written in by hand.
     private void ExportUsage(AccountRuntime account)
     {
-        var data = _settings!.Load();
+        var data = _settings!.Current();
 
         // ExportPath comes from the freshly loaded settings, not from
         // account.Profile: it is set by hand-editing settings.json, and such
         // an edit must take effect on the next refresh, not after a restart.
-        var profile = data.Accounts.FirstOrDefault(a => a.Id == account.Profile.Id);
-        var path = profile?.ExportPath;
-        if (string.IsNullOrWhiteSpace(path))
+        var profile = data.Account(account.Profile.Id);
+        // The file name comes from DisplayName, with the id only as a
+        // fallback: the reader wants `personal.widget.json`, not a GUID.
+        // The profile here is current — ReloadAccountProfiles pulls a
+        // rename into the live AccountRuntime.
+        if (UsageExport.ExportPathFor(data, account.Profile.Id, account.Profile.DisplayName) is not { } path) return;
+        if (UsageExport.WritesOver(path, _settings.Path))
         {
-            if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return;
-
-            // The file name comes from DisplayName, with the id only as a
-            // fallback: the reader wants `personal.widget.json`, not a GUID.
-            // The profile here is current — ReloadAccountProfiles pulls a
-            // rename into the live AccountRuntime.
-            path = Path.Combine(
-                data.ExportDirectory,
-                UsageExport.FileNameFor(account.Profile.DisplayName, account.Profile.Id) + ".widget.json");
+            WidgetLog.Write(account.Profile.DisplayName, "export", "skipped: ExportPath is settings.json");
+            return;
         }
 
         // Only on a fresh successful response: overwriting the file with
@@ -374,7 +426,7 @@ public partial class App : System.Windows.Application
         // v3: the plan the launcher filters its model list by, through the same
         // sentinel as the panel's plan line. One call, so the derivation itself
         // lives where Core.Tests can pin it — an absent profile included.
-        var plan = SubscriptionTier.LabelFor(profile);
+        var plan = SubscriptionTier.LabelFor(profile, snapshot);
 
         // ModelBucket is the same choice the third dial shows; otherwise the
         // file and the panel would call two different limits by one name.
@@ -457,11 +509,13 @@ public partial class App : System.Windows.Application
         var account = TrayAccount();
         if (account is null) return;
 
-        var data = _settings!.Load();
-        var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now);
+        var data = _settings!.Current();
+        var models = AccountDials.For(
+            data.Account(account.Profile.Id), account.Snapshot, data.ModelBucket, DateTimeOffset.Now).Dials;
         var metrics = TrayText.Metrics(models);
 
-        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[TrayIcon.MetricIndex(data.TrayMetricKey)].Value, SystemTheme.TaskbarKind));
+        var index = TrayText.IconIndex(TrayIcon.MetricIndex(data.TrayMetricKey), models);
+        _trayIcon!.SetIcon(TrayIconRenderer.Render(metrics[index].Value, SystemTheme.TaskbarKind));
     }
 
     /// <summary>Pulls the current state into the tray menu (checkboxes,
@@ -470,7 +524,10 @@ public partial class App : System.Windows.Application
     /// buckets) can change other than through the menu item itself.</summary>
     private void RefreshTrayMenuState()
     {
-        var data = _settings!.Load();
+        // The menu can open while startup still waits for settings.json.
+        if (_widgetWindow is null) return;
+
+        var data = _settings!.Current();
         // The list of model buckets comes from the tray account: the
         // "Model limit" choice is one per widget, and offering something
         // the displayed account does not have would be a lie.
@@ -527,6 +584,9 @@ public partial class App : System.Windows.Application
 
     private void OnShowOnDesktopToggled(bool visible)
     {
+        // No window before CompleteStartup; saving the flag then would make
+        // the menu and the screen disagree once it exists.
+        if (_widgetWindow is null) return;
         var data = _settings!.Load();
         _settings.Save(data with { WidgetVisible = visible });
 
@@ -534,7 +594,7 @@ public partial class App : System.Windows.Application
         // the opposite side, so plain Show/Hide, without
         // PersistWidgetVisible below: the setting is already saved on the
         // line above.
-        if (visible) _widgetWindow!.Show(); else _widgetWindow!.Hide();
+        if (visible) _widgetWindow.Show(); else _widgetWindow.Hide();
 
         if (!visible) SetEditingLayout(false); else RefreshTrayMenuState();
     }
@@ -543,8 +603,9 @@ public partial class App : System.Windows.Application
     {
         // The PositionLocked setter itself updates _root.PositionLocked
         // and saves the setting (see DesktopWidgetWindow.PositionLocked) —
-        // there is nothing to duplicate here.
-        _widgetWindow!.PositionLocked = locked;
+        // there is nothing to duplicate here. No window before CompleteStartup.
+        if (_widgetWindow is null) return;
+        _widgetWindow.PositionLocked = locked;
         RefreshTrayMenuState();
     }
 
@@ -575,7 +636,7 @@ public partial class App : System.Windows.Application
     /// everything that draws reads Theme, so this is a resolve and an Apply.
     private void ApplyTheme()
     {
-        var data = _settings!.Load();
+        var data = _settings!.Current();
         Theme.Apply(ThemeChoices.Resolve(data.Theme, SystemTheme.AppsKind), PanelOpacities.Resolve(data.PanelOpacity));
     }
 
@@ -627,7 +688,7 @@ public partial class App : System.Windows.Application
                 _bandWindow = new TaskbarBandWindow();
                 _bandWindow.Lost += OnTaskbarBandLost;
             }
-            _bandWindow.SetPosition(_settings!.Load().BandPosition);
+            _bandWindow.SetPosition(_settings!.Current().BandPosition);
             // Render BEFORE Dock: it immediately calls Reposition(), which
             // needs the current content width, not the width from the
             // previous showing (or zero on the very first one).
@@ -663,7 +724,7 @@ public partial class App : System.Windows.Application
         try { dead?.Close(); }
         catch (InvalidOperationException) { /* already closed by WPF itself — and that's fine */ }
 
-        if (_settings!.Load().TaskbarBandEnabled) SetTaskbarBandVisible(true);
+        if (_settings!.Current().TaskbarBandEnabled) SetTaskbarBandVisible(true);
     }
 
     /// <summary>Fresh data for the band — one BandText entry per account, from
@@ -673,7 +734,7 @@ public partial class App : System.Windows.Application
     {
         if (_bandWindow is null) return;
 
-        var data = _settings!.Load();
+        var data = _settings!.Current();
         var rows = AccountRow.ForAll(
             data.Accounts, SnapshotsById(), data.ModelBucket, DateTimeOffset.Now);
 
@@ -692,7 +753,7 @@ public partial class App : System.Windows.Application
         var account = TrayAccount();
         if (account is null) return;
 
-        var data = _settings!.Load();
+        var data = _settings!.Current();
         var rows = AccountRow.ForAll(
             data.Accounts, SnapshotsById(), data.ModelBucket, DateTimeOffset.Now);
 
@@ -728,8 +789,8 @@ public partial class App : System.Windows.Application
 
         var now = DateTimeOffset.Now;
         var state = account.Store.CurrentState;
-        var data = _settings!.Load();
-        var models = DialModel.All(account.Snapshot, data.ModelBucket, now);
+        var data = _settings!.Current();
+        var models = AccountDials.For(data.Account(account.Profile.Id), account.Snapshot, data.ModelBucket, now).Dials;
         var metrics = TrayText.Metrics(models);
         var statusLine = StatusLine.Text(state, now, account.Store.RetryPausedUntil);
 
@@ -748,7 +809,7 @@ public partial class App : System.Windows.Application
     /// polling for the other three because of one that hit the limit.
     private UsageRetryState? LoadRetryState(string accountId)
     {
-        var account = _settings!.Load().Account(accountId);
+        var account = _settings!.Current().Account(accountId);
         return account?.RetryPausedUntil is { } until
             ? new UsageRetryState(until, account.ConsecutiveRateLimits)
             : null;
@@ -800,7 +861,8 @@ public partial class App : System.Windows.Application
             hasCredentials: () => _hasSessionCookie.TryGetValue(profile.Id, out var has) && has,
             now: () => DateTimeOffset.Now,
             loadRetryState: () => LoadRetryState(profile.Id),
-            saveRetryState: state => SaveRetryState(profile.Id, state));
+            saveRetryState: state => SaveRetryState(profile.Id, state),
+            log: message => WidgetLog.Write(profile.DisplayName, "unhandled", message));
         store.Changed += OnStoresChanged;
 
         return new AccountRuntime(profile, session, store);
@@ -810,7 +872,7 @@ public partial class App : System.Windows.Application
     /// to. Null only when there are no accounts at all.
     private AccountRuntime? TrayAccount()
     {
-        var id = _settings!.Load().TrayAccountId;
+        var id = _settings!.Current().TrayAccountId;
         return _accounts.FirstOrDefault(a => a.Profile.Id == id) ?? _accounts.FirstOrDefault();
     }
 
@@ -990,7 +1052,7 @@ public partial class App : System.Windows.Application
     /// or losing loaded snapshots.
     private void ReloadAccountProfiles()
     {
-        var byId = _settings!.Load().Accounts.ToDictionary(a => a.Id);
+        var byId = _settings!.Current().Accounts.ToDictionary(a => a.Id);
         _accounts = _accounts
             .Where(a => byId.ContainsKey(a.Profile.Id))
             .Select(a => a with { Profile = byId[a.Profile.Id] })

@@ -244,4 +244,386 @@ public class WidgetSettingsTests
         File.WriteAllText(path, "{not json");
         Assert.True(new SettingsStore(path).Load().WidgetVisible);
     }
+
+    [Fact]
+    public void SaveReplacesTheFileRatherThanRewritingItInPlace()
+    {
+        // A crash in the middle of an in-place rewrite leaves a truncated file,
+        // and Load turns that into defaults: every account gone. Replacing the
+        // file means a hard link to the old one keeps the old bytes, where an
+        // in-place rewrite would change them under both names.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { ModelBucket = "old" });
+        var before = File.ReadAllText(path);
+        var link = path + ".link";
+        Assert.True(CreateHardLink(link, path, IntPtr.Zero));
+
+        store.Save(new WidgetSettingsData { ModelBucket = "new" });
+
+        Assert.Equal(before, File.ReadAllText(link));
+        Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+        File.Delete(link);
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
+
+    [Fact]
+    public async Task SaveWaitsOutAReaderThatHoldsTheFileBriefly()
+    {
+        // A reader that opens settings.json with FileShare.ReadWrite but not
+        // Delete blocks the move over it. A short hold must cost a short wait,
+        // not the setting.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { ModelBucket = "old" });
+
+        var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var release = Task.Delay(150).ContinueWith(_ => reader.Dispose(), TaskScheduler.Default);
+
+        store.Save(new WidgetSettingsData { ModelBucket = "new" });
+        await release;
+
+        Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void AFailedSaveLeavesTheOldFileAndNoTempFile()
+    {
+        // NaN is not valid JSON, so the serializer throws part-way through.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        var store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { ModelBucket = "old" });
+        var before = File.ReadAllText(path);
+
+        Assert.ThrowsAny<Exception>(() => store.Save(new WidgetSettingsData { WidgetSide = double.NaN }));
+
+        Assert.Equal(before, File.ReadAllText(path));
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    private static string StoreWithOneAccount(out SettingsStore store)
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { Accounts = [new AccountProfile("a1", "work", "org-1", null, 0)] });
+        return path;
+    }
+
+    [Fact]
+    public async Task AFileHeldDuringLoadIsNeverReplacedWithDefaults()
+    {
+        // An editor or a backup tool holds settings.json exclusively for a
+        // moment while the widget persists its retry state the way App does:
+        // Save(Load().WithAccount(...)). Defaults read off the held file would
+        // be written back once the hold ends, every account gone.
+        var path = StoreWithOneAccount(out var store);
+        var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+        // 100 ms against a 750 ms budget: the load must wait it out and the save land.
+        var release = Task.Delay(100).ContinueWith(_ => holder.Dispose(), TaskScheduler.Default);
+
+        store.Save(store.Load().WithAccount("a1", a => a with { ConsecutiveRateLimits = 2 }));
+        await release;
+
+        var account = Assert.Single(new SettingsStore(path).Load().Accounts);
+        Assert.Equal("work", account.DisplayName);
+        Assert.Equal(2, account.ConsecutiveRateLimits);
+    }
+
+    [Fact]
+    public void LoadRethrowsAHoldItCannotWaitOutAndNothingIsSaved()
+    {
+        var path = StoreWithOneAccount(out var store);
+        var before = File.ReadAllText(path);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() =>
+                store.Save(store.Load().WithAccount("a1", a => a with { ConsecutiveRateLimits = 2 })));
+        }
+
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public async Task AReadOnlySettingsFileFailsTheSaveRatherThanWaitingForIt()
+    {
+        // A permanent refusal is not retried: retrying only sleeps on the UI
+        // thread, on every poll. The attribute is cleared shortly after the
+        // save starts, which a retry would wait out and succeed through.
+        var path = StoreWithOneAccount(out var store);
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        var clear = Task.Delay(100).ContinueWith(_ => File.SetAttributes(path, FileAttributes.Normal), TaskScheduler.Default);
+
+        Assert.Throws<UnauthorizedAccessException>(() => store.Save(new WidgetSettingsData()));
+        await clear;
+
+        Assert.Single(new SettingsStore(path).Load().Accounts);
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void ASymlinkedSettingsFileKeepsTheLinkAndUpdatesItsTarget()
+    {
+        // A dotfiles or sync setup links settings.json from elsewhere; replacing
+        // the link with a regular file would cut it off without a word.
+        var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(dir);
+        var real = Path.Combine(dir, "real.json");
+        var link = Path.Combine(dir, "s.json");
+        new SettingsStore(real).Save(new WidgetSettingsData { ModelBucket = "old" });
+        try
+        {
+            File.CreateSymbolicLink(link, real);
+        }
+        catch (IOException ex) when ((ex.HResult & 0xFFFF) == 1314)
+        {
+            // ERROR_PRIVILEGE_NOT_HELD: no Developer Mode and not elevated.
+            // xUnit 2 has no runtime skip, so this returns; the CI runner and
+            // the owner's elevated shell both create links.
+            return;
+        }
+
+        new SettingsStore(link).Save(new WidgetSettingsData { ModelBucket = "new" });
+
+        Assert.NotNull(new FileInfo(link).LinkTarget);
+        Assert.Equal("new", new SettingsStore(real).Load().ModelBucket);
+        Assert.Equal(["real.json", "s.json"],
+            Directory.GetFiles(dir).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AFailedReplaceDeletesItsTempFile()
+    {
+        // The export writer goes through the same helper: its temp was neither
+        // flushed nor removed when the move failed.
+        var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "a.widget.json");
+        File.WriteAllText(path, "{}");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() =>
+                FileReplace.Write(path, stream => stream.Write("{\"x\":1}"u8)));
+            Assert.Equal(["a.widget.json"], Directory.GetFiles(dir).Select(Path.GetFileName));
+            Assert.Equal("{}", File.ReadAllText(path));
+        }
+        finally
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+        }
+    }
+
+    // Not tested: that FileReplace.Write flushes the temp to disk before the
+    // move. Losing an unflushed write needs a power cut between the move and
+    // the lazy writer; no test here can observe it.
+
+    [Fact]
+    public void AStaleReadOnlyTempDoesNotBlockTheSave()
+    {
+        var path = StoreWithOneAccount(out var store);
+        var stale = path + ".tmp";
+        File.WriteAllText(stale, "stale");
+        File.SetAttributes(stale, FileAttributes.ReadOnly);
+        try
+        {
+            store.Save(new WidgetSettingsData { ModelBucket = "new" });
+
+            Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+        }
+        finally
+        {
+            File.SetAttributes(stale, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task AReaderThatSharesOnlyReadIsWaitedOut()
+    {
+        // The move is denied (ACCESS_DENIED, like a permanent refusal); the
+        // probe's sharing violation is what marks it as passing.
+        var path = StoreWithOneAccount(out var store);
+        var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = Task.Delay(100).ContinueWith(_ => reader.Dispose(), TaskScheduler.Default);
+
+        store.Save(new WidgetSettingsData { ModelBucket = "new" });
+        await release;
+
+        Assert.Equal("new", new SettingsStore(path).Load().ModelBucket);
+    }
+
+    [Fact]
+    public void AnAclThatDeniesTheReplaceFailsAtOnce()
+    {
+        // A deny on the file alone does not stop the replace (the folder's
+        // delete-child right allows it), so the folder denies delete-child too.
+        var path = StoreWithOneAccount(out var store);
+        var dir = Path.GetDirectoryName(path)!;
+        var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
+        Icacls(path, "/deny", $"{user}:(W,D)");
+        Icacls(dir, "/deny", $"{user}:(DC)");
+        try
+        {
+            var denied = Assert.ThrowsAny<UnauthorizedAccessException>(() => store.Save(new WidgetSettingsData()));
+
+            // Not transient = Move gives up on the first attempt instead of sleeping through the backoff.
+            Assert.False(FileReplace.IsTransient(denied, path));
+        }
+        finally
+        {
+            Icacls(dir, "/remove:d", user);
+            Icacls(path, "/remove:d", user);
+        }
+
+        Assert.Single(new SettingsStore(path).Load().Accounts);
+    }
+
+    private static void Icacls(params string[] args)
+    {
+        var info = new System.Diagnostics.ProcessStartInfo("icacls") { CreateNoWindow = true, UseShellExecute = false };
+        foreach (var arg in args) info.ArgumentList.Add(arg);
+        using var process = System.Diagnostics.Process.Start(info)!;
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    [Fact]
+    public void ATrailingCommaStillLoadsTheAccounts()
+    {
+        var path = WriteRaw("""{ "Accounts": [ { "Id": "a1", "DisplayName": "work", "ConsecutiveRateLimits": 0 }, ], }""");
+
+        Assert.Equal("work", Assert.Single(new SettingsStore(path).Load().Accounts).DisplayName);
+    }
+
+    [Fact]
+    public void AnUnknownEnumNameFallsBackForThatFieldAlone()
+    {
+        // A newer build wrote a value this one does not know.
+        var path = WriteRaw("""{ "Accounts": [ { "Id": "a1", "DisplayName": "work", "ConsecutiveRateLimits": 0 } ], "BandView": "Hologram", "ModelDial": "Hidden" }""");
+
+        var loaded = new SettingsStore(path).Load();
+
+        Assert.Single(loaded.Accounts);
+        Assert.Equal(ModelDial.Hidden, loaded.ModelDial);
+    }
+
+    [Fact]
+    public void AnUnparseableFileIsCopiedAsideOnceBeforeDefaultsReplaceIt()
+    {
+        const string broken = """{ "Accounts": [ { "Id": "a1", "DisplayName": "work" """;
+        var path = WriteRaw(broken);
+        var store = new SettingsStore(path);
+
+        var loaded = store.Load();
+        store.Load();
+        // What BuildAccounts does with an empty list: one default account, saved.
+        store.Save(loaded with { Accounts = [new AccountProfile("default", "Claude", null, null, 0)] });
+
+        Assert.Empty(loaded.Accounts);
+        var copy = Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!, "s.json.bad-*"));
+        Assert.Equal(broken, File.ReadAllText(copy));
+    }
+
+    [Fact]
+    public void AFileThatTurnsUnparseableAfterAGoodLoadIsNeverReplacedWithDefaults()
+    {
+        // A hand-edit gone wrong while the widget runs, then a write the way
+        // ClaudeWebSession.SaveOrganizationId does it.
+        var path = StoreWithOneAccount(out var store);
+        store.Load();
+        const string broken = """{ "Accounts": [ { "Id": "a1", "DisplayName": "work" """;
+        File.WriteAllText(path, broken);
+
+        Assert.Throws<SettingsUnparseableException>(() =>
+            store.Save(store.Load().WithAccount("a1", a => a with { OrganizationId = "org-2" })));
+
+        Assert.Equal(broken, File.ReadAllText(path));
+        Assert.Equal("org-1", Assert.Single(store.Current().Accounts).OrganizationId);
+    }
+
+    [Fact]
+    public void AnUnparseableFileThatCannotBeCopiedAsideIsNotLoadedAsDefaults()
+    {
+        // Before any good read, defaults are only safe once the bad bytes are
+        // kept: a held earlier copy makes the hash check, and so the copy, fail.
+        const string broken = """{ "Accounts": [ { "Id": "a1", "DisplayName": "work" """;
+        var path = WriteRaw(broken);
+        File.WriteAllText(path + ".bad-held", "other");
+        var store = new SettingsStore(path);
+
+        using (new FileStream(path + ".bad-held", FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Throws<SettingsUnparseableException>(() => store.Save(store.Load()));
+        }
+
+        Assert.Equal(broken, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void AFailedWriteWhoseTempCannotBeDeletedRethrowsTheOriginalError()
+    {
+        // App filters on IOException and UnauthorizedAccessException: an
+        // AggregateException would slip past both.
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        string? temp = null;
+
+        var thrown = Assert.Throws<IOException>(() => FileReplace.Write(path, stream =>
+        {
+            temp = ((FileStream)stream).Name;
+            File.SetAttributes(temp, FileAttributes.ReadOnly);
+            throw new IOException("write failed");
+        }));
+
+        Assert.Equal("write failed", thrown.Message);
+        Assert.True(thrown.Data.Contains("TempCleanupFailed"));
+        // Set by the callback above, which the assertion just proved ran.
+        File.SetAttributes(temp!, FileAttributes.Normal);
+        File.Delete(temp!);
+    }
+
+    [Fact]
+    public void AFileThatVanishesAfterAGoodLoadIsNotAFirstRun()
+    {
+        // A sync tool deletes and recreates the file; between the two, Load
+        // must not answer "no accounts".
+        var path = StoreWithOneAccount(out var store);
+        File.Delete(path);
+
+        Assert.Single(store.Load().Accounts);
+    }
+
+    [Fact]
+    public void CurrentDrawsTheLastGoodSettingsWhileTheFileIsHeld()
+    {
+        var path = StoreWithOneAccount(out var store);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Single(store.Current().Accounts);
+            Assert.ThrowsAny<IOException>(() => store.Load());
+        }
+    }
+
+    [Fact]
+    public void CurrentThrowsWhenNoReadHasSucceededYet()
+    {
+        var path = StoreWithOneAccount(out _);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => new SettingsStore(path).Current());
+        }
+    }
+
+    private static string WriteRaw(string json)
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, json);
+        return path;
+    }
 }

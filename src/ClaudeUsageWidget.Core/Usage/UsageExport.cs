@@ -28,7 +28,7 @@ namespace ClaudeUsageWidget.Core;
 /// JSON only from pre-v3 writers.</param>
 /// <param name="Plan">v3. The account's subscription plan label, as
 /// <see cref="SubscriptionTier.LabelFor"/> reads it off the account's stored
-/// profile — "Team", "Max 20x", "Pro", … — which
+/// profile and this snapshot — "Team", "Team Premium", "Max", "Ultra", "Pro", … — which
 /// is what entitlement the launcher filters by; the model buckets above are
 /// not. Null when the three raw subscription fields were never fetched, and
 /// written as `"plan":null` rather than omitted (the writer sets no ignore
@@ -110,6 +110,69 @@ public static class UsageExport
                 .Select(s => s.ToLowerInvariant())
                 .ToList(),
             plan);
+    }
+
+    /// Where this account's figures go, or null when the export is off. The
+    /// account's own ExportPath wins; otherwise ExportDirectory plus
+    /// <see cref="FileNameFor"/>.
+    ///
+    /// Two accounts must never share a file: they would overwrite each other's
+    /// figures on every refresh. Final paths are compared, case-insensitively
+    /// as Windows does. Every account's own ExportPath is taken first; then, in
+    /// settings order, each account takes its plain name when it is free,
+    /// which readers open by name, or `<name>-<id>` when it is not. An account
+    /// missing from the list (removed mid-poll) counts as the last.
+    ///
+    /// The names come from the settings, the caller's
+    /// <paramref name="displayName"/> only for an account missing from them:
+    /// one source for every account, so a hand-edited name cannot slip past.
+    public static string? ExportPathFor(WidgetSettingsData data, string accountId, string displayName)
+    {
+        var own = data.Account(accountId);
+        if (!string.IsNullOrWhiteSpace(own?.ExportPath)) return own.ExportPath;
+        if (string.IsNullOrWhiteSpace(data.ExportDirectory)) return null;
+
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var account in data.Accounts.Where(a => !string.IsNullOrWhiteSpace(a.ExportPath)))
+            taken.Add(Normalize(account.ExportPath!));
+
+        foreach (var account in data.Accounts.Where(a => string.IsNullOrWhiteSpace(a.ExportPath)))
+        {
+            var path = FreePath(data.ExportDirectory, account.DisplayName, account.Id, taken);
+            if (account.Id == accountId) return path;
+            taken.Add(Normalize(path));
+        }
+
+        return FreePath(data.ExportDirectory, displayName, accountId, taken);
+    }
+
+    /// The plain name, else the name with the id, else that with a counter:
+    /// an account named like another's suffixed file must not land on it.
+    private static string FreePath(string directory, string displayName, string id, HashSet<string> taken)
+    {
+        var name = FileNameFor(displayName, id);
+        var path = Path.Combine(directory, name + ".widget.json");
+        if (!taken.Contains(Normalize(path))) return path;
+
+        var suffixed = name + "-" + FileNameFor(id, id);
+        path = Path.Combine(directory, suffixed + ".widget.json");
+        for (var n = 2; taken.Contains(Normalize(path)); n++)
+            path = Path.Combine(directory, $"{suffixed}-{n.ToString(System.Globalization.CultureInfo.InvariantCulture)}.widget.json");
+        return path;
+    }
+
+    /// True when an export to <paramref name="exportPath"/> would replace
+    /// <paramref name="protectedPath"/> (settings.json): an ExportPath typed
+    /// into the wrong field would write usage figures over every account.
+    public static bool WritesOver(string exportPath, string protectedPath) =>
+        string.Equals(Normalize(exportPath), Normalize(protectedPath), StringComparison.OrdinalIgnoreCase);
+
+    /// A hand-written ExportPath may be relative or spelled with `..`; one
+    /// that does not even parse cannot collide with a generated one.
+    private static string Normalize(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return path; }
     }
 
     /// A display name turned into one path segment: trim, lowercase, anything
