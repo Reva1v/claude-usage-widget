@@ -50,4 +50,26 @@ public class BandViewTests
         Assert.Equal("∞", entry.Percent);
         Assert.Null(entry.ResetsIn);
     }
+
+    [Fact]
+    public void ASpentWeekWithoutAFiveHourWindowShowsTheWeekInTheAccountsBand()
+    {
+        // Nothing goes through until the week resets. The Accounts band shows
+        // one figure per account, so "∞" with no time would say "go ahead".
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_787_748_000);
+        var snapshot = new UsageSnapshot(new Dictionary<string, UsageBucket>
+        {
+            ["seven_day"] = new(100, now.AddDays(2)),
+        });
+        var account = new AccountProfile("a", "personal", null, null, 0,
+            Capabilities: ["claude_max", "chat"], RateLimitTier: "default_claude_max_20x");
+        var row = AccountRow.ForAll([account], new Dictionary<string, UsageSnapshot?> { ["a"] = snapshot }, null, now)[0];
+
+        // The dial itself still says the account has no five-hour limit.
+        Assert.True(row.Dials[0].NoLimit);
+        Assert.Equal("2d 0h", row.SessionResetsIn);
+        var entry = Assert.Single(BandText.Entries([row]));
+        Assert.Equal("100%", entry.Percent);
+        Assert.Equal("2d 0h", entry.ResetsIn);
+    }
 }

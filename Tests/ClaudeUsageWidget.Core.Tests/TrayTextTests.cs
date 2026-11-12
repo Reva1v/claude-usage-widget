@@ -63,6 +63,19 @@ public class TrayTextTests
     }
 
     [Fact]
+    public void TheIconDoesNotFallBackToAWeekWithoutAFigure()
+    {
+        // The fallback exists to draw a number; a week with none has no number to give.
+        var dials = new[]
+        {
+            new DialModel("5H", null, "no limit", NoLimit: true),
+            Model("7D", null),
+            Model("FABLE", 0.01),
+        };
+        Assert.Equal(0, TrayText.IconIndex(0, dials));
+    }
+
+    [Fact]
     public void ShortTitlesSurviveIntact()
     {
         Assert.Equal("OPUS", TrayText.Metrics(new[] { Model("OPUS", 0.1) })[0].Label);

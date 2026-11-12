@@ -9,6 +9,16 @@ public class DialModelTests
             pair => pair.Key,
             pair => new UsageBucket(pair.Value.Utilization, pair.Value.OffsetSeconds is { } offset ? Now.AddSeconds(offset) : null)));
 
+    /// The dials as the views get them: through the account's plan.
+    private static IReadOnlyList<DialModel> Dials(
+        UsageSnapshot? snapshot, string? preferredModelKey, DateTimeOffset now, AccountProfile? profile = null) =>
+        AccountDials.For(profile, snapshot, preferredModelKey, now).Dials;
+
+    private static AccountProfile Plan(string tier, string capability, string? ravenType = null) =>
+        new("a1", "work", "org-1", null, 0, Capabilities: [capability, "chat"], RateLimitTier: tier, RavenType: ravenType);
+
+    private static readonly AccountProfile Ultra = Plan("default_claude_max_20x", "claude_max");
+
     [Fact]
     public void BuildsFromBucket()
     {
@@ -49,7 +59,7 @@ public class DialModelTests
             ["seven_day"] = new(17.5, null),
             ["seven_day_fable"] = new(8, null),
         });
-        var dials = DialModel.All(s, null, Now);
+        var dials = Dials(s, null, Now);
         Assert.Equal(3, dials.Count);
         Assert.Equal(new[] { "5H", "7D", "FABLE" }, dials.Select(d => d.Title));
         Assert.Equal(0.42, dials[0].Fraction!.Value, 10);
@@ -61,7 +71,7 @@ public class DialModelTests
         // Nothing more goes through until the WEEK resets, so counting down to
         // the next five-hour window says "wait 20 minutes" when the real answer
         // is "wait three days".
-        var dials = DialModel.All(
+        var dials = Dials(
             Snapshot(new() { ["five_hour"] = (30, 1200), ["seven_day"] = (100, 259_200) }), null, Now);
 
         Assert.Equal("3d 0h", dials[0].Remaining);
@@ -73,7 +83,7 @@ public class DialModelTests
     [Fact]
     public void AWeekWithRoomLeavesTheFiveHourDialAlone()
     {
-        var dials = DialModel.All(
+        var dials = Dials(
             Snapshot(new() { ["five_hour"] = (30, 1200), ["seven_day"] = (99, 259_200) }), null, Now);
 
         Assert.Equal("20m", dials[0].Remaining);
@@ -85,7 +95,7 @@ public class DialModelTests
         // The per-model bucket is a seven-day window too, but exhausting it
         // only closes one model — the five-hour window still decides when the
         // others may be used again.
-        var dials = DialModel.All(
+        var dials = Dials(
             Snapshot(new()
             {
                 ["five_hour"] = (30, 1200),
@@ -100,7 +110,7 @@ public class DialModelTests
     [Fact]
     public void NoModelBucketReadsModelAndIsEmpty()
     {
-        var dials = DialModel.All(
+        var dials = Dials(
             Snapshot(new() { ["five_hour"] = (10, 3600), ["seven_day"] = (20, 86_400) }),
             null,
             Now);
@@ -111,7 +121,7 @@ public class DialModelTests
     [Fact]
     public void ThirdDialHonoursPinnedBucket()
     {
-        var dials = DialModel.All(
+        var dials = Dials(
             Snapshot(new()
             {
                 ["seven_day_fable"] = (30, 86_400),
@@ -126,7 +136,7 @@ public class DialModelTests
     [Fact]
     public void MissingSnapshotYieldsEmptyDials()
     {
-        var dials = DialModel.All(null, null, Now);
+        var dials = Dials(null, null, Now);
         Assert.Equal(new[] { "5H", "7D", "MODEL" }, dials.Select(d => d.Title));
         Assert.All(dials, d => Assert.Null(d.Fraction));
         Assert.All(dials, d => Assert.False(d.NoLimit));
@@ -140,7 +150,7 @@ public class DialModelTests
         // seven_day and no usable five_hour: the export of such an account on
         // 2026-11-01 wrote fiveHour=null next to sevenDay=77. That is an
         // answer, not missing data, so the dial must not read n/a.
-        var dials = DialModel.All(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, "Ultra");
+        var dials = Dials(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, Ultra);
 
         Assert.Equal("5H", dials[0].Title);
         Assert.True(dials[0].NoLimit);
@@ -153,14 +163,12 @@ public class DialModelTests
     // Only Ultra is sold without a five-hour limit. On any other plan, or
     // before the plan is known, a missing five_hour (the decoder drops a null
     // one) is missing data and reads n/a as it always did.
-    [InlineData("Max")]
-    [InlineData("Team")]
-    [InlineData("Team Premium")]
-    [InlineData("Pro")]
-    [InlineData(null)]
-    public void AMissingFiveHourWindowOnAnyOtherPlanIsNA(string? plan)
+    [InlineData("default_claude_max_5x", "claude_max", null)]
+    [InlineData("default_raven", "raven", "team")]
+    [InlineData("default_claude_ai", "claude_pro", null)]
+    public void AMissingFiveHourWindowOnAnyOtherPlanIsNA(string tier, string capability, string? ravenType)
     {
-        var dials = DialModel.All(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, plan);
+        var dials = Dials(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, Plan(tier, capability, ravenType));
 
         Assert.False(dials[0].NoLimit);
         Assert.Null(dials[0].Fraction);
@@ -168,11 +176,44 @@ public class DialModelTests
     }
 
     [Fact]
+    public void AMissingFiveHourWindowBeforeThePlanIsKnownIsNA()
+    {
+        var dials = Dials(Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, profile: null);
+
+        Assert.False(dials[0].NoLimit);
+        Assert.Null(dials[0].Remaining);
+    }
+
+    [Fact]
+    public void AnUnrecognisedMaxTierKeepsTheNoLimitReading()
+    {
+        // A new tier name for the Max family may be Ultra; an Ultra account
+        // must not lose "no limit" to n/a because its tier was renamed.
+        var dials = Dials(
+            Snapshot(new() { ["seven_day"] = (77, 259_200) }), null, Now, Plan("default_claude_max", "claude_max"));
+
+        Assert.True(dials[0].NoLimit);
+    }
+
+    [Fact]
+    public void AResponseWithNeitherWindowIsNotNoLimitEvenOnUltra()
+    {
+        // The decoder accepts any non-empty bucket set, so a body carrying only
+        // seven_day_oauth_apps is a response with no answer for either window.
+        var dials = Dials(Snapshot(new() { ["seven_day_oauth_apps"] = (5, 259_200) }), null, Now, Ultra);
+
+        Assert.False(dials[0].NoLimit);
+        Assert.Null(dials[0].Remaining);
+        // The tray icon keeps the chosen 5H dial and draws its dash.
+        Assert.Equal(0, TrayText.IconIndex(0, dials));
+    }
+
+    [Fact]
     public void AnUltraAccountWithAFiveHourWindowShowsTheNumber()
     {
         // A new, unverified Ultra account still has a temporary five-hour limit.
-        var dials = DialModel.All(
-            Snapshot(new() { ["five_hour"] = (40, 3600), ["seven_day"] = (77, 259_200) }), null, Now, "Ultra");
+        var dials = Dials(
+            Snapshot(new() { ["five_hour"] = (40, 3600), ["seven_day"] = (77, 259_200) }), null, Now, Ultra);
 
         Assert.False(dials[0].NoLimit);
         Assert.Equal(0.40, dials[0].Fraction!.Value, 10);
@@ -184,7 +225,7 @@ public class DialModelTests
     {
         // The spent-week rule moves a five-hour COUNTDOWN; there is none here,
         // and the seven-day dial already counts down to the week.
-        var dials = DialModel.All(Snapshot(new() { ["seven_day"] = (100, 259_200) }), null, Now, "Ultra");
+        var dials = Dials(Snapshot(new() { ["seven_day"] = (100, 259_200) }), null, Now, Ultra);
 
         Assert.True(dials[0].NoLimit);
         Assert.Equal("no limit", dials[0].Remaining);
@@ -194,7 +235,7 @@ public class DialModelTests
     public void NoSnapshotIsNotNoLimitEvenOnUltra()
     {
         // Nothing fetched yet is no answer at all.
-        var dials = DialModel.All(null, null, Now, "Ultra");
+        var dials = Dials(null, null, Now, Ultra);
 
         Assert.False(dials[0].NoLimit);
     }

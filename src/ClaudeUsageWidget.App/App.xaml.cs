@@ -450,8 +450,8 @@ public partial class App : System.Windows.Application
         if (account is null) return;
 
         var data = _settings!.Load();
-        var plan = SubscriptionTier.LabelFor(data.Account(account.Profile.Id), account.Snapshot);
-        var models = DialModel.All(account.Snapshot, data.ModelBucket, DateTimeOffset.Now, plan);
+        var models = AccountDials.For(
+            data.Account(account.Profile.Id), account.Snapshot, data.ModelBucket, DateTimeOffset.Now).Dials;
         var metrics = TrayText.Metrics(models);
 
         var index = TrayText.IconIndex(TrayIcon.MetricIndex(data.TrayMetricKey), models);
@@ -723,8 +723,7 @@ public partial class App : System.Windows.Application
         var now = DateTimeOffset.Now;
         var state = account.Store.CurrentState;
         var data = _settings!.Load();
-        var plan = SubscriptionTier.LabelFor(data.Account(account.Profile.Id), account.Snapshot);
-        var models = DialModel.All(account.Snapshot, data.ModelBucket, now, plan);
+        var models = AccountDials.For(data.Account(account.Profile.Id), account.Snapshot, data.ModelBucket, now).Dials;
         var metrics = TrayText.Metrics(models);
         var statusLine = StatusLine.Text(state, now, account.Store.RetryPausedUntil);
 

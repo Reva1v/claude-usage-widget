@@ -51,8 +51,32 @@ public static class SubscriptionTier
             : label;
     }
 
-    /// The plan sold without a five-hour limit; the dials read it.
+    /// The plan sold without a five-hour limit.
     public const string Ultra = "Ultra";
+
+    /// False when the account may have no five-hour window, so a missing
+    /// five-hour figure is that answer rather than missing data: Ultra, and a
+    /// Max-family tier this build does not recognise. The latter is a new
+    /// name for either plan, and of the two wrong readings "no limit" on a
+    /// Max account shows only while the server sends no five-hour figure,
+    /// where "n/a" on an Ultra account would stay forever. Everything else,
+    /// and an account whose plan was never fetched, has the window.
+    ///
+    /// Read off the raw fields, never off <see cref="Label"/>'s marketing name.
+    public static bool HasFiveHourLimit(AccountProfile? profile)
+    {
+        if (profile is null) return true;
+        var caps = profile.Capabilities ?? [];
+        if (!string.IsNullOrEmpty(profile.RavenType) || caps.Contains("raven")) return true;
+        return !caps.Contains("claude_max") || Strip((profile.RateLimitTier ?? "").Trim()) == FiveTimesTier;
+    }
+
+    private const string FiveTimesTier = "claude_max_5x";
+    private const string TwentyTimesTier = "claude_max_20x";
+
+    /// A Max-family tier that names neither plan. Not bare "Max": that is the
+    /// $100 plan now, and an Ultra account in this state would read as it.
+    private const string UnknownMaxPlan = "Max or Ultra";
 
     /// The plan, or null while nothing has been fetched for this account.
     ///
@@ -106,11 +130,16 @@ public static class SubscriptionTier
     /// renamed (claude.com/pricing: Max $100, Ultra $200). The tier strings
     /// kept the old names: `default_claude_max_20x` was still what an Ultra
     /// account returned on 2026-11-01.
+    ///
+    /// Any other tier is a name this build does not know. Bare "Max" once
+    /// meant the family and now means the lower plan, so it is never the
+    /// fallback: a tier with a suffix keeps it ("Max 40x"), one without reads
+    /// <see cref="UnknownMaxPlan"/>.
     private static string MaxPlan(string tier) => Strip(tier) switch
     {
-        "claude_max_20x" => Ultra,
-        "claude_max_5x" => "Max",
-        _ => Named("Max", tier, "claude_max"),
+        TwentyTimesTier => Ultra,
+        FiveTimesTier => "Max",
+        _ => Named("Max", tier, "claude_max") is var named && named != "Max" ? named : UnknownMaxPlan,
     };
 
     /// The plan name plus whatever the tier adds after its family, in title

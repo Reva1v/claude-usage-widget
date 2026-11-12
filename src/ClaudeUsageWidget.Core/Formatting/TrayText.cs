@@ -20,10 +20,12 @@ public static class TrayText
 
     /// The dial the tray ICON draws: the one chosen in "Tray shows", unless
     /// that account has no such limit. The icon is one number and "∞" is not
-    /// one, so a 5H choice falls back to the week, which such an account always
-    /// has. The setting is left alone: another account may have the window.
+    /// one, so a 5H choice falls back to the week when the week has a figure.
+    /// The setting is left alone: another account may have the window.
     public static int IconIndex(int chosen, IReadOnlyList<DialModel> dials) =>
-        chosen < dials.Count && dials[chosen].NoLimit ? WeekIndex : chosen;
+        chosen < dials.Count && dials[chosen].NoLimit && WeekIndex < dials.Count && dials[WeekIndex].Fraction is not null
+            ? WeekIndex
+            : chosen;
 
     /// `DialModel.All` order: 5H, 7D, the model.
     private const int WeekIndex = 1;
@@ -56,8 +58,14 @@ public static class BandText
     public static IReadOnlyList<BandEntry> Entries(IReadOnlyList<AccountRow> rows) =>
         rows.Select(row => new BandEntry(
             row.DisplayName.Length <= MaxNameLength ? row.DisplayName : row.DisplayName[..MaxNameLength],
-            TrayText.ValueFor(row.Dials[0]),
+            TrayText.ValueFor(BandDial(row.Dials)),
             row.SessionResetsIn)).ToList();
+
+    /// The 5H dial, except on an account without that window whose week is
+    /// spent: "∞" there says "go ahead" while nothing goes through until the
+    /// week resets, so the band shows the week's figure beside its reset time.
+    private static DialModel BandDial(IReadOnlyList<DialModel> dials) =>
+        dials[0].NoLimit && DialModel.IsSpent(dials[1]) ? dials[1] : dials[0];
 
     /// The band as it was before accounts existed: the tray account's three
     /// columns — 5H, 7D, the model — label over percentage, no reset times.

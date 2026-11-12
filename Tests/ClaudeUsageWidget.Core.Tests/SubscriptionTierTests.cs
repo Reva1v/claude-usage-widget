@@ -87,15 +87,39 @@ public class SubscriptionTierTests
         Assert.Equal("Team Premium", SubscriptionTier.Label(
             ["raven", "chat"], "default_raven_premium", "team"));
 
-    [Fact]
-    public void MaxWithNoSuffixInTheTierIsBareMax() =>
-        // The capability says Max, the tier does not say which — better a plan
-        // name with no multiplier than a multiplier that was invented.
-        Assert.Equal("Max", SubscriptionTier.Label(["claude_max", "chat"], "default_claude_max", null));
+    [Theory]
+    // The capability says the Max family, the tier does not say which plan.
+    // Bare "Max" is the $100 plan since the rename, so it is never the guess:
+    // an Ultra account would read as the lower plan.
+    [InlineData("default_claude_max")]
+    [InlineData("something_else")]
+    [InlineData(null)]
+    public void AMaxFamilyTierThatNamesNeitherPlanIsNotReadAsMax(string? tier) =>
+        Assert.Equal("Max or Ultra", SubscriptionTier.Label(["claude_max", "chat"], tier, null));
 
     [Fact]
-    public void MaxSurvivesATierThatNamesAnotherFamily() =>
-        Assert.Equal("Max", SubscriptionTier.Label(["claude_max", "chat"], "something_else", null));
+    public void AnUnknownMaxMultiplierKeepsItsSuffix() =>
+        Assert.Equal("Max 40x", SubscriptionTier.Label(["claude_max", "chat"], "default_claude_max_40x", null));
+
+    [Theory]
+    // Ultra has no five-hour window, and neither may a Max-family tier this
+    // build does not know (a new name for either plan). Every other plan has
+    // one, and so does an account whose plan was never fetched.
+    [InlineData("default_claude_max_20x", "claude_max", null, false)]
+    [InlineData("default_claude_max_40x", "claude_max", null, false)]
+    [InlineData("default_claude_max", "claude_max", null, false)]
+    [InlineData("default_claude_max_5x", "claude_max", null, true)]
+    [InlineData("default_claude_ai", "claude_pro", null, true)]
+    [InlineData("default_raven", "raven", "team", true)]
+    [InlineData(null, null, null, true)]
+    public void HasFiveHourLimitReadsTheRawFields(string? tier, string? capability, string? raven, bool expected) =>
+        Assert.Equal(expected, SubscriptionTier.HasFiveHourLimit(new AccountProfile(
+            "a1", "work", "org-1", null, 0,
+            Capabilities: capability is null ? null : [capability, "chat"], RateLimitTier: tier, RavenType: raven)));
+
+    [Fact]
+    public void AnAbsentProfileHasAFiveHourLimit() =>
+        Assert.True(SubscriptionTier.HasFiveHourLimit(null));
 
     [Fact]
     public void EnterpriseIsReadFromEitherTheCapabilityOrTheTier()
