@@ -40,6 +40,13 @@ public sealed class UsageStore
 
     private int _consecutiveRateLimits;
 
+    /// What the settings hold for this account, as far as this store knows:
+    /// a write that would not change it is skipped. Without that, every
+    /// successful poll rewrote and fsynced settings.json to say "no pause"
+    /// again. Not known until a read or a write succeeds.
+    private UsageRetryState? _persisted;
+    private bool _persistedKnown;
+
     /// The request that's in flight right now, if any. The App layer can
     /// kick LoadAsync() from a timer, a manual refresh, and a wake handler
     /// almost simultaneously; without coalescing they'd race each other, and
@@ -81,16 +88,47 @@ public sealed class UsageStore
         _now = now;
         _saveRetryState = saveRetryState;
 
-        var saved = loadRetryState();
+        UsageRetryState? saved;
+        try
+        {
+            saved = loadRetryState();
+            _persisted = saved;
+            _persistedKnown = true;
+        }
+        catch (Exception)
+        {
+            // The settings could not be read: start unpaused, and leave the
+            // file alone until a later write knows what to put there.
+            saved = null;
+        }
+
         if (saved is not null && saved.Until > now())
         {
             RetryPausedUntil = saved.Until;
             _consecutiveRateLimits = saved.ConsecutiveRateLimits;
             CurrentState = new UsageState.Failed(UsageError.RateLimited(null));
         }
-        else
+        else if (_persistedKnown)
         {
-            saveRetryState(null);
+            PersistRetryState(null);
+        }
+    }
+
+    /// The pause is a convenience across restarts; a write that fails must not
+    /// turn a good fetch into a failure or stop the store from being built. The
+    /// pause still holds in memory, and the next change tries the write again.
+    private void PersistRetryState(UsageRetryState? state)
+    {
+        if (_persistedKnown && Equals(_persisted, state)) return;
+        try
+        {
+            _saveRetryState(state);
+            _persisted = state;
+            _persistedKnown = true;
+        }
+        catch (Exception)
+        {
+            _persistedKnown = false;
         }
     }
 
@@ -171,7 +209,7 @@ public sealed class UsageStore
                     var wait = Math.Max(error.RetryAfterSeconds ?? 0, RateLimitBackoffSeconds[index]);
                     var deadline = _now() + TimeSpan.FromSeconds(wait + RetryMarginSeconds);
                     RetryPausedUntil = deadline;
-                    _saveRetryState(new UsageRetryState(deadline, _consecutiveRateLimits));
+                    PersistRetryState(new UsageRetryState(deadline, _consecutiveRateLimits));
                 }
                 SetState(new UsageState.Failed(error));
             }
@@ -187,7 +225,7 @@ public sealed class UsageStore
         LastSnapshot = snapshot;
         _consecutiveRateLimits = 0;
         RetryPausedUntil = null;
-        _saveRetryState(null);
+        PersistRetryState(null);
         SetState(new UsageState.Ok(snapshot, snapshot.SourceUpdatedAt ?? _now()));
     }
 

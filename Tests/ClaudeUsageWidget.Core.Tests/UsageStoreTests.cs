@@ -324,4 +324,118 @@ public class UsageStoreTests
 
         Assert.Equal(0, fireCount);
     }
+
+    [Fact]
+    public void AFailingRetryStateWriteDoesNotStopTheStoreBeingBuilt()
+    {
+        // An expired pause on disk is cleared at startup; settings.json held
+        // by another process must not interrupt building the accounts.
+        var store = new UsageStore(
+            fetch: _ => Task.FromResult(Snapshot(1)),
+            hasCredentials: () => true,
+            now: () => Now,
+            loadRetryState: () => new UsageRetryState(Now - TimeSpan.FromMinutes(1), 1),
+            saveRetryState: _ => throw new IOException("held"));
+
+        Assert.Equal(new UsageState.Loading(), store.CurrentState);
+    }
+
+    [Fact]
+    public void AnUnreadableRetryStateStartsUnpausedAndWritesNothing()
+    {
+        var saves = 0;
+        var store = new UsageStore(
+            fetch: _ => Task.FromResult(Snapshot(1)),
+            hasCredentials: () => true,
+            now: () => Now,
+            loadRetryState: () => throw new IOException("held"),
+            saveRetryState: _ => saves++);
+
+        Assert.Equal(new UsageState.Loading(), store.CurrentState);
+        Assert.Null(store.RetryPausedUntil);
+        Assert.Equal(0, saves);
+    }
+
+    [Fact]
+    public async Task AFailingRetryStateWriteDoesNotFailAGoodFetch()
+    {
+        // A pause ends with a good fetch, which clears the pause on disk. That
+        // write failing must leave the fetch a success: dials lit, export written.
+        var clock = new Clock { Now = Now };
+        var fail = true;
+        var store = new UsageStore(
+            fetch: _ => fail
+                ? throw new UsageException(UsageError.RateLimited(null))
+                : Task.FromResult(Snapshot(7)),
+            hasCredentials: () => true,
+            now: () => clock.Now,
+            loadRetryState: () => null,
+            saveRetryState: _ => throw new IOException("held"));
+
+        await store.LoadAsync();
+        Assert.Equal(new UsageState.Failed(UsageError.RateLimited(null)), store.CurrentState);
+
+        clock.Now += TimeSpan.FromSeconds(3600 + UsageStore.RetryMarginSeconds + 1);
+        fail = false;
+        await store.LoadAsync();
+
+        Assert.Equal(new UsageState.Ok(Snapshot(7), clock.Now), store.CurrentState);
+    }
+
+    [Fact]
+    public async Task AnUnchangedRetryStateIsNotWrittenAgain()
+    {
+        // Every successful poll used to rewrite and fsync settings.json to say
+        // "no pause" once more.
+        var saves = new List<UsageRetryState?>();
+        var clock = new Clock { Now = Now };
+        var fail = false;
+        var store = new UsageStore(
+            fetch: _ => fail
+                ? throw new UsageException(UsageError.RateLimited(null))
+                : Task.FromResult(Snapshot(1)),
+            hasCredentials: () => true,
+            now: () => clock.Now,
+            loadRetryState: () => null,
+            saveRetryState: saves.Add);
+
+        await store.LoadAsync();
+        await store.LoadAsync();
+        Assert.Empty(saves);
+
+        fail = true;
+        await store.LoadAsync();
+        clock.Now += TimeSpan.FromSeconds(3600 + UsageStore.RetryMarginSeconds + 1);
+        fail = false;
+        await store.LoadAsync();
+        await store.LoadAsync();
+
+        Assert.Equal(2, saves.Count);
+        Assert.NotNull(saves[0]);
+        Assert.Null(saves[1]);
+    }
+
+    [Fact]
+    public async Task AClearThatFailedIsTriedAgainOnTheNextSuccess()
+    {
+        var attempts = new List<UsageRetryState?>();
+        var failWrites = true;
+        var store = new UsageStore(
+            fetch: _ => Task.FromResult(Snapshot(1)),
+            hasCredentials: () => true,
+            now: () => Now,
+            loadRetryState: () => new UsageRetryState(Now - TimeSpan.FromMinutes(1), 1),
+            saveRetryState: state =>
+            {
+                attempts.Add(state);
+                if (failWrites) throw new IOException("held");
+            });
+
+        failWrites = false;
+        await store.LoadAsync();
+        await store.LoadAsync();
+
+        // The constructor's clear failed, the first success wrote it, the second skipped it.
+        Assert.Equal([null, null], attempts);
+    }
 }
