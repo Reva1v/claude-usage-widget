@@ -31,54 +31,50 @@ public sealed class SettingsStore
     /// truncated by a crash mid-write) is not fatal — either falls back to
     /// defaults rather than throwing, so a corrupt settings file cannot take
     /// down the whole app.
+    ///
+    /// A file that is there but cannot be read right now is NOT defaults: an
+    /// editor or a backup tool holding it, or an ACL refusing it. A short hold
+    /// is waited out; past that the error is rethrown. Every save here is
+    /// `Save(Load() with …)`, so defaults read off a held file would be written
+    /// back over it, every account gone, once the hold ends.
     public WidgetSettingsData Load()
     {
+        string json;
         try
         {
-            var json = File.ReadAllText(_path);
+            json = FileReplace.Read(() => File.ReadAllText(_path));
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // A first run has no file at all, and an absent file must stay an
+            // empty account list rather than become a phantom `default`
+            // account with no cookies behind it.
+            return new WidgetSettingsData();
+        }
+
+        try
+        {
             var raw = JsonSerializer.Deserialize<WidgetSettingsData>(json, SerializerOptions)
                       ?? new WidgetSettingsData();
-            // Deliberately inside the try: a first run has no file at all, and
-            // an absent file must stay an empty account list rather than
-            // become a phantom `default` account with no cookies behind it.
             return SettingsMigration.Apply(raw);
         }
-        catch
+        catch (Exception)
         {
+            // Unparseable: the bytes were read, so this is the file's content
+            // and not a passing IO state. Defaults, as the summary says.
             return new WidgetSettingsData();
         }
     }
 
-    /// Writes a sibling temp file, flushes it to disk, then moves it over the
-    /// real one: an in-place rewrite cut short by a crash leaves a truncated
-    /// file, which Load reads as defaults, every account gone. Same directory,
-    /// so the move is a rename on one volume. A crash before the move leaves
-    /// at most one `.tmp`, which the next save overwrites.
+    /// Replaced whole through <see cref="FileReplace.Write"/>: an in-place
+    /// rewrite cut short by a crash leaves a truncated file, which Load reads
+    /// as defaults, every account gone.
     public void Save(WidgetSettingsData data)
     {
-        var directory = Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
-        var temp = _path + ".tmp";
         // One temp name per store, so two saves at once must not share it.
         lock (_saveLock)
         {
-            try
-            {
-                using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    JsonSerializer.Serialize(stream, data, SerializerOptions);
-                    stream.Flush(flushToDisk: true);
-                }
-
-                FileReplace.Move(temp, _path);
-            }
-            catch (Exception ex)
-            {
-                try { File.Delete(temp); }
-                catch (Exception cleanup) { throw new AggregateException(ex, cleanup); }
-                throw;
-            }
+            FileReplace.Write(_path, stream => JsonSerializer.Serialize(stream, data, SerializerOptions));
         }
     }
 }

@@ -304,4 +304,107 @@ public class WidgetSettingsTests
         Assert.Equal(before, File.ReadAllText(path));
         Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
     }
+
+    private static string StoreWithOneAccount(out SettingsStore store)
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName(), "s.json");
+        store = new SettingsStore(path);
+        store.Save(new WidgetSettingsData { Accounts = [new AccountProfile("a1", "work", "org-1", null, 0)] });
+        return path;
+    }
+
+    [Fact]
+    public async Task AFileHeldDuringLoadIsNeverReplacedWithDefaults()
+    {
+        // An editor or a backup tool holds settings.json exclusively for a
+        // moment while the widget persists its retry state the way App does:
+        // Save(Load().WithAccount(...)). Defaults read off the held file would
+        // be written back once the hold ends, every account gone.
+        var path = StoreWithOneAccount(out var store);
+        var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+        var release = Task.Delay(150).ContinueWith(_ => holder.Dispose(), TaskScheduler.Default);
+
+        try { store.Save(store.Load().WithAccount("a1", a => a with { ConsecutiveRateLimits = 2 })); }
+        catch (IOException) { /* a lost write is allowed here; lost accounts are not */ }
+        await release;
+
+        var account = Assert.Single(new SettingsStore(path).Load().Accounts);
+        Assert.Equal("work", account.DisplayName);
+        Assert.Equal(2, account.ConsecutiveRateLimits);
+    }
+
+    [Fact]
+    public void LoadRethrowsAHoldItCannotWaitOutAndNothingIsSaved()
+    {
+        var path = StoreWithOneAccount(out var store);
+        var before = File.ReadAllText(path);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() =>
+                store.Save(store.Load().WithAccount("a1", a => a with { ConsecutiveRateLimits = 2 })));
+        }
+
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public async Task AReadOnlySettingsFileFailsTheSaveRatherThanWaitingForIt()
+    {
+        // A permanent refusal is not retried: retrying only sleeps on the UI
+        // thread, on every poll. The attribute is cleared shortly after the
+        // save starts, which a retry would wait out and succeed through.
+        var path = StoreWithOneAccount(out var store);
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        var clear = Task.Delay(100).ContinueWith(_ => File.SetAttributes(path, FileAttributes.Normal), TaskScheduler.Default);
+
+        Assert.Throws<UnauthorizedAccessException>(() => store.Save(new WidgetSettingsData()));
+        await clear;
+
+        Assert.Single(new SettingsStore(path).Load().Accounts);
+        Assert.Equal(["s.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void ASymlinkedSettingsFileKeepsTheLinkAndUpdatesItsTarget()
+    {
+        // A dotfiles or sync setup links settings.json from elsewhere; replacing
+        // the link with a regular file would cut it off without a word.
+        var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(dir);
+        var real = Path.Combine(dir, "real.json");
+        var link = Path.Combine(dir, "s.json");
+        new SettingsStore(real).Save(new WidgetSettingsData { ModelBucket = "old" });
+        File.CreateSymbolicLink(link, real);
+
+        new SettingsStore(link).Save(new WidgetSettingsData { ModelBucket = "new" });
+
+        Assert.NotNull(new FileInfo(link).LinkTarget);
+        Assert.Equal("new", new SettingsStore(real).Load().ModelBucket);
+        Assert.Equal(["real.json", "s.json"],
+            Directory.GetFiles(dir).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AFailedReplaceDeletesItsTempFile()
+    {
+        // The export writer goes through the same helper: its temp was neither
+        // flushed nor removed when the move failed.
+        var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "a.widget.json");
+        File.WriteAllText(path, "{}");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() =>
+                FileReplace.Write(path, stream => stream.Write("{\"x\":1}"u8)));
+            Assert.Equal(["a.widget.json"], Directory.GetFiles(dir).Select(Path.GetFileName));
+            Assert.Equal("{}", File.ReadAllText(path));
+        }
+        finally
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+        }
+    }
 }
