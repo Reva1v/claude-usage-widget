@@ -124,6 +124,7 @@ pub enum Edge { None, Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, B
 pub struct CellHit { pub block: usize, pub cell: usize }
 pub enum ToolbarButton { Done, PanelFlow, BlockFlow, Name, PlanLine, StatusMode, ModelDial, Lock, Hide } // index 0..8
 pub enum HeaderButton { Hide, Edit, Lock }
+pub enum ThemeKind { Dark, Light }   // resolved theme; here (not in cuw-view) so cuw-win-core needs no view crate; cuw-view re-exports it
 ```
 
 Rules: `Sanitize` (missing `block`/`order` treated as default rather than the C# NullReference;
@@ -241,7 +242,9 @@ pub struct AccountRow { pub account_id: String, pub display_name: String, pub di
                         pub session_resets_in: Option<String>, pub plan_label: Option<String> }
 pub struct TrayMetric { pub label: String, pub value: String }
 pub struct BandEntry { pub name: String, pub percent: String, pub resets_in: Option<String> }
-pub enum ThemeKind { Dark, Light }
+// ThemeKind: defined in cuw-layout (§3), re-exported as cuw_view::theme::ThemeKind
+pub struct Rgb { pub r: u8, pub g: u8, pub b: u8 }
+pub struct Rgba { pub r: u8, pub g: u8, pub b: u8, pub a: u8 }   // straight (not premultiplied) alpha; cuw-render premultiplies
 pub struct Palette { pub panel: Rgb, pub track: Rgb, pub text: Rgb, pub dim: Rgb, pub accent: Rgb,
                      pub warning: Rgb, pub danger: Rgb, pub info: Rgb }   // DARK and LIGHT consts, INV 2C §3.4
 pub struct Notice { pub title: &'static str, pub detail: String, pub sign_in_button: bool }
@@ -301,8 +304,10 @@ leading `v`/`V`; anything else unparseable -> `is_newer = false`; missing compon
 pub enum Command { /* one variant per MenuId action and per panel event: TrayMetric(TrayMetric3), ModelBucket(Option<String>),
    ShowOnDesktop(bool), LockPosition(bool), TaskbarBand(bool), BandPosition(BandSide), BandView(BandView), Theme(ThemeChoice),
    PanelOpacity(f64), PanelView(PanelView), LayoutEdited(WidgetLayout), StatusMode(StatusMode), ModelDial(ModelDial),
-   PlanLine(PlanLine), SelectAccount(String), ToggleEditLayout, SetEditLayout(bool), Hide, RefreshNow, SignIn(Source),
+   PlanLine(PlanLine), SelectAccount(String), ToggleEditLayout, SetEditLayout(bool), Hide, RefreshNow, SignIn(SignInSource),
    AddAccount, RenameAccount(String), RemoveAccount(String), CheckUpdates, OpenUrl(Site, String), Quit */ }
+pub enum SignInSource { Tray, Panel, AddAccount }   // log `sign-in-requested source=tray|panel|add-account`
+pub enum Site { Tray, Update, StatusDial }          // log `browser-open site=tray|update|status-dial`
 pub struct Effects { pub render_widget: bool, pub rebuild_layout: bool, pub tooltip: bool, pub tray_icon: bool,
     pub menu: bool, pub band: bool, pub apply_theme: bool, pub band_visibility: Option<bool>, pub band_position: Option<BandSide>,
     pub widget_visible: Option<bool>, pub edit_mode: Option<bool>, pub open_login: Option<String>, pub refresh: Option<RefreshScope>, pub quit: bool }

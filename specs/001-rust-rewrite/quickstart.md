@@ -41,8 +41,8 @@ Contracts and types: [contracts/](contracts/), [data-model.md](data-model.md). S
 3. Save one real usage body and one organizations body from the fetch webview (DevTools of the login
    window), scrubbed, into `crates/cuw-usage/tests/fixtures/usage/` and
    `crates/cuw-claude/tests/fixtures/organizations/`.
-4. On the C# build, check whether clicking an account entry in the Accounts submenu closes the menu
-   (research R-12 open item) and record the answer in the S1 task.
+4. On the C# build, check whether clicking an entry in the Accounts submenu or a Layout item closes the
+   menu (research R-12 open item) and record the answer in `rust/docs/test-map.md` "Decisions" (task T034).
 
 ## Manual validation per story
 

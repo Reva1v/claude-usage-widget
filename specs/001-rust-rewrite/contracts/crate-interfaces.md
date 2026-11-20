@@ -11,6 +11,38 @@ Conventions:
 - Time is always passed in (`now: Timestamp`); no pure crate reads the clock.
 - Platform crates are `!Send` UI-thread objects unless stated; their methods must be called on the UI
   thread (debug-asserted).
+- Error enums named but not spelled out here (`ParseError`, `SaveError`, `LeaseError`,
+  `ScheduleError`, `HttpError`, `WinError`, `RenderError`, `ReleaseError`, `CommandError`,
+  `AccountError`) are defined by the owning crate's S0 skeleton; adding a variant later is not an
+  interface change.
+- Logic that does not need Windows lives in a pure crate even when only one platform crate calls it
+  (constitution II): menu navigation in `cuw-view::menu_nav`, tray digit fit in `cuw-layout::icon`,
+  widget persistence/hover rules in `cuw-layout::widget_state`, band diag switch in
+  `cuw-band-logic::diag`, login window texts in `cuw-claude::login`.
+
+**Dependency graph** (normal dependencies between workspace crates; same as plan.md "Dependency
+direction"; acyclic; pure crates never depend on platform crates or on `windows`):
+
+```text
+cuw-log, cuw-layout, cuw-usage, cuw-release      -> (no workspace crate)
+cuw-settings   -> cuw-layout
+cuw-status     -> cuw-usage, cuw-layout
+cuw-claude     -> cuw-usage, cuw-log
+cuw-store      -> cuw-usage, cuw-settings, cuw-status
+cuw-band-logic -> cuw-layout
+cuw-export     -> cuw-settings, cuw-usage, cuw-claude
+cuw-view       -> cuw-usage, cuw-status, cuw-claude, cuw-settings, cuw-layout
+cuw-app-core   -> every pure crate above (+ futures-util, uuid)
+cuw-http       -> (ureq only)
+cuw-win-core   -> cuw-log, cuw-layout (+ windows, futures-util)
+cuw-render     -> cuw-win-core, cuw-layout, cuw-status, cuw-view
+cuw-webview    -> cuw-win-core, cuw-claude, cuw-usage, cuw-log
+cuw-tray       -> cuw-win-core, cuw-render, cuw-view, cuw-layout
+cuw-widget     -> cuw-win-core, cuw-render, cuw-view, cuw-layout
+cuw-band       -> cuw-win-core, cuw-render, cuw-band-logic, cuw-view, cuw-layout
+cuw-updater    -> cuw-win-core, cuw-http, cuw-release, cuw-log
+cuw-app        -> everything
+```
 
 ---
 
@@ -84,6 +116,20 @@ pub mod placement {
 pub trait TextMeasure { fn measure(&self, text: &str, style: TextStyle) -> (f64, f64); } // width, height in DIPs
 pub struct TextStyle { pub font: FontRole, pub size_dip: f64 }
 pub enum FontRole { ConsolasSemiBold, ConsolasMedium, SegoeUiBold, MenuText, Mdl2 }
+pub enum ThemeKind { Dark, Light }     // resolved theme; lives here so cuw-win-core does not depend on cuw-view (re-exported as cuw_view::theme::ThemeKind)
+pub mod icon {                         // tray digit fit (INV 2D §1.4, research R-11); pure, used by cuw-render::tray_icon
+    pub fn fit_em(m: &dyn TextMeasure, digits: &str, size_px: u32) -> f64; // em from 0.95*H down by 0.5 to 6; first with width + em/3 <= W - 1 (SegoeUiBold, 1 px = 1 DIP)
+    pub fn ring_rect(size_px: u32) -> RectD;                               // 2 px pen, inset 2
+}
+pub mod widget_state {                 // desktop widget rules without Win32 (INV 2C §1.7, §1.9); `now` = monotonic time since an arbitrary origin
+    pub const PERSIST_DEBOUNCE: Duration;                                  // 500 ms
+    pub struct PersistDebounce;
+    impl PersistDebounce { pub fn new() -> Self; pub fn moved(&mut self, now: Duration, x_dip: f64, y_dip: f64, side: f64);
+        pub fn due(&mut self, now: Duration) -> Option<(f64, f64, f64)>;   // once, PERSIST_DEBOUNCE after the last move
+        pub fn flush(&mut self) -> Option<(f64, f64, f64)>; }               // on close: pending value at once
+    pub fn header_visible(hovered: bool, edit_mode: bool) -> bool;         // hover header never in edit mode
+    pub fn accepts_drag_resize(locked: bool) -> bool;                      // locked: buttons still work
+}
 ```
 
 ## cuw-settings (pure, std IO; depends on cuw-layout)
@@ -198,6 +244,13 @@ pub mod nav {
 }
 pub mod cookie { pub struct Cookie { pub name: String, pub domain: String, pub value: String } pub fn is_session_cookie(c: &Cookie) -> bool; pub fn any_session_cookie(cs: &[Cookie]) -> bool; }
 pub mod lease { impl FetchIdleLease { pub const DELAY: Duration; pub fn new() -> Self; pub fn enter(&mut self); pub fn exit(&mut self) -> Result<Option<u64>, LeaseError>; pub fn should_release(&self, token: u64) -> bool; pub fn in_use(&self) -> bool; } }
+pub mod login {                        // login window and profile texts/rules (INV 2B §1.2, §4.2; research R-05, R-07); used by cuw-webview
+    pub fn window_title(label: &str) -> String;                              // Sign in to Claude.ai — account "<label>"
+    pub fn is_https_link(text: &str) -> bool;                                // paste box accepts absolute https URLs only
+    pub const NOT_HTTPS_TIP: &str;                                           // "That is not an https link."
+    pub fn profile_matches(actual: &str, expected: &str) -> bool;            // ordinal ignore-case
+    pub fn profile_mismatch(actual: &str, label: &str, expected: &str) -> String; // WebView2 gave profile '<actual>' for account '<label>', expected '<name>'.
+}
 
 /// Transport port, implemented by cuw-webview::Session (and fakes in tests).
 pub trait PageFetcher {
@@ -219,7 +272,7 @@ impl PageError { pub fn into_usage_error(self) -> cuw_usage::UsageError; } // Na
 ```
 (`async fn` in traits is stable; ports are used with concrete types, so no `dyn` is needed.)
 
-## cuw-store (pure)
+## cuw-store (pure; depends on cuw-usage, cuw-settings, cuw-status)
 
 ```rust
 // types: RetryState, PersistedRetry, UsageStore, StatusStore (data-model §7)
@@ -266,7 +319,7 @@ pub fn user_agent(version: &str) -> String;   // "ClaudeUsageWidget/<v>"
 ```rust
 pub fn payload(snapshot: Option<&UsageSnapshot>, now: Timestamp, display_name: &str, preferred_bucket: Option<&str>, plan: Option<&str>) -> Option<ExportPayload>;
 pub fn to_json(p: &ExportPayload) -> String;           // compact, key order, integral numbers
-pub fn export_path_for(s: &Settings, account_id: &str, display_name: &str) -> Option<PathBuf>;
+pub fn export_path_for(s: &Settings, account_id: &str, display_name: &str) -> Option<PathBuf>; // = C# UsageExport.ExportPathFor(data, accountId, displayName); the caller checks writes_over separately
 pub fn file_name_for(display_name: &str, fallback_id: &str) -> String;
 pub fn writes_over(export: &Path, protected: &Path) -> bool;
 pub fn write(path: &Path, p: &ExportPayload) -> Result<(), ReplaceError>;  // caller only traces failures
@@ -289,11 +342,13 @@ pub mod tray_text {
     pub fn tooltip(metrics: &[TrayMetric], status_line: Option<&str>) -> String;   // "Claude Usage Widget — ..."
     pub const TOOLTIP_WEBVIEW_ERROR: &str; pub const TOOLTIP_SETTINGS_RETRY: &str; pub const TOOLTIP_DEFAULT: &str;
     pub fn icon_digits(value: &str) -> Option<String>;             // DigitsOnly
+    pub fn truncate_tooltip(text: &str) -> String;                 // at most 127 UTF-16 units, never splits a surrogate pair
 }
 pub mod band_text { pub const MAX_NAME: usize = 8; pub fn entries(rows: &[AccountRow]) -> Vec<BandEntry>; pub fn metric_entries(row: &AccountRow) -> Vec<BandEntry>; pub fn resolve_view(saved: Option<BandView>, count: usize) -> BandView; }
 pub mod status_line { pub fn text(state: &UsageState, now: Timestamp, retry_until: Option<Timestamp>) -> Option<String>; pub fn panel_line(status: ServiceStatus, mode: StatusMode, state: &UsageState, now: Timestamp, retry_until: Option<Timestamp>) -> Option<String>; }
 pub mod notice { pub fn for_state(state: &UsageState) -> Option<Notice>; }
 pub mod theme {
+    pub use cuw_layout::ThemeKind;                                 // defined in cuw-layout, re-exported here
     pub const DARK: Palette; pub const LIGHT: Palette;
     pub fn resolve(saved: Option<ThemeChoice>, system: ThemeKind) -> ThemeKind;
     pub fn palette(kind: ThemeKind) -> &'static Palette;
@@ -311,9 +366,24 @@ pub mod menu {
     pub fn glyph_for(id: &MenuId) -> Option<char>;
     impl MenuModel { pub fn without(self, ids: &[MenuId]) -> Self; pub fn find(&self, id: &MenuId) -> Option<&MenuItem>; }
 }
+pub mod menu_nav {                     // keyboard/mouse/keep-open state of the open menu stack (INV 2D §2.8, research R-12); driven by cuw-tray::MenuWindow
+    pub enum Key { Up, Down, Left, Right, Enter, Esc }
+    pub enum NavAction { None, Highlight { level: usize, index: usize }, OpenSubmenu { level: usize, index: usize },
+        CloseLevel(usize), Invoke { id: MenuId, close_all: bool }, CloseAll }
+    pub struct MenuNav;                // stack of open levels with highlighted index, pending hover-open
+    impl MenuNav {
+        pub const HOVER_OPEN: Duration;                            // 400 ms
+        pub fn new(model: &MenuModel) -> Self;
+        pub fn sync(&mut self, model: &MenuModel);                 // keep-open re-sync after `MenuWindow::update`
+        pub fn key(&mut self, k: Key) -> NavAction;                // skips separators, disabled and hidden items, wraps
+        pub fn hover(&mut self, level: usize, index: Option<usize>, now: Duration) -> NavAction;
+        pub fn click(&mut self, level: usize, index: usize) -> NavAction; // submenu opens at once; `closes_menu` decides close_all
+        pub fn tick(&mut self, now: Duration) -> NavAction;        // fires the pending hover-open
+    }
+}
 ```
 
-## cuw-band-logic (pure)
+## cuw-band-logic (pure; depends on cuw-layout for `RectI`)
 
 ```rust
 pub type Hwnd = isize;
@@ -331,7 +401,9 @@ pub struct ZOrderEntry { pub hwnd: Hwnd, pub visible: bool, pub rect: Option<Rec
 pub fn burial(own: RectI, above: &[ZOrderEntry] /* nearest first, max 64 */, tray: Hwnd) -> BurialVerdict;
 pub mod columns { pub struct Column { pub name_w: f64, pub name_h: f64, pub pct_w: f64, pub pct_h: f64, pub reset: Option<(f64, f64)> }
     pub fn width(c: &Column) -> f64; pub fn height(c: &Column) -> f64; pub fn content_width(cols: &[Column]) -> f64; } // +14 gaps, +5 pair
-pub mod diag { /* one fn per message template in contracts/log-format.md */ }
+pub mod diag { /* one fn per message template in contracts/log-format.md */
+    pub fn enabled(env_value: Option<&str>) -> bool;              // exactly "1" (INV 2D §3.8)
+    pub fn line(time_of_day: jiff::civil::Time, message: &str) -> String; } // "HH:mm:ss.fff <message>"; cuw-band only appends it
 ```
 
 ## cuw-app-core (pure)
@@ -359,6 +431,21 @@ pub trait AppPorts { type Account: AccountPort; fn accounts(&self) -> Vec<std::r
     fn set_webview_failing(&self, id: &str, failing: bool); fn set_has_cookie(&self, id: &str, v: bool); async fn load_status(&self); fn spawn(&self, f: futures_util::future::LocalBoxFuture<'static, ()>); }
 pub async fn refresh_account<P: AppPorts>(ports: &P, account: &P::Account);
 pub async fn refresh_all<P: AppPorts + 'static, C: Clock + 'static>(ports: std::rc::Rc<P>, clock: std::rc::Rc<C>); // stagger, id match, status last
+/// Tray reaction to system events (FR-024 fix 4, INV 2D §1.1, research R-11); the "fake shell port" of the test strategy.
+pub mod tray {
+    /// Pure mirror of cuw_win_core::system_events::SystemEvent (TrayCallback is handled by cuw-app's tray directly).
+    pub enum SystemEventKind { ThemeChanged { apps: ThemeKind, taskbar: ThemeKind }, Resumed, TaskbarCreated, DisplayChanged }
+    pub trait TrayHost {               // implemented by cuw-app over cuw_tray::TrayIcon (and fakes in tests)
+        fn taskbar_kind(&self) -> ThemeKind;          // ink the icon is currently drawn with
+        fn set_taskbar_kind(&mut self, k: ThemeKind);
+        fn readd(&mut self);                          // NIM_ADD again
+        fn render_icon(&mut self);
+        fn render_tooltip(&mut self);
+    }
+    /// TaskbarCreated -> readd + icon + tooltip; ThemeChanged with a new taskbar kind -> set + icon (apps part ignored here,
+    /// the panel repaints in cuw-app); DisplayChanged -> icon; Resumed -> Some(RefreshScope::All); never fails.
+    pub fn on_system_event(e: &SystemEventKind, host: &mut impl TrayHost) -> Option<RefreshScope>;
+}
 ```
 
 ---
@@ -371,7 +458,7 @@ pub fn get_text(url: &str, headers: &[(&str, &str)], timeout: Duration) -> Resul
 pub fn download_to_file(url: &str, headers: &[(&str, &str)], timeout: Duration, dest: &Path) -> Result<u16, HttpError>; // blocking
 ```
 
-## cuw-win-core (win)
+## cuw-win-core (win; depends on windows, cuw-log, cuw-layout; never on cuw-view)
 
 ```rust
 pub mod ui {
@@ -390,19 +477,24 @@ pub mod instance { pub struct SingleInstance; pub fn acquire(name: &str) -> Resu
 pub mod paths { pub fn roaming_app_data() -> Result<PathBuf, WinError>; pub fn local_app_data() -> Result<PathBuf, WinError>; pub fn temp() -> PathBuf; pub fn exe_path() -> Result<PathBuf, WinError>; }
 pub mod shell { pub fn open_url(url: &str) -> Result<(), WinError>; }
 pub mod dialogs { pub enum Icon { Info, Error, Question } pub fn message_box(text: &str, caption: &str, icon: Icon, yes_no: bool) -> bool; } // MB_DEFAULT_DESKTOP_ONLY, re-entrant safe
-pub mod theme { pub fn apps_kind() -> ThemeKind; pub fn taskbar_kind() -> ThemeKind; }   // missing/failure -> Dark
+pub mod theme { pub fn apps_kind() -> cuw_layout::ThemeKind; pub fn taskbar_kind() -> cuw_layout::ThemeKind; }   // missing/failure -> Dark
 pub mod autostart { pub const VALUE_NAME: &str = "ClaudeUsageWidget"; pub fn is_enabled() -> bool; pub fn set_enabled(on: bool, exe: &Path) -> Result<(), WinError>; pub fn value_for(exe: &Path) -> String; /* "\"<exe>\"" */ }
 pub mod system_events {
-    pub enum SystemEvent { ThemeChanged { apps: ThemeKind, taskbar: ThemeKind }, Resumed, TaskbarCreated, DisplayChanged, TrayCallback { msg: u32, x: i32, y: i32 } }
+    pub enum SystemEvent { ThemeChanged { apps: cuw_layout::ThemeKind, taskbar: cuw_layout::ThemeKind }, Resumed, TaskbarCreated, DisplayChanged, TrayCallback { msg: u32, x: i32, y: i32 } }
     pub struct SystemEvents; impl SystemEvents { pub fn create(on_event: impl FnMut(SystemEvent) + 'static) -> Result<Self, WinError>; pub fn hwnd(&self) -> isize; }
 }
 pub mod monitors { pub fn all() -> Vec<cuw_layout::placement::MonitorInfo>; pub fn from_point(x: i32, y: i32) -> cuw_layout::placement::MonitorInfo; pub fn drag_threshold_px() -> (i32, i32); }
 pub mod hresult { pub fn of(e: &windows_core::Error) -> i32; }
 ```
 
-## cuw-render (win)
+## cuw-render (win; depends on cuw-win-core, cuw-layout, cuw-status, cuw-view)
 
 ```rust
+pub enum Align { Leading, Center, Trailing }
+pub struct MenuLayout { pub dpi: u32, pub width_dip: f64, pub height_dip: f64, pub rows: Vec<RectD> /* one per visible item, DIPs */ }
+pub struct EditOverlay {               // built by cuw-widget each frame in edit mode (strip position comes from PanelGeometry::strip)
+    pub hovered_toolbar: Option<ToolbarButton>, pub drag_source: Option<CellHit>, pub drop_target: Option<CellHit>,
+    pub ghost_center: Option<(f64, f64)> /* DIPs, panel-relative; ghost drawn at 0.6 opacity */ }
 pub struct Renderer;  impl Renderer { pub fn new() -> Result<Self, RenderError>; pub fn measurer(&self) -> &dyn cuw_layout::TextMeasure; }
 pub struct LayeredSurface; impl LayeredSurface { pub fn new(r: &Renderer) -> Self;
     pub fn present(&mut self, hwnd: isize, pos_px: (i32, i32), size_px: (u32, u32), draw: impl FnOnce(&mut Canvas)) -> Result<(), RenderError>; } // ULW_ALPHA
@@ -412,7 +504,7 @@ impl Canvas<'_> { pub fn clear(&mut self); pub fn rounded_rect(&mut self, r: Rec
 pub mod dials { pub fn usage_dial(c: &mut Canvas, rect: RectD, d: &DialModel, dimmed: bool, p: &Palette); pub fn status_dial(c: &mut Canvas, rect: RectD, s: ServiceStatus, dimmed: bool, p: &Palette); pub fn name_ring(c: &mut Canvas, rect: RectD, p: &Palette); }
 pub mod panel { pub struct PanelScene<'a> { pub frame: &'a PanelFrame, pub geometry: &'a PanelGeometry, pub palette: &'a Palette, pub opacity: f64, pub hover_header: bool, pub edit: Option<EditOverlay> } pub fn draw(c: &mut Canvas, s: &PanelScene<'_>); }
 pub mod band { pub fn draw(c: &mut Canvas, entries: &[BandEntry], taskbar: ThemeKind, size_dip: (f64, f64)); pub fn content_width(r: &Renderer, entries: &[BandEntry]) -> f64; }
-pub mod tray_icon { pub fn render(r: &Renderer, digits: Option<&str>, ink: Rgb, size_px: u32) -> Result<Hicon, RenderError>; pub struct Hicon; /* Drop = DestroyIcon */ }
+pub mod tray_icon { pub fn render(r: &Renderer, digits: Option<&str>, ink: Rgb, size_px: u32) -> Result<Hicon, RenderError>; pub struct Hicon; /* Drop = DestroyIcon */ } // size from cuw_layout::icon::fit_em, ring from ring_rect
 pub mod menu_paint { pub fn draw_menu(c: &mut Canvas, items: &[MenuItem], hovered: Option<usize>, p: &Palette, layout: &MenuLayout); pub fn layout_menu(r: &Renderer, items: &[MenuItem], dpi: u32) -> MenuLayout; }
 pub mod offscreen { pub fn render_png(r: &Renderer, size_px: (u32, u32), dpi: u32, path: &Path, draw: impl FnOnce(&mut Canvas)) -> Result<(), RenderError>; } // WIC software target, headless
 ```
@@ -447,7 +539,7 @@ pub struct TrayIcon; impl TrayIcon {
 }
 impl Drop for TrayIcon { /* NIM_DELETE */ }
 pub struct MenuWindow; impl MenuWindow {
-    pub fn new(renderer: std::rc::Rc<cuw_render::Renderer>, on_command: Box<dyn Fn(cuw_view::menu::MenuId)>, on_opening: Box<dyn Fn() -> cuw_view::MenuModel>) -> Self;
+    pub fn new(renderer: std::rc::Rc<cuw_render::Renderer>, on_command: Box<dyn Fn(cuw_view::menu::MenuId)>, on_opening: Box<dyn Fn() -> cuw_view::MenuModel>) -> Self; // navigation decisions from cuw_view::menu_nav::MenuNav
     pub fn show_at_cursor(&self);
     pub fn update(&self, model: cuw_view::MenuModel);                     // repaint in place while open
     pub fn close(&self); pub fn is_open(&self) -> bool; pub fn set_palette(&self, p: cuw_view::theme::Palette);

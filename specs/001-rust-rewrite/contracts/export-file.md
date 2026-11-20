@@ -10,7 +10,11 @@ If the path equals the settings file (normalized, case-insensitive) -> log `<nam
 ExportPath is settings.json` on every refresh and write nothing. Write failures are not logged to
 widget.log (debug trace only, parity).
 
-## Path (`export_path_for(settings, account_id, display_name, settings_path)`)
+## Path (`export_path_for(settings, account_id, display_name)`)
+
+Same three inputs as C# `UsageExport.ExportPathFor(data, accountId, displayName)`. The settings-file
+guard is a separate call: the caller (cuw-app export wiring) checks `writes_over(path, settings_path)`
+before writing (see When).
 
 1. Account's `ExportPath` non-blank -> as is (relative allowed; directory created on write).
 2. `ExportDirectory` blank -> None.

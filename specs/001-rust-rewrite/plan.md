@@ -37,9 +37,9 @@ User Stories 1-7, each a runnable build (see Stages).
 | `zip` | 9.8.1 (2026-11-20) | `cuw-updater` | `default-features = false`, feature `deflate` |
 | `sha2` | 0.11.1 | `cuw-settings` | bad-copy content hash |
 | `uuid` | 1.29.3 | `cuw-app-core` | `v4`, dashed lowercase like `Guid.ToString()` |
-| `futures-util` | latest 0.3 at implementation (not checked) | `cuw-win-core`, `cuw-app` | `Shared`, `LocalBoxFuture`; NEEDS a version check in Wave 0 |
+| `futures-util` | 0.3.34 (2026-08-11) | `cuw-app-core` (`LocalBoxFuture` in `AppPorts::spawn`), `cuw-win-core`, `cuw-app` | `Shared`, `LocalBoxFuture`; `default-features = false`, features `std`, `alloc` |
 | `embed-resource` | 3.0.12 | `cuw-app` build.rs | manifest (PerMonitorV2, comctl32 v6), icon, version info |
-| dev: `tempfile` 3.27.0, `insta` 1.49.0, `proptest` 1.12.0, `pollster` (latest, not checked) | | tests | |
+| dev: `tempfile` 3.27.0, `insta` 1.49.0, `proptest` 1.12.0, `pollster` 1.0.3 (2026-11-18) | | tests | `pollster` drives async ports in pure-crate tests |
 | tools: `cargo-nextest` 0.9.152 (installed), `cargo-mutants` 27.1.0 | | dev box | install prebuilt binaries |
 
 **Storage**: files only. `%APPDATA%\ClaudeUsageWidget\settings.json` (shared with the C# build),
@@ -78,7 +78,7 @@ marked **VERIFY** there and in the stage where they are checked.
 | Principle | Gate | Pre-design | Post-design |
 |---|---|---|---|
 | I Parity | Every INV subsystem owned by one crate; every C# test class mapped (Test strategy) | PASS: ownership table below | PASS: crate-interfaces.md covers every subsystem; test map lists all 36 classes |
-| II Pure core | Business rules in crates without `windows`/WebView2/GUI deps; each external service behind one module | PASS | PASS: claude.ai = `cuw-claude` (rules) + `cuw-webview` (transport); status = `cuw-status`; GitHub = `cuw-release` + `cuw-updater`. Pure crates carry `#![forbid(unsafe_code)]` and no `windows` dep (checked by a `cargo tree` step in CI) |
+| II Pure core | Business rules in crates without `windows`/WebView2/GUI deps; each external service behind one module | PASS | PASS (after /speckit-analyze moved menu navigation, digit fit, widget persist/hover rules, login texts and the band diag switch into pure crates; the platform-side helpers left are justified in Complexity Tracking): claude.ai = `cuw-claude` (rules) + `cuw-webview` (transport); status = `cuw-status`; GitHub = `cuw-release` + `cuw-updater`. Pure crates carry `#![forbid(unsafe_code)]` and no `windows` dep (checked by a `cargo tree` step in CI) |
 | III Tests | Every ported behavior tested incl. edges; fixtures in `tests/fixtures/`; headless only; windows/tray `#[ignore]` | PASS | PASS: Test strategy; nextest `fast` profile; mutants config |
 | IV Data compat | Same settings path/format, migrations, profiles, Run value; never drop unknown fields | PASS | PASS: contracts/settings-json.md (unknown fields preserved at top level, in accounts and in `Layout`); WebView2 rules in contracts/claude-web.md |
 | V Safe Rust | stable, 2024, one workspace, no `unwrap` outside tests, thiserror/anyhow split, tracing, `unsafe` only in platform crates with `// SAFETY:` | PASS | PASS: lint table in research R-20; `clippy::undocumented_unsafe_blocks = "deny"` |
@@ -123,16 +123,16 @@ rust/
 ├── .cargo/mutants.toml
 └── crates/
     ├── cuw-log/            # pure  LogLine format, widget.log writer + rotation, tracing Layer
-    ├── cuw-layout/         # pure  layout types, Sanitize, FlowGrid, PanelMetrics, toolbar, hit tests, drag/resize/clamp math, menu placement
+    ├── cuw-layout/         # pure  layout types, ThemeKind, Sanitize, FlowGrid, PanelMetrics, toolbar, hit tests, drag/resize/clamp math, menu placement, tray digit fit, widget persist/hover rules
     ├── cuw-settings/       # pure  settings schema, tolerant JSON read/write w/ unknown fields, migration, SettingsStore, FileReplace
     ├── cuw-usage/          # pure  usage types, UsageError, decoder, math, thresholds, model buckets, HttpValidation
     ├── cuw-status/         # pure  status.claude.com decoding, ServiceStatus labels/words
-    ├── cuw-claude/         # pure  claude.ai rules: org pick, subscription refresh/tier, nav outcome, retry policy, cookie predicate, idle lease, fetch_usage orchestration (traits)
+    ├── cuw-claude/         # pure  claude.ai rules: org pick, subscription refresh/tier, nav outcome, retry policy, cookie predicate, idle lease, login/profile texts, fetch_usage orchestration (traits)
     ├── cuw-store/          # pure  UsageStore + StatusStore state machines (sans-IO), PollSchedule
     ├── cuw-release/        # pure  LatestRelease parse, IsNewer, version parse, self-install decision + texts
     ├── cuw-export/         # pure  export payload, path selection, slug, WritesOver
-    ├── cuw-view/           # pure  DialModel, AccountRow, TrayText, BandText, StatusLine, notice, tooltip, palette, theme/opacity, tray MenuModel
-    ├── cuw-band-logic/     # pure  band geometry, probe verdict, visibility hysteresis machine, burial decision, diag line texts
+    ├── cuw-view/           # pure  DialModel, AccountRow, TrayText, BandText, StatusLine, notice, tooltip, palette, theme/opacity, tray MenuModel, menu navigation state
+    ├── cuw-band-logic/     # pure  band geometry, probe verdict, visibility hysteresis machine, burial decision, diag switch and line texts
     ├── cuw-app-core/       # pure  commands -> settings mutations + effects, refresh coordinator (generic over ports), account lifecycle
     ├── cuw-http/           # io    blocking GET/download via ureq (worker threads only)
     ├── cuw-win-core/       # win   UI thread executor/message loop/timers, panic guard, mutex, known folders, shell open, MessageBox, registry (theme, autostart), system-events window, monitors/DPI
@@ -149,24 +149,30 @@ rust/
 crates):
 
 ```text
-pure:     cuw-log   cuw-layout   cuw-usage   cuw-release   cuw-band-logic
-          cuw-settings -> cuw-layout
-          cuw-status   -> cuw-usage, cuw-layout
-          cuw-claude   -> cuw-usage, cuw-log
-          cuw-store    -> cuw-usage
-          cuw-export   -> cuw-settings, cuw-usage, cuw-claude
-          cuw-view     -> cuw-usage, cuw-status, cuw-claude, cuw-settings, cuw-layout
-          cuw-app-core -> all pure crates above
+pure:     cuw-log   cuw-layout   cuw-usage   cuw-release        (no workspace deps)
+          cuw-settings   -> cuw-layout
+          cuw-status     -> cuw-usage, cuw-layout
+          cuw-claude     -> cuw-usage, cuw-log
+          cuw-store      -> cuw-usage, cuw-settings (DateTimeOffset in RetryState), cuw-status (ServiceStatus in StatusStore)
+          cuw-band-logic -> cuw-layout (RectI)
+          cuw-export     -> cuw-settings, cuw-usage, cuw-claude
+          cuw-view       -> cuw-usage, cuw-status, cuw-claude, cuw-settings, cuw-layout
+          cuw-app-core   -> all pure crates above (+ futures-util, uuid)
 platform: cuw-http (ureq)
-          cuw-win-core (windows, cuw-log)
-          cuw-render   -> cuw-win-core, cuw-layout, cuw-view
+          cuw-win-core -> cuw-log, cuw-layout (MonitorInfo, ThemeKind)   (+ windows; never cuw-view)
+          cuw-render   -> cuw-win-core, cuw-layout, cuw-status, cuw-view
           cuw-webview  -> cuw-win-core, cuw-claude, cuw-usage, cuw-log
           cuw-tray     -> cuw-win-core, cuw-render, cuw-view, cuw-layout
           cuw-widget   -> cuw-win-core, cuw-render, cuw-view, cuw-layout
-          cuw-band     -> cuw-win-core, cuw-render, cuw-band-logic, cuw-view
+          cuw-band     -> cuw-win-core, cuw-render, cuw-band-logic, cuw-view, cuw-layout
           cuw-updater  -> cuw-win-core, cuw-http, cuw-release, cuw-log
 binary:   cuw-app      -> everything
 ```
+
+`ThemeKind` lives in `cuw-layout` (the lowest crate both `cuw-win-core` and `cuw-view` already use)
+and `cuw-view::theme` re-exports it, so the platform helper crate never depends on the view crate.
+The graph is acyclic: every pure crate depends only on pure crates listed above it, and the same graph
+is repeated at the top of contracts/crate-interfaces.md.
 
 **Ownership of inventory sections** (each INV subsystem has exactly one owner crate; other crates
 only call it):
@@ -193,6 +199,11 @@ only call it):
 | Tray icon lifecycle, tooltip, menu window, placement (2D §1-§2 platform) | `cuw-tray` |
 | Tray menu content, ticks, enable rules, captions (2D §2.1-2.8 model) | `cuw-view::menu` |
 | Menu placement math `Within` (2D §2.10) | `cuw-layout::placement` |
+| Menu keyboard/mouse/keep-open state (2D §2.8 rules) | `cuw-view::menu_nav` (driven by `cuw-tray`) |
+| Tray digit fit and ring geometry (2D §1.4 math) | `cuw-layout::icon` (drawn by `cuw-render`) |
+| Widget persistence debounce, hover header, lock rule (2C §1.7, §1.9 rules) | `cuw-layout::widget_state` (used by `cuw-widget`) |
+| Login window and profile texts, https paste check (2B §1.2, §4.2 rules) | `cuw-claude::login` (used by `cuw-webview`) |
+| Band diag switch and line format (2D §3.8) | `cuw-band-logic::diag` (file append in `cuw-band`) |
 | Taskbar band rules: geometry, probe verdict, hysteresis, burial decision (2D §3) | `cuw-band-logic` |
 | Taskbar band window, hooks, timers, diag file (2D §3 platform) | `cuw-band` |
 | Win32 inventory (2D §4) | split: generic helpers `cuw-win-core`, band calls `cuw-band` |
@@ -215,8 +226,8 @@ run daily (with the C# app quit). "+" = crate gains the named parts in that stag
 | Stage | Story | Crates touched | Runnable deliverable |
 |---|---|---|---|
 | S0 | (setup) | workspace, all crate skeletons with the signatures of contracts/crate-interfaces.md, CI workflow `rust.yml`, nextest/mutants config | `cargo nextest run --profile fast` green on empty crates; exe starts and exits |
-| S1 | US1 tray + polling | `cuw-log`, `cuw-settings`, `cuw-usage`, `cuw-status`, `cuw-claude`, `cuw-store`, `cuw-view` (tray text, tooltip, menu model: GitHub/Issues links, Refresh now, Sign in, Tray shows, Model limit, Quit; items of later stages hidden via `MenuModel::without`), `cuw-app-core` (refresh coordinator, tray commands), `cuw-http`, `cuw-win-core`, `cuw-render` (tray icon only), `cuw-webview` (environment, fetch session, login window: the tray account must be able to sign in again from S1), `cuw-tray` (icon + menu window), `cuw-app` | tray-only app: digit icon, tooltip, status line, 300 s poll, 429 ladder, resume refresh, mutex shared with C# |
-| S2 | US2 widget | `cuw-layout`, `cuw-view` (+dials, notice, status line, palette), `cuw-render` (+layered surface, dials, panel scene), `cuw-widget`, `cuw-app-core` (+panel commands, Layout/Show/Lock menu), `cuw-tray` (+Layout, Show on desktop, Lock position items), `cuw-app::preview` (`CUW_RENDER_PREVIEW`) | panel at saved place/size/layout, drag/resize/lock/edit mode, status dial click |
+| S1 | US1 tray + polling | `cuw-log`, `cuw-settings`, `cuw-usage`, `cuw-status`, `cuw-claude`, `cuw-store`, `cuw-release` (version parse only), `cuw-layout` (types from S0; `placement::{within, to_px, to_dip}`, `BlockLayout::laid_out` for the settings writer, `icon` digit fit), `cuw-view` (dials, tray text, tooltip, palettes, menu model: GitHub/Issues links, Refresh now, Sign in, Tray shows, Model limit, Quit; items of later stages hidden via `MenuModel::without`; `menu_nav`), `cuw-app-core` (refresh coordinator, tray commands, `tray::on_system_event`), `cuw-http`, `cuw-win-core`, `cuw-render` (tray icon + menu paint), `cuw-webview` (environment, fetch session, login window: the tray account must be able to sign in again from S1), `cuw-tray` (icon + menu window), `cuw-app` | tray-only app: digit icon, tooltip, status line, 300 s poll, 429 ladder, resume refresh, mutex shared with C# |
+| S2 | US2 widget | `cuw-layout` (+layout math, metrics, geometry, interact, clamp/restore, `widget_state`), `cuw-view` (+theme resolve, opacity, notice incl. FR-024 fix 3, panel frame, panel status line), `cuw-render` (+layered surface, dials, panel scene), `cuw-widget`, `cuw-app-core` (+panel commands, Layout/Show/Lock menu), `cuw-tray` (+Layout, Show on desktop, Lock position items), `cuw-app::preview` (`CUW_RENDER_PREVIEW`) | panel at saved place/size/layout, drag/resize/lock/edit mode, status dial click |
 | S3 | US3 accounts | `cuw-webview` (+clear browsing data on remove, per-account profiles in use), `cuw-app-core` (+accounts add/rename/remove/select, OnSignedIn), `cuw-view` (+Accounts submenu), `cuw-tray` (+rename dialog) | multi-account with sign-in, duplicate-account notice, session-expired Sign in button (FR-024) |
 | S4 | US4 band | `cuw-band-logic`, `cuw-band`, `cuw-render` (+band text with shadow), `cuw-view` (+Band items), `cuw-app-core` (+band commands) | band at left/tray, fullscreen hiding, burial recovery, Explorer restart, `CLAUDE_BAND_DIAG` |
 | S5 | US5 settings/updates/export | `cuw-view` (+Theme, Opacity, Launch at login, Check for updates), `cuw-win-core::autostart`, `cuw-release`, `cuw-updater`, `cuw-export`, `cuw-app` (`CUW_RENDER_MENU`) | full menu parity, autostart, Rust-to-Rust self-update, export files |
@@ -232,10 +243,13 @@ run daily (with the C# app quit). "+" = crate gains the named parts in that stag
 | FR-003 | S1 | FR-012 | S2 | FR-021 | all; S6 closes |
 | FR-004 | S1 | FR-013 | S4 | FR-022 | S6 (naming fixed from S0) |
 | FR-005 | every stage (test map) | FR-014 | S2 (panel), S1 (tray ink), S4 (band ink) | FR-023 | S2, S4, S5 (visual checks) |
-| FR-006 | S1 | FR-015 | S3 | FR-024 | clamp S2, rename S3, session-expired S3, TaskbarCreated S1 |
+| FR-006 | S1 | FR-015 | S3 | FR-024 | clamp S2, rename S3, session-expired S2 (implemented) / S3 (wired), TaskbarCreated S1 |
 | FR-007 | S1 | FR-016 | S5 (verified again S6) | FR-025 | S7 |
 | FR-008 | S1 | FR-017 | S5 | | |
 | FR-009 | S1 (tooltip) / S2 (dial/line) | FR-018 | S5 | | |
+
+FR-024 fix 3 (Session expired gets Sign in) is implemented and unit-tested in S2 (`cuw-view::notice`,
+T140/T144) and wired and validated in S3 (T175/T177); owner-approved.
 
 ## Parallelization
 
@@ -248,11 +262,17 @@ needs the coordinator's approval and a contract edit first. Each agent gets at m
 |---|---|---|
 | W0 | 1 agent: workspace, lints, CI, skeletons, `cuw-log` | - |
 | W1 (S1 pure) | A `cuw-settings`; B `cuw-usage` + `cuw-status`; C `cuw-claude`; D `cuw-store` + `cuw-release`(version parse only); E `cuw-view` (S1 parts) | W0 |
-| W1 (S1 platform, same time) | F `cuw-win-core`; G `cuw-webview` (environment, fetch session, login window); H `cuw-render` (tray icon) + `cuw-tray` (icon + menu window over a fixed `MenuModel`); I `cuw-http` | W0 (code against skeletons of pure crates) |
+| W1 (S1 platform, same time) | F `cuw-win-core`; G `cuw-webview` (environment, fetch session, login window); H `cuw-render` (tray icon, menu paint) + `cuw-tray` (icon + menu window over a fixed `MenuModel`) + `cuw-view::menu_nav` + `cuw-layout::icon`; I `cuw-http` + `cuw-layout` (placement, `laid_out`) | W0 (code against skeletons of pure crates) |
 | W2 | J `cuw-app-core` (refresh, tray commands) then K `cuw-app` wiring (coordinator or one agent) | W1 merged |
-| W3 (S2) | L `cuw-layout`; M `cuw-view` panel parts + `cuw-render` panel scene; N `cuw-widget` | W2 |
+| W3 (S2) | L `cuw-layout`; M `cuw-view` panel parts + `cuw-render` panel scene; N `cuw-widget` (+ `cuw-layout::widget_state`); O `cuw-app-core` panel commands | W2 |
 | W4 (S3+S4 can overlap) | O `cuw-webview` clear-data + `cuw-tray` rename dialog; P `cuw-app-core` accounts; Q `cuw-band-logic`; R `cuw-band` + band rendering | W3 (Q, R only need W2) |
 | W5 (S5) | S `cuw-release` + `cuw-updater`; T `cuw-export`; U menu completion (`cuw-view` + autostart) + `CUW_RENDER_MENU` | W2 |
+
+**Merge order inside a wave.** Agents of one wave code in parallel against the S0 skeletons, but a
+skeleton body is `unimplemented!()`, so a test that calls a sibling batch's function panics until that
+batch is merged. The coordinator therefore merges in dependency order, and an agent whose tests call
+another batch's functions rebases on it before its final `nextest` run: W1 = (B, D, F, H, I) first,
+then (A, C), then (E, G); W3 = L first, then M, N, O; W4 = Q before R. tasks.md states this per batch.
 
 Rules for agents: `cargo check -p <crate>` while editing, `cargo nextest run -p <crate> --profile
 fast` before reporting; workspace clippy and full nextest only by the coordinator after each merge;
@@ -344,4 +364,5 @@ no agent runs `#[ignore]` tests or release builds.
 | `cuw-settings`, `cuw-log`, `cuw-export` do file I/O in "pure" crates | the store state machine and FileReplace semantics are test-pinned with real temp files (WidgetSettingsTests); they use only `std` (`std::os::windows` share modes), no `windows` crate | moving them to a platform crate would put the most test-heavy code behind the slow build |
 | Unknown JSON fields preserved (C# drops them) | constitution IV "a write never drops fields it does not understand" | matching C# would violate IV |
 | Updater swaps by renaming the running exe and relaunching with `--after-update <pid>` instead of a PowerShell script | single exe, no script host or execution policy dependency; same user-visible prompts and restart | keeping PowerShell works too and stays the fallback if the rename swap fails in S5 testing (research R-15) |
+| Some headless-tested helpers stay in platform crates: `WM_WINDOWPOSCHANGING` rewrites (`cuw-webview`, `cuw-widget`), registry adapters behind `RegistryRead`/`RunKey` fakes (`cuw-win-core` theme, autostart), the window-free executor core (`cuw-win-core::ui`), updater flow sequencing and the copy-retry swap (`cuw-updater`), the band diag file append (`cuw-band`) | each works on Win32 types (`WINDOWPOS`, `SWP_*`, registry value kinds, HWND/process handles) or is IO orchestration whose decisions and texts already live in pure crates (`cuw-release`, `cuw-band-logic::diag`); constitution II "no business rules in platform code" still holds | moving them would mirror Win32 types in pure crates or split one IO step across two crates; all other Windows-free logic (menu navigation, digit fit, widget debounce/hover/lock, login texts, diag switch) was moved to pure crates during /speckit-analyze |
 | Staggered poll keeps an account matched by id (C# drops one poll if the account is renamed during the wait) | natural in Rust; the C# quirk is an inferred accident | needs owner OK as a tiny behavior change (research R-21); otherwise port the quirk |

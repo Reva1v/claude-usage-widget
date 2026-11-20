@@ -187,7 +187,7 @@ plan.md Technical Context).
   `GetSystemMetricsForDpi(SM_CXSMICON, dpi)` with `dpi = GetDpiForWindow(Shell_TrayWnd)` (fallback
   `GetDpiForSystem`); drawn by D2D into a WIC premultiplied BGRA bitmap, grayscale AA; HICON via
   `CreateIconIndirect` (32 bpp color DIB + empty mask); previous HICON destroyed after `NIM_MODIFY`.
-  Digit fit: Segoe UI Bold, em from `0.95*H` down in 0.5 px steps to 6, first with
+  Digit fit (pure, `cuw-layout::icon::fit_em`): Segoe UI Bold, em from `0.95*H` down in 0.5 px steps to 6, first with
   `measured_width + gdiplus_padding <= W - 1`, where `gdiplus_padding = em / 3` emulates GDI+
   `MeasureString`'s 1/6 em per side so the chosen size matches the C# result. Ink `#1B1B1B` on a light
   taskbar, white on dark; ring = 2 px pen inset 2.
@@ -214,7 +214,7 @@ plan.md Technical Context).
   tooltip control in tracking mode. The menu content is a `MenuModel` built in `cuw-view` on every
   open and every store change while open.
 - **Open item**: INV 2D §2.8 suspects that clicks on Accounts entries and Layout items close the C#
-  menu (no Closing hook on those dropdowns). **VERIFY S1** on the C# build; default: keep open like
+  menu (no Closing hook on those dropdowns). **VERIFY S0** (tasks T034, before S1-E and S1-H) on the C# build; default: keep open like
   every other submenu, and record the observed C# behavior as the rule.
 - **Alternatives**: native `HMENU` + `MF_OWNERDRAW` (closes on every click, no tooltips; spec needs
   keep-open), WinUI/XAML islands (toolkit, rejected by owner).
